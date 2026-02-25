@@ -1,0 +1,33 @@
+name: Cron Diario Scanner
+
+on:
+  schedule:
+    # L-V a las 20:30 UTC (17:30 hora Argentina)
+    # NYSE cierra 21:00 UTC (verano) / 22:00 UTC (invierno)
+    - cron: '30 20 * * 1-5'
+  workflow_dispatch:  # Permite ejecucion manual desde GitHub
+
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar cron diario
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/cron_diario.py
