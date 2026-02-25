@@ -168,6 +168,11 @@ def tab_dashboard():
         df_f = df_f[df_f.alert_nivel == nivel_sel]
     df_f = df_f[df_f.ml_prob_ganancia >= prob_min / 100]
 
+    if df_f.empty:
+        st.info("Ningun ticker cumple los filtros seleccionados.")
+        st.caption(f"Fecha: {fecha_sel} | 0 de {len(df)} tickers mostrados")
+        return
+
     # ── Formatear columnas para display ──────────────────────
     df_show = df_f.copy()
     df_show["Nivel"]   = df_show["alert_nivel"].map(lambda x: f"{_EMOJIS.get(x, '')} {x}")
