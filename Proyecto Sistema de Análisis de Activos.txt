@@ -1,0 +1,73 @@
+Proyecto: Sistema de Análisis de Activos con ML
+Universo de Activos
+Organizados por sector:
+
+Financials: JPM, BAC, MS, GS, WFC
+Consumer Staples: KO, PEP, PG, PM, CL, MO
+Consumer Discretionary: TGT, WMT, COST, HD, LOW
+Automotive: F, GM, STLA
+
+Fuentes de Datos
+
+yfinance → datos OHLCV, datos fundamentales básicos
+Financial Modeling Prep (FMP) → ratios fundamentales, earnings
+Alpha Vantage / MarketStack → indicadores técnicos adicionales
+
+Arquitectura: Dos Modelos Separados
+Modelo 1 — Análisis Técnico (AT) diario
+Features definidas:
+
+Distancia del precio a SMA21, SMA50, SMA200
+RSI14 normalizado
+MACD histogram
+ATR normalizado (volatilidad)
+Bandas de Bollinger
+OBV, VWAP
+Volumen relativo al promedio
+ADX (fuerza de tendencia)
+Shadow ratios (estructura de velas)
+
+Modelo 2 — Evento Earnings (frecuencia trimestral)
+
+Ventana de análisis: 5 días antes, día del anuncio, 5 días después
+Captura patrones de acumulación pre-earnings y reacción post-anuncio
+Cada activo tiene su "personalidad" histórica frente a resultados
+
+Sistema de Scoring Técnico (Rule-Based)
+Compuesto por 6 condiciones:
+
+RSI en zona oversold/overbought
+Señal MACD (cruce)
+Precio relativo a SMA50
+Precio relativo a SMA200
+Volumen relativo al promedio
+Dirección del momentum
+
+Este score se valida vía backtesting para definir si se codifica numérico o categórico antes de incorporarlo como feature al modelo AT.
+Decisión Arquitectural Clave
+No mezclar frecuencias (diaria vs trimestral) en un solo modelo. Los dos modelos corren separados y sus señales se interpretan en conjunto.
+
+
+
+CONTEXTO:
+Proyecto: Sistema de Análisis de Activos con ML — Contexto y Decisiones
+Contexto General
+El usuario es analista de datos con perfil de control de gestión en finanzas, y utiliza TradingView para análisis de activos. El objetivo del proyecto es construir un sistema de ML que complemente el análisis técnico manual, automatizando la detección de señales en un universo acotado de acciones del mercado americano. No es un sistema de trading algorítmico automático, sino una herramienta de apoyo a la toma de decisiones.
+Por qué un universo acotado de activos
+Se decidió trabajar con un conjunto fijo de acciones agrupadas por sector (Financials, Consumer Staples, Consumer Discretionary, Automotive) porque permite que los modelos aprendan el comportamiento específico de cada activo. Activos distintos tienen dinámicas distintas, y un modelo generalista perdería esa especificidad. Además, facilita el mantenimiento y la interpretación de resultados.
+Por qué dos modelos separados
+Durante la conversación se identificó que hay dos fenómenos distintos que afectan el precio: el comportamiento técnico diario (tendencia, momentum, volumen) y el comportamiento alrededor de eventos de earnings (resultados trimestrales). Mezclarlos en un solo modelo sería problemático porque operan en frecuencias distintas (diaria vs trimestral) y responden a lógicas diferentes. La solución fue separarlos y que sus señales se lean en conjunto al momento de tomar una decisión.
+Por qué el modelo de AT se basa en indicadores técnicos clásicos
+Se priorizaron indicadores que capturan distintas dimensiones del precio: tendencia (SMAs, MACD), momentum (RSI, momentum directo), volatilidad (ATR, Bollinger Bands) y volumen (OBV, VWAP, volumen relativo). Se descartaron indicadores redundantes para no inflar el feature space con información correlacionada. El criterio fue: cada feature debe aportar una dimensión nueva.
+Por qué el modelo de earnings usa ventanas de evento
+La idea central es que los activos tienen "personalidades" consistentes en cómo reaccionan a sus propios resultados trimestrales. Algunos acumulan volumen antes del anuncio, otros reaccionan con gaps violentos, otros revierten. Capturar esos patrones históricos como features permite al modelo aprender ese comportamiento específico por activo, algo que un análisis técnico puro no contempla.
+Por qué el sistema de scoring rule-based
+Antes de entrenar el modelo de ML, se decidió construir un scoring técnico basado en reglas (6 condiciones binarias) para dos propósitos: primero, como baseline interpretable para validar que el modelo aprende algo más que las reglas obvias; segundo, como feature adicional que le entregue al modelo una señal de consenso técnico ya procesada. Los umbrales y pesos del scoring se van a calibrar mediante backtesting histórico.
+Stack tecnológico elegido
+
+yfinance como fuente principal por accesibilidad y cobertura
+FMP para datos fundamentales y earnings más limpios
+Python como entorno de desarrollo
+VS Code como IDE, con entorno virtual dedicado al proyecto
+
+

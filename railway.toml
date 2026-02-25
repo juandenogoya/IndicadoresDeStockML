@@ -1,0 +1,8 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+# Cron: lunes a viernes a las 20:30 UTC = 17:30 ET (cierre NYSE + 30min)
+startCommand = "python scripts/cron_diario.py"
+cronSchedule = "30 20 * * 1-5"
+restartPolicyType = "NEVER"

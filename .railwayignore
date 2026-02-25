@@ -1,0 +1,24 @@
+# Modelos V1 y V2: no se usan en el scanner
+models/
+models_v2/
+
+# Archivos de desarrollo local
+.env
+*.pyc
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Notebooks y reportes locales
+notebooks/
+*.ipynb
+*.csv
+*.xlsx
+*.png
+*.pdf
+
+# Git
+.git/
+.gitignore

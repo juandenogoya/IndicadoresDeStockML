@@ -1,0 +1,55 @@
+# ── Entorno Virtual ───────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Variables de entorno (NUNCA versionar) ────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ── Jupyter ───────────────────────────────────────────────────
+.ipynb_checkpoints/
+notebooks/
+*.ipynb
+
+# ── Data (no se versiona) ─────────────────────────────────────
+data/
+*.csv
+*.parquet
+*.pkl
+*.h5
+*.xlsx
+*.dump
+
+# ── Modelos V1 y V2 (no se usan en Railway) ──────────────────
+models/
+models_v2/
+
+# ── Modelos V3: solo los champion.joblib van a Railway (~11MB) ─
+models_v3/**/*.joblib
+!models_v3/**/champion.joblib
+
+# ── Logs ──────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Claude ────────────────────────────────────────────────────
+.claude/
