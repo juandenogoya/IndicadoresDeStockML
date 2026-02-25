@@ -419,6 +419,34 @@ def tab_historial():
 st.title("📈 Scanner ML — Activos Bursatiles")
 st.caption("Senales basadas en ML V3 + Price Action + Market Structure")
 
+# ── Info de entrenamiento de modelos ──────────────────────────
+try:
+    df_modelos = query("""
+        SELECT scope, algoritmo, f1_test, created_at
+        FROM modelos_produccion
+        WHERE modelo_version = 'v3'
+        ORDER BY created_at DESC
+        LIMIT 1
+    """)
+    if not df_modelos.empty:
+        ultima_fecha_train = pd.to_datetime(df_modelos.iloc[0]["created_at"]).strftime("%Y-%m-%d")
+        df_v3 = query("""
+            SELECT scope, algoritmo, f1_test
+            FROM modelos_produccion
+            WHERE modelo_version = 'v3' AND f1_test IS NOT NULL
+            ORDER BY scope
+        """)
+        resumen_f1 = " | ".join(
+            f"{r['scope']}: {r['f1_test']:.4f}"
+            for _, r in df_v3.iterrows()
+        ) if not df_v3.empty else ""
+        st.caption(
+            f"**Ultimo entrenamiento de modelos V3:** {ultima_fecha_train}   "
+            + (f"— F1 TEST: {resumen_f1}" if resumen_f1 else "")
+        )
+except Exception:
+    pass
+
 tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "➕ Agregar Ticker", "📋 Historial"])
 
 with tab1:
