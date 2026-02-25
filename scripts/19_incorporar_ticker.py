@@ -15,9 +15,10 @@ Uso:
 Proceso por ticker:
     1. Descarga 5 anos de historial via yfinance
     2. Calcula 53 features V3 (indicadores + market structure) + label_binario
-    3. Split temporal 70% TRAIN / 30% TEST (sin shuffle)
+    3. Split temporal 70/15/15 TRAIN/TEST/BACKTEST (igual que el pipeline original)
     4. Evalua los 4 champion.joblib en el TEST split (F1 clase GANANCIA)
-    5. Guarda modelo_asignado = scope ganador en activos tabla
+    5. Muestra F1 en BACKTEST como validacion adicional
+    6. Guarda modelo_asignado = scope ganador (por TEST F1) en activos tabla
 
 Nota: los z-scores sectoriales quedan como NaN para tickers externos.
 El SimpleImputer dentro del sklearn Pipeline los rellena con la media
@@ -48,7 +49,11 @@ from src.data.database import get_connection, query_df
 
 
 UMBRAL_GANANCIA_DEFAULT = 0.03   # retorno_20d >= 3% -> label_binario = 1
-SPLIT_TRAIN_DEFAULT     = 0.70   # 70% TRAIN, 30% TEST
+
+# Split 70/15/15 identico al pipeline de entrenamiento original
+RATIO_TRAIN     = 0.70
+RATIO_TEST      = 0.15
+# RATIO_BACKTEST = 0.15  (resto)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -141,22 +146,26 @@ def _construir_dataset(df_ohlcv: pd.DataFrame, ticker: str,
 # Evaluacion de los 4 modelos champion en el TEST split
 # ─────────────────────────────────────────────────────────────
 
-def _evaluar_modelos(X_test: pd.DataFrame, y_test: pd.Series) -> dict:
+def _evaluar_modelos(X_test: pd.DataFrame, y_test: pd.Series,
+                     X_bt: pd.DataFrame = None, y_bt: pd.Series = None) -> dict:
     """
-    Carga y evalua los 4 champion V3 en TEST.
-    Retorna dict {scope: f1_ganancia}.
+    Carga y evalua los 4 champion V3 en TEST (y opcionalmente en BACKTEST).
+    Retorna dict {scope: {"test": f1, "backtest": f1_o_None}}.
     """
     scopes = ["global"] + SECTORES_ML
     resultados = {}
     for scope in scopes:
         try:
             model = cargar_champion_v3(scope)
-            y_pred = model.predict(X_test)
-            f1 = f1_score(y_test, y_pred, zero_division=0)
-            resultados[scope] = round(float(f1), 4)
+            f1_test = f1_score(y_test, model.predict(X_test), zero_division=0)
+            f1_bt   = None
+            if X_bt is not None and len(X_bt) > 0:
+                f1_bt = f1_score(y_bt, model.predict(X_bt), zero_division=0)
+                f1_bt = round(float(f1_bt), 4)
+            resultados[scope] = {"test": round(float(f1_test), 4), "backtest": f1_bt}
         except Exception as e:
             print(f"  [WARN] Error evaluando modelo '{scope}': {e}")
-            resultados[scope] = 0.0
+            resultados[scope] = {"test": 0.0, "backtest": None}
     return resultados
 
 
@@ -207,13 +216,14 @@ def _guardar_asignacion(ticker: str, scope: str):
 
 def incorporar_ticker(ticker: str,
                       umbral: float = UMBRAL_GANANCIA_DEFAULT,
-                      split: float = SPLIT_TRAIN_DEFAULT,
                       forzar: bool = False) -> dict:
     """
     Descarga historial, evalua los 4 champion V3 y asigna el mejor.
+    Usa split 70/15/15 TRAIN/TEST/BACKTEST, igual que el pipeline de entrenamiento.
+    La seleccion del ganador se basa en F1 del segmento TEST.
 
     Returns:
-        dict con resultado (modelo_asignado, f1_todos, n_train, n_test, error)
+        dict con resultado (modelo_asignado, f1_todos, n_train, n_test, n_backtest, error)
     """
     print(f"\n{'='*55}")
     print(f"  {ticker}")
@@ -252,37 +262,47 @@ def incorporar_ticker(ticker: str,
     n_pos    = int(df_valido["label_binario"].sum())
     print(f"         {n_valido} filas validas, {n_pos} positivas ({n_pos/n_valido:.1%})")
 
-    if n_valido < 100:
-        msg = f"Solo {n_valido} filas con label (minimo 100)"
+    if n_valido < 200:
+        msg = f"Solo {n_valido} filas con label (minimo 200)"
         print(f"  ERROR: {msg}")
         return {"ticker": ticker, "error": msg}
 
-    # 3. Split temporal 70/30
-    n_train = int(n_valido * split)
-    df_train = df_valido.iloc[:n_train]
-    df_test  = df_valido.iloc[n_train:]
+    # 3. Split temporal 70/15/15 (igual que el pipeline de entrenamiento)
+    n_train = int(n_valido * RATIO_TRAIN)
+    n_test  = int(n_valido * RATIO_TEST)
+    df_train    = df_valido.iloc[:n_train]
+    df_test     = df_valido.iloc[n_train : n_train + n_test]
+    df_backtest = df_valido.iloc[n_train + n_test:]
 
     n_test_pos = int(df_test["label_binario"].sum())
-    print(f"  [3/5] Split: TRAIN={len(df_train)}, TEST={len(df_test)} "
-          f"({n_test_pos} positivas en TEST)")
+    n_bt_pos   = int(df_backtest["label_binario"].sum())
+    print(f"  [3/5] Split: TRAIN={len(df_train)} | TEST={len(df_test)} "
+          f"({n_test_pos} pos) | BACKTEST={len(df_backtest)} ({n_bt_pos} pos)")
 
-    if len(df_test) < 20 or n_test_pos < 5:
+    if len(df_test) < 15 or n_test_pos < 3:
         msg = f"TEST insuficiente: {len(df_test)} filas, {n_test_pos} positivas"
         print(f"  ERROR: {msg}")
         return {"ticker": ticker, "error": msg}
 
     X_test = df_test[FEATURE_COLS_V3].copy()
     y_test = df_test["label_binario"].astype(int)
+    X_bt   = df_backtest[FEATURE_COLS_V3].copy()
+    y_bt   = df_backtest["label_binario"].astype(int)
 
-    # 4. Evaluar los 4 champion V3
-    print("  [4/5] Evaluando modelos champion V3 en TEST split...")
-    f1_todos = _evaluar_modelos(X_test, y_test)
+    # 4. Evaluar los 4 champion V3 en TEST + BACKTEST
+    print("  [4/5] Evaluando modelos champion V3...")
+    f1_todos = _evaluar_modelos(X_test, y_test, X_bt, y_bt)
 
-    mejor_scope = max(f1_todos, key=f1_todos.get)
-    mejor_f1    = f1_todos[mejor_scope]
-    for scope, f1 in sorted(f1_todos.items(), key=lambda x: -x[1]):
+    # Seleccionar ganador por F1 TEST (igual que el proceso original de training)
+    mejor_scope = max(f1_todos, key=lambda s: f1_todos[s]["test"])
+    mejor_f1    = f1_todos[mejor_scope]["test"]
+
+    print(f"         {'Scope':<30} {'TEST':>8} {'BACKTEST':>10}")
+    print(f"         {'-'*50}")
+    for scope, vals in sorted(f1_todos.items(), key=lambda x: -x[1]["test"]):
+        bt_str  = f"{vals['backtest']:.4f}" if vals["backtest"] is not None else "  N/A "
         ganador = " <-- GANADOR" if scope == mejor_scope else ""
-        print(f"         {scope:<30} F1={f1:.4f}{ganador}")
+        print(f"         {scope:<30} {vals['test']:>8.4f} {bt_str:>10}{ganador}")
 
     # 5. Guardar en DB
     print(f"  [5/5] Guardando modelo_asignado='{mejor_scope}' en activos...")
@@ -296,6 +316,7 @@ def incorporar_ticker(ticker: str,
         "f1_todos":        f1_todos,
         "n_train":         len(df_train),
         "n_test":          len(df_test),
+        "n_backtest":      len(df_backtest),
         "ya_existia":      False,
     }
 
@@ -317,10 +338,6 @@ def main():
         help=f"Threshold retorno 20d para label=1 (default {UMBRAL_GANANCIA_DEFAULT:.0%})"
     )
     parser.add_argument(
-        "--split", type=float, default=SPLIT_TRAIN_DEFAULT,
-        help=f"Fraccion TRAIN (default {SPLIT_TRAIN_DEFAULT:.0%})"
-    )
-    parser.add_argument(
         "--forzar", action="store_true",
         help="Re-evaluar aunque ya tenga modelo asignado"
     )
@@ -330,7 +347,7 @@ def main():
     print("  INCORPORAR TICKERS — Asignacion de Modelo Champion")
     print("=" * 55)
     print(f"  Tickers : {', '.join(t.upper() for t in args.tickers)}")
-    print(f"  Umbral  : {args.umbral:.1%}  Split: {args.split:.0%}/{1-args.split:.0%}")
+    print(f"  Umbral  : {args.umbral:.1%}  Split: 70/15/15 TRAIN/TEST/BACKTEST")
     print(f"  Forzar  : {args.forzar}")
 
     resultados = []
@@ -338,7 +355,6 @@ def main():
         r = incorporar_ticker(
             ticker.upper(),
             umbral=args.umbral,
-            split=args.split,
             forzar=args.forzar,
         )
         resultados.append(r)
