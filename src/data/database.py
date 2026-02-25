@@ -14,11 +14,20 @@ from src.utils.config import DB_CONFIG
 # ── Engine SQLAlchemy (para pandas read/write) ────────────────
 def get_engine():
     """Retorna un engine de SQLAlchemy para uso con pandas."""
-    url = (
-        f"postgresql+psycopg2://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
-        f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
-    )
-    return create_engine(url)
+    import os
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        # Usar DATABASE_URL directamente (Railway, Streamlit Cloud, GitHub Actions)
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        if "postgresql+psycopg2" not in db_url:
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return create_engine(db_url, connect_args={"sslmode": "require"})
+    else:
+        url = (
+            f"postgresql+psycopg2://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
+            f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
+        )
+        return create_engine(url)
 
 
 # ── Conexión psycopg2 (para operaciones directas) ─────────────

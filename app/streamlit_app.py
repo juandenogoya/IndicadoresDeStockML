@@ -34,28 +34,47 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Inyectar variables de entorno desde st.secrets (Streamlit Cloud)
+# Conexion a DB — directo desde st.secrets (no depende de config.py)
 # ─────────────────────────────────────────────────────────────
 
-def _cargar_secrets():
-    """Copia secrets de Streamlit al entorno si no estan ya presentes."""
+def _get_database_url() -> str:
+    """Obtiene DATABASE_URL desde st.secrets o variable de entorno."""
+    # 1. st.secrets (Streamlit Cloud)
     try:
-        for key in ["DATABASE_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]:
-            if key not in os.environ and key in st.secrets:
-                os.environ[key] = st.secrets[key]
+        url = st.secrets.get("DATABASE_URL") or st.secrets["DATABASE_URL"]
+        if url:
+            return str(url)
     except Exception:
-        pass  # Modo local: usa .env directamente
+        pass
+    # 2. Variable de entorno (local con .env)
+    return os.getenv("DATABASE_URL", "")
 
-_cargar_secrets()
 
+@st.cache_resource
+def _get_engine():
+    """Crea el engine SQLAlchemy una sola vez (cacheado)."""
+    from sqlalchemy import create_engine
+    db_url = _get_database_url()
+    if not db_url:
+        raise ValueError("DATABASE_URL no configurada. Verifica los Secrets en Streamlit Cloud.")
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+    if "postgresql+psycopg2" not in db_url:
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return create_engine(db_url, connect_args={"sslmode": "require"})
 
-# ─────────────────────────────────────────────────────────────
-# Helper de DB
-# ─────────────────────────────────────────────────────────────
 
 def query(sql: str, params: dict = None) -> pd.DataFrame:
-    from src.data.database import query_df
-    return query_df(sql, params=params or {})
+    """Ejecuta un SELECT y retorna un DataFrame."""
+    from sqlalchemy import text
+    engine = _get_engine()
+    with engine.connect() as conn:
+        return pd.read_sql_query(text(sql), conn, params=params or {})
+
+
+# Inyectar DATABASE_URL al entorno para que src.pipeline pueda usarla (tab Agregar Ticker)
+_db_url = _get_database_url()
+if _db_url and "DATABASE_URL" not in os.environ:
+    os.environ["DATABASE_URL"] = _db_url
 
 
 # ─────────────────────────────────────────────────────────────
