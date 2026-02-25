@@ -47,7 +47,7 @@ START_DATE = os.getenv("START_DATE", "2020-01-01")
 
 # ── Universo de Activos ───────────────────────────────────────
 ACTIVOS = {
-    "Financials": ["JPM", "BAC", "MS", "GS", "WFC"],
+    "Financials": ["JPM", "BAC", "MS", "GS", "WFC", "AXP"],
     "Consumer Staples": ["KO", "PEP", "PG", "PM", "CL", "MO"],
     "Consumer Discretionary": ["TGT", "WMT", "COST", "HD", "LOW"],
     "Automotive": ["F", "GM", "STLA"],
