@@ -273,7 +273,17 @@ def tab_agregar():
                 return
 
         if resultado.get("error"):
-            st.error(f"Error: {resultado['error']}")
+            msg = resultado['error']
+            if "0 barras" in msg or "barras disponibles" in msg:
+                st.warning(
+                    f"**yfinance no puede descargar datos en Streamlit Cloud** "
+                    f"(restriccion de red del servidor gratuito).\n\n"
+                    f"Ejecuta este comando localmente desde tu PC:\n\n"
+                    f"```\npython scripts/19_incorporar_ticker.py {ticker_input}\n```\n\n"
+                    f"Una vez asignado el modelo, el scanner lo incluira automaticamente."
+                )
+            else:
+                st.error(f"Error: {msg}")
             return
 
         if resultado.get("ya_existia") and not forzar:
