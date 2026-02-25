@@ -649,6 +649,12 @@ CREATE INDEX IF NOT EXISTS idx_alertas_nivel
 """
 
 
+DDL_MIGRATION_MODELO_ASIGNADO = """
+ALTER TABLE activos
+    ADD COLUMN IF NOT EXISTS modelo_asignado VARCHAR(50);
+"""
+
+
 DDL_MIGRATION_V3 = """
 CREATE TABLE IF NOT EXISTS features_market_structure (
     ticker VARCHAR(10) NOT NULL,
@@ -734,11 +740,17 @@ def main():
             cur.execute(DDL_MIGRATION_PA)
     print("  Migracion PA completada.")
 
-    print("\n[7/7] Ejecutando migracion Scanner (alertas_scanner)...")
+    print("\n[7/8] Ejecutando migracion Scanner (alertas_scanner)...")
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(DDL_MIGRATION_SCANNER)
     print("  Migracion Scanner completada.")
+
+    print("\n[8/8] Ejecutando migracion modelo_asignado (activos)...")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(DDL_MIGRATION_MODELO_ASIGNADO)
+    print("  Migracion modelo_asignado completada.")
 
     print("\n" + "=" * 60)
     print("  SCHEMA INICIALIZADO EXITOSAMENTE")

@@ -98,7 +98,7 @@ def paso_scanner() -> list:
                 raise ValueError(calc["error"])
 
             signals = evaluar_ticker(calc["features_v3"], calc["features_pa"],
-                                     sector, modelos)
+                                     sector, modelos, ticker=ticker)
             alert_score, alert_nivel, alert_detalle = clasificar_alerta(
                 signals, calc["meta"]
             )

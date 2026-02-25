@@ -164,7 +164,7 @@ def procesar_ticker(ticker: str, modelos: dict,
     meta        = calc["meta"]
 
     # ── 3. Generar senales ────────────────────────────────────
-    signals = evaluar_ticker(features_v3, features_pa, sector, modelos)
+    signals = evaluar_ticker(features_v3, features_pa, sector, modelos, ticker=ticker)
 
     # ── 4. Clasificar alerta ──────────────────────────────────
     alert_score, alert_nivel, alert_detalle = clasificar_alerta(signals, meta)

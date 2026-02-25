@@ -70,15 +70,47 @@ def cargar_modelos_v3() -> Dict:
     return modelos
 
 
-def seleccionar_modelo(sector: Optional[str], modelos: Dict) -> tuple:
+def _obtener_modelo_asignado_db(ticker: str) -> Optional[str]:
     """
-    Selecciona el modelo correcto para el sector.
+    Consulta activos.modelo_asignado para el ticker.
+    Retorna el scope asignado (ej: 'global', 'Financials') o None si no existe.
+    """
+    from src.data.database import query_df
+    sql = "SELECT modelo_asignado FROM activos WHERE ticker = :ticker"
+    try:
+        df = query_df(sql, params={"ticker": ticker})
+        if df.empty:
+            return None
+        val = df.iloc[0]["modelo_asignado"]
+        return str(val) if val is not None and str(val) != "None" else None
+    except Exception:
+        return None
+
+
+def seleccionar_modelo(sector: Optional[str], modelos: Dict,
+                       ticker: Optional[str] = None) -> tuple:
+    """
+    Selecciona el modelo correcto para el ticker/sector.
+
+    Prioridad:
+        1. activos.modelo_asignado (evaluado empiricamente con script 19)
+        2. Champion sectorial (si el sector tiene modelo)
+        3. Champion global (fallback)
 
     Returns:
         (modelo, scope_usado)
     """
+    # 1. Asignacion especifica en DB (set por script 19)
+    if ticker:
+        asignado = _obtener_modelo_asignado_db(ticker)
+        if asignado and asignado in modelos:
+            return modelos[asignado], asignado
+
+    # 2. Champion sectorial
     if sector and sector in modelos:
         return modelos[sector], sector
+
+    # 3. Global fallback
     return modelos["global"], "global"
 
 
@@ -103,7 +135,8 @@ def _evaluar_ev(features_pa: Dict, estrategia: str) -> bool:
 # ─────────────────────────────────────────────────────────────
 
 def evaluar_ticker(features_v3: Dict, features_pa: Dict,
-                   sector: Optional[str], modelos: Dict) -> Dict:
+                   sector: Optional[str], modelos: Dict,
+                   ticker: Optional[str] = None) -> Dict:
     """
     Genera todas las senales para un ticker.
 
@@ -112,6 +145,7 @@ def evaluar_ticker(features_v3: Dict, features_pa: Dict,
         features_pa: dict con features PA y market structure adicionales
         sector:      sector del ticker (None = usar global)
         modelos:     dict de modelos cargados con cargar_modelos_v3()
+        ticker:      codigo del activo (para consultar modelo_asignado en DB)
 
     Returns:
         dict con:
@@ -123,7 +157,7 @@ def evaluar_ticker(features_v3: Dict, features_pa: Dict,
             bear_estructura   : int
     """
     # ── 1. ML V3: predict_proba ────────────────────────────────
-    modelo, scope_usado = seleccionar_modelo(sector, modelos)
+    modelo, scope_usado = seleccionar_modelo(sector, modelos, ticker=ticker)
 
     # Construir vector de features en el orden correcto
     X_vals = []
