@@ -68,9 +68,9 @@ def _log(msg: str, nivel: str = "INFO"):
 def _separador(titulo: str = ""):
     ancho = 60
     if titulo:
-        print(f"\n  {'─'*3} {titulo} {'─'*(ancho - len(titulo) - 5)}", flush=True)
+        print(f"\n  --- {titulo} {'-'*(ancho - len(titulo) - 5)}", flush=True)
     else:
-        print(f"  {'─'*ancho}", flush=True)
+        print(f"  {'-'*ancho}", flush=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ def _escribir_tab(spreadsheet, nombre: str, df: pd.DataFrame,
     # Escribir datos
     _log(f"  Escribiendo {len(valores)} filas en Sheets API...", "STEP")
     t = time.time()
-    ws.update("A1", valores)
+    ws.update(valores, "A1")
     _log(f"  Datos escritos ({time.time()-t:.1f}s)", "OK")
 
     ultima_col = _col_letra(n_cols)
@@ -288,7 +288,7 @@ def _query_dashboard():
             a.alert_score                            AS score,
             ROUND(a.ml_prob_ganancia::numeric*100,1) AS ml_pct,
             a.ml_modelo_usado                        AS modelo,
-            ROUND(a.precio_entrada::numeric, 2)      AS precio,
+            ROUND(a.precio_cierre::numeric, 2)       AS precio,
             a.pa_ev1,
             a.pa_ev2,
             a.pa_ev3,
@@ -356,7 +356,7 @@ def _query_historial(dias: int = 90):
             alert_nivel                                      AS nivel,
             alert_score                                      AS score,
             ROUND(ml_prob_ganancia::numeric*100, 1)         AS ml_pct,
-            ROUND(precio_entrada::numeric, 2)               AS precio_entrada,
+            ROUND(precio_cierre::numeric, 2)                AS precio_cierre,
             ROUND(retorno_1d_real::numeric*100,  2)         AS retorno_1d_pct,
             ROUND(retorno_5d_real::numeric*100,  2)         AS retorno_5d_pct,
             ROUND(retorno_20d_real::numeric*100, 2)         AS retorno_20d_pct,
