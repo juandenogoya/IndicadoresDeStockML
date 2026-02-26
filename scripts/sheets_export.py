@@ -21,9 +21,11 @@ Uso local (para probar):
 import os
 import sys
 import json
+import time
+import traceback
 import pathlib
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 
 ROOT = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -42,6 +44,36 @@ _LOCAL_KEY_FILE = ROOT / "secrets" / "google_sheets_key.json"
 
 
 # ─────────────────────────────────────────────────────────────
+# Logging con timestamps
+# ─────────────────────────────────────────────────────────────
+
+_t0_global = time.time()
+
+def _log(msg: str, nivel: str = "INFO"):
+    """Imprime mensaje con timestamp relativo al inicio del script."""
+    elapsed = time.time() - _t0_global
+    ts = datetime.now().strftime("%H:%M:%S")
+    prefijos = {
+        "INFO":  "  ",
+        "OK":    "  [OK]  ",
+        "STEP":  "  [-->] ",
+        "WARN":  "  [WARN]",
+        "ERROR": "  [ERR] ",
+        "SKIP":  "  [SKIP]",
+    }
+    prefijo = prefijos.get(nivel, "  ")
+    print(f"  {ts} +{elapsed:5.1f}s {prefijo} {msg}", flush=True)
+
+
+def _separador(titulo: str = ""):
+    ancho = 60
+    if titulo:
+        print(f"\n  {'─'*3} {titulo} {'─'*(ancho - len(titulo) - 5)}", flush=True)
+    else:
+        print(f"  {'─'*ancho}", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────
 # Colores RGB por nivel de alerta
 # ─────────────────────────────────────────────────────────────
 
@@ -53,12 +85,15 @@ NIVEL_COLOR = {
     "VENTA_FUERTE":  {"red": 0.86, "green": 0.20, "blue": 0.20},  # rojo oscuro
 }
 
-_COLOR_HEADER = {"red": 0.20, "green": 0.29, "blue": 0.49}   # azul oscuro
-_COLOR_HEADER_TXT = {"red": 1.0, "green": 1.0, "blue": 1.0}  # blanco
+_COLOR_HEADER     = {"red": 0.20, "green": 0.29, "blue": 0.49}   # azul oscuro
+_COLOR_HEADER_TXT = {"red": 1.0,  "green": 1.0,  "blue": 1.0}    # blanco
 
 
 def _nivel_color(nivel):
-    return NIVEL_COLOR.get(str(nivel).strip() if nivel else "", {"red": 1.0, "green": 1.0, "blue": 1.0})
+    return NIVEL_COLOR.get(
+        str(nivel).strip() if nivel else "",
+        {"red": 1.0, "green": 1.0, "blue": 1.0}
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -66,38 +101,47 @@ def _nivel_color(nivel):
 # ─────────────────────────────────────────────────────────────
 
 def _get_spreadsheet():
+    _log("Importando gspread y google-auth...", "STEP")
     try:
         import gspread
         from google.oauth2.service_account import Credentials
-    except ImportError:
-        raise ImportError("Instalar: pip install gspread google-auth")
+        _log(f"gspread {gspread.__version__} importado OK", "OK")
+    except ImportError as e:
+        raise ImportError(f"Instalar: pip install gspread google-auth  ({e})")
 
+    # Sheet ID
     sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "").strip()
     if not sheet_id:
         raise ValueError(
             "GOOGLE_SHEETS_ID no configurado.\n"
-            "  Local: agregar GOOGLE_SHEETS_ID=... en el archivo .env\n"
-            "  GitHub: agregar Secret GOOGLE_SHEETS_ID"
+            "         Local:  agregar GOOGLE_SHEETS_ID=... en .env\n"
+            "         GitHub: agregar Secret GOOGLE_SHEETS_ID"
         )
+    _log(f"GOOGLE_SHEETS_ID: ...{sheet_id[-12:]}", "INFO")
 
-    # Prioridad 1: variable de entorno GOOGLE_SHEETS_KEY (GitHub Actions)
+    # Credenciales
     creds_json = os.environ.get("GOOGLE_SHEETS_KEY", "").strip()
     if creds_json:
+        _log("Credenciales: desde variable de entorno GOOGLE_SHEETS_KEY", "INFO")
         creds_dict = json.loads(creds_json)
-
-    # Prioridad 2: archivo local secrets/google_sheets_key.json (desarrollo)
     elif _LOCAL_KEY_FILE.exists():
-        print(f"  [local] Usando credenciales desde: {_LOCAL_KEY_FILE}")
+        _log(f"Credenciales: desde archivo local {_LOCAL_KEY_FILE.name}", "INFO")
         with open(_LOCAL_KEY_FILE, "r", encoding="utf-8") as f:
             creds_dict = json.load(f)
-
     else:
         raise ValueError(
             "Credenciales de Google no encontradas.\n"
-            "  Opcion A (GitHub): configurar Secret GOOGLE_SHEETS_KEY\n"
-            f"  Opcion B (local):  guardar el JSON en {_LOCAL_KEY_FILE}"
+            "         Opcion A (GitHub): configurar Secret GOOGLE_SHEETS_KEY\n"
+            f"         Opcion B (local):  guardar JSON en {_LOCAL_KEY_FILE}"
         )
 
+    # Mostrar service account sin exponer datos sensibles
+    sa_email = creds_dict.get("client_email", "desconocido")
+    _log(f"Service account: {sa_email}", "INFO")
+
+    # Autenticar
+    _log("Autenticando con Google API...", "STEP")
+    t = time.time()
     scopes = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
@@ -105,7 +149,14 @@ def _get_spreadsheet():
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
-    return gc.open_by_key(sheet_id)
+    _log(f"Autenticacion OK ({time.time()-t:.1f}s)", "OK")
+
+    # Abrir spreadsheet
+    _log("Abriendo spreadsheet...", "STEP")
+    t = time.time()
+    spreadsheet = gc.open_by_key(sheet_id)
+    _log(f"Spreadsheet '{spreadsheet.title}' abierto ({time.time()-t:.1f}s)", "OK")
+    return spreadsheet
 
 
 # ─────────────────────────────────────────────────────────────
@@ -116,32 +167,49 @@ def _escribir_tab(spreadsheet, nombre: str, df: pd.DataFrame,
                   col_nivel: str = None):
     """
     Limpia el tab y escribe el DataFrame completo.
-    Aplica formato al header y (si se indica) colores por nivel.
+    Aplica formato al header y colores por nivel si se indica.
     """
     # Obtener o crear worksheet
+    _log(f"  Buscando tab '{nombre}'...", "STEP")
+    t = time.time()
     try:
         ws = spreadsheet.worksheet(nombre)
+        _log(f"  Tab '{nombre}' encontrado, limpiando...", "INFO")
         ws.clear()
+        _log(f"  Tab limpiado ({time.time()-t:.1f}s)", "OK")
     except Exception:
+        _log(f"  Tab '{nombre}' no existe, creando...", "INFO")
         ws = spreadsheet.add_worksheet(title=nombre, rows=600, cols=30)
+        _log(f"  Tab '{nombre}' creado ({time.time()-t:.1f}s)", "OK")
 
     if df.empty:
+        _log(f"  DataFrame vacio — escribiendo placeholder", "WARN")
         ws.update("A1", [["Sin datos"]])
         return ws
 
-    # Serializar: todo a string para evitar errores de tipo
+    n_filas = len(df)
+    n_cols  = len(df.columns)
+    _log(f"  Datos: {n_filas} filas x {n_cols} columnas", "INFO")
+    _log(f"  Columnas: {', '.join(df.columns.tolist())}", "INFO")
+
+    # Serializar a string
+    _log(f"  Serializando datos...", "STEP")
     df_str = df.copy().fillna("")
     for col in df_str.columns:
         df_str[col] = df_str[col].astype(str).str.replace("nan", "")
-
     valores = [df_str.columns.tolist()] + df_str.values.tolist()
-    ws.update("A1", valores)
 
-    n_cols  = len(df.columns)
-    n_filas = len(df)
+    # Escribir datos
+    _log(f"  Escribiendo {len(valores)} filas en Sheets API...", "STEP")
+    t = time.time()
+    ws.update("A1", valores)
+    _log(f"  Datos escritos ({time.time()-t:.1f}s)", "OK")
+
     ultima_col = _col_letra(n_cols)
 
-    # Formato header: fondo azul oscuro, texto blanco, negrita
+    # Formato header
+    _log(f"  Aplicando formato al header (A1:{ultima_col}1)...", "STEP")
+    t = time.time()
     ws.format(f"A1:{ultima_col}1", {
         "textFormat": {
             "bold": True,
@@ -150,18 +218,22 @@ def _escribir_tab(spreadsheet, nombre: str, df: pd.DataFrame,
         "backgroundColor": _COLOR_HEADER,
         "horizontalAlignment": "CENTER",
     })
+    _log(f"  Header formateado ({time.time()-t:.1f}s)", "OK")
 
-    # Colorear filas por nivel si corresponde
+    # Colorear filas por nivel
     if col_nivel and col_nivel in df_str.columns:
-        col_idx = df_str.columns.tolist().index(col_nivel)
+        _log(f"  Coloreando filas por columna '{col_nivel}'...", "STEP")
+        t = time.time()
         requests = []
+        conteo = {}
         for i, nivel_val in enumerate(df_str[col_nivel]):
             color = _nivel_color(nivel_val)
+            conteo[str(nivel_val)] = conteo.get(str(nivel_val), 0) + 1
             requests.append({
                 "repeatCell": {
                     "range": {
                         "sheetId": ws.id,
-                        "startRowIndex": i + 1,   # +1 por el header
+                        "startRowIndex": i + 1,
                         "endRowIndex":   i + 2,
                         "startColumnIndex": 0,
                         "endColumnIndex": n_cols,
@@ -174,8 +246,12 @@ def _escribir_tab(spreadsheet, nombre: str, df: pd.DataFrame,
             })
         if requests:
             spreadsheet.batch_update({"requests": requests})
+        resumen_colores = ", ".join(f"{k}:{v}" for k, v in sorted(conteo.items()))
+        _log(f"  Filas coloreadas ({time.time()-t:.1f}s) — {resumen_colores}", "OK")
 
-    # Congelar primera fila
+    # Congelar fila header
+    _log(f"  Congelando fila 1...", "STEP")
+    t = time.time()
     spreadsheet.batch_update({"requests": [{
         "updateSheetProperties": {
             "properties": {
@@ -185,6 +261,7 @@ def _escribir_tab(spreadsheet, nombre: str, df: pd.DataFrame,
             "fields": "gridProperties.frozenRowCount",
         }
     }]})
+    _log(f"  Fila congelada ({time.time()-t:.1f}s)", "OK")
 
     return ws
 
@@ -296,49 +373,121 @@ def _query_historial(dias: int = 90):
 # ─────────────────────────────────────────────────────────────
 
 def exportar_a_sheets():
-    print("\n=== Google Sheets Export ===")
+    print(flush=True)
+    print("=" * 60, flush=True)
+    print("  GOOGLE SHEETS EXPORT", flush=True)
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print("=" * 60, flush=True)
 
-    # Verificar que al menos el Sheet ID esté configurado
-    if not os.environ.get("GOOGLE_SHEETS_ID", "").strip():
-        print("  [SKIP] GOOGLE_SHEETS_ID no configurado. Saltando export.")
+    # ── Pre-checks ────────────────────────────────────────────
+    _separador("Pre-checks")
+
+    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "").strip()
+    if not sheet_id:
+        _log("GOOGLE_SHEETS_ID no configurado.", "SKIP")
+        _log("Agregar en .env: GOOGLE_SHEETS_ID=tu_id_del_sheet", "INFO")
         return
 
-    # Verificar credenciales: env var o archivo local
     tiene_creds = (
         bool(os.environ.get("GOOGLE_SHEETS_KEY", "").strip())
         or _LOCAL_KEY_FILE.exists()
     )
     if not tiene_creds:
-        print(f"  [SKIP] Credenciales no encontradas.")
-        print(f"         Guardar JSON del Service Account en: {_LOCAL_KEY_FILE}")
+        _log("Credenciales de Google no encontradas.", "SKIP")
+        _log(f"Guardar JSON del Service Account en: {_LOCAL_KEY_FILE}", "INFO")
         return
 
-    print("  Conectando a Google Sheets...")
-    spreadsheet = _get_spreadsheet()
-    print(f"  OK — spreadsheet: '{spreadsheet.title}'")
+    _log("GOOGLE_SHEETS_ID: configurado", "OK")
+    _log(f"Credenciales:     {'env var' if os.environ.get('GOOGLE_SHEETS_KEY') else _LOCAL_KEY_FILE.name}", "OK")
 
-    # 1. Tab Dashboard
-    print("  [1/3] Escribiendo tab 'Dashboard'...")
-    df1 = _query_dashboard()
-    _escribir_tab(spreadsheet, "Dashboard", df1, col_nivel="nivel")
-    print(f"        {len(df1)} tickers.")
+    # ── Conexion a Google Sheets ──────────────────────────────
+    _separador("Conexion a Google Sheets")
+    try:
+        spreadsheet = _get_spreadsheet()
+    except Exception as e:
+        _log(f"Error conectando a Google Sheets: {e}", "ERROR")
+        traceback.print_exc()
+        sys.exit(1)
 
-    # 2. Tab Analisis Tecnico
-    print("  [2/3] Escribiendo tab 'Analisis Tecnico'...")
-    df2 = _query_analisis()
-    _escribir_tab(spreadsheet, "Analisis Tecnico", df2)
-    print(f"        {len(df2)} tickers.")
+    resultados = {}
 
-    # 3. Tab Historial
-    print("  [3/3] Escribiendo tab 'Historial'...")
-    df3 = _query_historial(dias=90)
-    _escribir_tab(spreadsheet, "Historial", df3, col_nivel="nivel")
-    print(f"        {len(df3)} registros (90 dias).")
+    # ── Tab 1: Dashboard ──────────────────────────────────────
+    _separador("Tab 1/3: Dashboard")
+    try:
+        _log("Consultando PostgreSQL (alertas_scanner)...", "STEP")
+        t = time.time()
+        df1 = _query_dashboard()
+        _log(f"Query OK: {len(df1)} tickers en {time.time()-t:.1f}s", "OK")
 
-    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
-    print(f"\n  Actualizado: {date.today().isoformat()}")
-    print(f"  URL: https://docs.google.com/spreadsheets/d/{sheet_id}/edit")
-    print("=" * 35)
+        if not df1.empty:
+            niveles = df1["nivel"].value_counts().to_dict()
+            resumen = ", ".join(f"{k}:{v}" for k, v in niveles.items())
+            _log(f"Distribucion niveles: {resumen}", "INFO")
+
+        _escribir_tab(spreadsheet, "Dashboard", df1, col_nivel="nivel")
+        _log(f"Tab 'Dashboard' actualizado: {len(df1)} tickers", "OK")
+        resultados["Dashboard"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Dashboard: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Dashboard"] = f"ERROR: {e}"
+
+    # ── Tab 2: Analisis Tecnico ───────────────────────────────
+    _separador("Tab 2/3: Analisis Tecnico")
+    try:
+        _log("Consultando PostgreSQL (indicadores_tecnicos)...", "STEP")
+        t = time.time()
+        df2 = _query_analisis()
+        _log(f"Query OK: {len(df2)} tickers en {time.time()-t:.1f}s", "OK")
+
+        _escribir_tab(spreadsheet, "Analisis Tecnico", df2)
+        _log(f"Tab 'Analisis Tecnico' actualizado: {len(df2)} tickers", "OK")
+        resultados["Analisis Tecnico"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Analisis Tecnico: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Analisis Tecnico"] = f"ERROR: {e}"
+
+    # ── Tab 3: Historial ──────────────────────────────────────
+    _separador("Tab 3/3: Historial")
+    try:
+        _log("Consultando PostgreSQL (alertas_scanner 90 dias)...", "STEP")
+        t = time.time()
+        df3 = _query_historial(dias=90)
+        _log(f"Query OK: {len(df3)} registros en {time.time()-t:.1f}s", "OK")
+
+        if not df3.empty:
+            verificados = (df3["verificado"] == "si").sum()
+            _log(f"Alertas verificadas con retorno real: {verificados}/{len(df3)}", "INFO")
+
+        _escribir_tab(spreadsheet, "Historial", df3, col_nivel="nivel")
+        _log(f"Tab 'Historial' actualizado: {len(df3)} registros", "OK")
+        resultados["Historial"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Historial: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Historial"] = f"ERROR: {e}"
+
+    # ── Resumen final ─────────────────────────────────────────
+    _separador("Resumen")
+    total_seg = time.time() - _t0_global
+    todos_ok = all(v == "OK" for v in resultados.values())
+
+    for tab, estado in resultados.items():
+        nivel_log = "OK" if estado == "OK" else "ERROR"
+        _log(f"{tab:<20} {estado}", nivel_log)
+
+    print(flush=True)
+    _log(f"Tiempo total: {total_seg:.1f}s", "INFO")
+    _log(f"Fecha:        {date.today().isoformat()}", "INFO")
+    _log(f"URL:  https://docs.google.com/spreadsheets/d/{sheet_id}/edit", "INFO")
+    print("=" * 60, flush=True)
+
+    if not todos_ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
