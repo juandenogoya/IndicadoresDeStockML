@@ -838,6 +838,139 @@ def tab_velas():
             unsafe_allow_html=True,
         )
 
+    # ── Sintesis semanal ───────────────────────────────────────
+    st.divider()
+    st.markdown("**Sintesis semanal:**")
+
+    # Sombras recurrentes (>40% del rango = significativa)
+    n_ssup_larga = int((df["sombra_sup_pct"] > 40).sum())
+    n_sinf_larga = int((df["sombra_inf_pct"] > 40).sum())
+
+    # Momentum intrasemanal: df ordenado desc → iloc[0]=hoy, iloc[4]=hace 5d
+    cr_rec = df.iloc[0:2]["cierre_rango"].mean()
+    cr_ant = df.iloc[3:5]["cierre_rango"].mean() if len(df) >= 5 else float("nan")
+    vol_rec = df.iloc[0:2]["vol_relativo"].mean() if df["vol_relativo"].notna().any() else float("nan")
+    vol_ant = df.iloc[3:5]["vol_relativo"].mean() if df["vol_relativo"].notna().any() else float("nan")
+
+    # Racha de dias consecutivos desde hoy
+    streak = 1
+    streak_dir = bool(df.iloc[0]["es_alcista"])
+    for _i in range(1, len(df)):
+        if bool(df.iloc[_i]["es_alcista"]) == streak_dir:
+            streak += 1
+        else:
+            break
+
+    # Patrones detectados en la semana
+    patrones_semana = []
+    for _, _r in df.iterrows():
+        _p = _patron(_r)
+        if _p != "-":
+            patrones_semana.append(f"{_p} ({_r['fecha'].strftime('%d/%m')})")
+
+    # Score de sesgo general
+    sesgo_score = 0
+    if n_alc >= 4:   sesgo_score += 2
+    elif n_alc == 3: sesgo_score += 1
+    elif n_baj >= 4: sesgo_score -= 2
+    elif n_baj == 3: sesgo_score -= 1
+    if pd.notna(avg_cr):
+        if avg_cr > 65:   sesgo_score += 1
+        elif avg_cr < 35: sesgo_score -= 1
+    if n_sinf_larga >= 3: sesgo_score += 1
+    if n_ssup_larga >= 3: sesgo_score -= 1
+
+    if sesgo_score >= 2:
+        sesgo_label, sesgo_emoji = "ALCISTA",          "🟢"
+        bg_sint, border_sint = "#0d3b1a", "#26a69a"
+    elif sesgo_score == 1:
+        sesgo_label, sesgo_emoji = "ALCISTA MODERADO", "🟢"
+        bg_sint, border_sint = "#0d3b1a", "#26a69a"
+    elif sesgo_score == 0:
+        sesgo_label, sesgo_emoji = "NEUTRAL",          "🟡"
+        bg_sint, border_sint = "#2a2a00", "#f6c90e"
+    elif sesgo_score == -1:
+        sesgo_label, sesgo_emoji = "BAJISTA MODERADO", "🔴"
+        bg_sint, border_sint = "#3b0d0d", "#ef5350"
+    else:
+        sesgo_label, sesgo_emoji = "BAJISTA",          "🔴"
+        bg_sint, border_sint = "#3b0d0d", "#ef5350"
+
+    # Bullets de analisis
+    bullets = []
+
+    # 1. Direccion dominante
+    if n_alc >= 4:
+        bullets.append(f"<b>Direccion:</b> {n_alc}/5 dias alcistas — semana compradora")
+    elif n_alc == 3:
+        bullets.append(f"<b>Direccion:</b> {n_alc}/5 dias alcistas — sesgo alcista leve")
+    elif n_baj == 3:
+        bullets.append(f"<b>Direccion:</b> {n_baj}/5 dias bajistas — sesgo bajista leve")
+    else:
+        bullets.append(f"<b>Direccion:</b> {n_baj}/5 dias bajistas — semana vendedora")
+
+    # 2. Cierres en rango
+    if pd.notna(avg_cr):
+        if avg_cr > 65:
+            bullets.append(f"<b>Cierres:</b> promedio {avg_cr:.0f}% del rango — compradores dominando consistentemente al cierre")
+        elif avg_cr > 50:
+            bullets.append(f"<b>Cierres:</b> promedio {avg_cr:.0f}% del rango — leve presencia compradora")
+        elif avg_cr > 35:
+            bullets.append(f"<b>Cierres:</b> promedio {avg_cr:.0f}% del rango — cierres neutros, sin conviccion")
+        else:
+            bullets.append(f"<b>Cierres:</b> promedio {avg_cr:.0f}% del rango — vendedores dominando al cierre")
+
+    # 3. Sombras recurrentes
+    if n_ssup_larga >= 3:
+        bullets.append(f"<b>Sombras:</b> rechazo en maximos {n_ssup_larga}/5 dias — resistencia activa, presion vendedora recurrente")
+    if n_sinf_larga >= 3:
+        bullets.append(f"<b>Sombras:</b> soporte en minimos {n_sinf_larga}/5 dias — compradores defendiendo, soporte activo")
+    if n_ssup_larga < 3 and n_sinf_larga < 3:
+        bullets.append("<b>Sombras:</b> sin patrones de rechazo recurrente — movimiento sin presiones extremas")
+
+    # 4. Momentum intrasemanal
+    if pd.notna(cr_rec) and pd.notna(cr_ant):
+        delta_cr = cr_rec - cr_ant
+        if delta_cr > 15:
+            bullets.append(f"<b>Momentum:</b> mejorando — ultimos 2d cerrando en {cr_rec:.0f}% vs {cr_ant:.0f}% los primeros 2d")
+        elif delta_cr < -15:
+            bullets.append(f"<b>Momentum:</b> deteriorando — ultimos 2d cerrando en {cr_rec:.0f}% vs {cr_ant:.0f}% los primeros 2d")
+        else:
+            bullets.append(f"<b>Momentum:</b> estable a lo largo de la semana ({cr_ant:.0f}% → {cr_rec:.0f}%)")
+
+    # 5. Volumen intrasemanal
+    if pd.notna(vol_rec) and pd.notna(vol_ant) and vol_ant > 0:
+        vol_delta = (vol_rec - vol_ant) / vol_ant * 100
+        if vol_delta > 20:
+            if pd.notna(avg_cr) and avg_cr > 50:
+                bullets.append(f"<b>Volumen:</b> aumentando hacia el fin de semana ({vol_rec:.1f}x vs {vol_ant:.1f}x) — confirma el movimiento")
+            else:
+                bullets.append(f"<b>Volumen:</b> aumentando ({vol_rec:.1f}x vs {vol_ant:.1f}x) con precio debil — posible distribucion")
+        elif vol_delta < -20:
+            bullets.append(f"<b>Volumen:</b> cayendo hacia el fin de semana ({vol_rec:.1f}x vs {vol_ant:.1f}x) — movimiento perdiendo respaldo")
+
+    # 6. Racha activa
+    if streak >= 3:
+        dir_str = "alcistas" if streak_dir else "bajistas"
+        bullets.append(f"<b>Racha:</b> {streak} dias consecutivos {dir_str} hasta hoy")
+
+    # 7. Patrones de la semana
+    if patrones_semana:
+        bullets.append(f"<b>Patrones:</b> {', '.join(patrones_semana)}")
+
+    bullets_html = "".join(
+        f"<li style='margin-bottom:6px;'>{b}</li>" for b in bullets
+    )
+    st.markdown(
+        f'<div style="background:{bg_sint};padding:14px 18px;border-radius:8px;'
+        f'border-left:4px solid {border_sint};font-size:0.9rem;">'
+        f'<div style="font-size:1.05rem;font-weight:bold;margin-bottom:10px;">'
+        f'{sesgo_emoji} Sesgo general: {sesgo_label}</div>'
+        f'<ul style="margin:0;padding-left:20px;">{bullets_html}</ul>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     # ── Guia de interpretacion (expandible) ───────────────────
     st.divider()
     with st.expander("Guia de interpretacion"):
