@@ -78,11 +78,21 @@ def _separador(titulo: str = ""):
 # ─────────────────────────────────────────────────────────────
 
 NIVEL_COLOR = {
+    # Niveles de alerta (Dashboard / Historial)
     "COMPRA_FUERTE": {"red": 0.13, "green": 0.55, "blue": 0.13},  # verde oscuro
     "COMPRA":        {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
     "NEUTRAL":       {"red": 1.00, "green": 1.00, "blue": 1.00},  # blanco
     "VENTA":         {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
     "VENTA_FUERTE":  {"red": 0.86, "green": 0.20, "blue": 0.20},  # rojo oscuro
+    # Tipo vela (tab Velas)
+    "Alcista":       {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
+    "Bajista":       {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
+    # Accion recomendada (tab Conclusiones)
+    "PRIORIDAD":     {"red": 0.13, "green": 0.55, "blue": 0.13},  # verde oscuro
+    "ESTUDIAR":      {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
+    "MONITOREAR":    {"red": 1.00, "green": 1.00, "blue": 0.75},  # amarillo claro
+    "OBSERVAR":      {"red": 1.00, "green": 1.00, "blue": 1.00},  # blanco
+    "EVITAR":        {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
 }
 
 _COLOR_HEADER     = {"red": 0.20, "green": 0.29, "blue": 0.49}   # azul oscuro
@@ -368,6 +378,235 @@ def _query_historial(dias: int = 90):
     return query_df(sql, params={"fecha_desde": fecha_desde})
 
 
+def _query_velas():
+    """
+    Ultimos 5 dias de estructura de velas para todos los tickers.
+    Calcula: tipo, cuerpo_pct, sombras, cierre_rango, patron.
+    """
+    sql_precios = """
+        SELECT ticker, fecha, open, high, low, close, volume
+        FROM (
+            SELECT ticker, fecha, open, high, low, close, volume,
+                   ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+            FROM precios_diarios
+        ) t
+        WHERE rn <= 5
+        ORDER BY ticker, fecha DESC
+    """
+    df_p = query_df(sql_precios)
+    if df_p.empty:
+        return df_p
+
+    # Patrones de velas (tabla features_precio_accion)
+    sql_pat = """
+        SELECT ticker, fecha,
+               COALESCE(patron_hammer,         0) AS patron_hammer,
+               COALESCE(patron_engulfing_bull,  0) AS patron_engulfing_bull,
+               COALESCE(patron_engulfing_bear,  0) AS patron_engulfing_bear,
+               COALESCE(patron_shooting_star,   0) AS patron_shooting_star
+        FROM (
+            SELECT ticker, fecha,
+                   patron_hammer, patron_engulfing_bull,
+                   patron_engulfing_bear, patron_shooting_star,
+                   ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+            FROM features_precio_accion
+        ) t
+        WHERE rn <= 5
+    """
+    try:
+        df_pat = query_df(sql_pat)
+    except Exception:
+        df_pat = pd.DataFrame()
+
+    # Volumen relativo
+    sql_vol = """
+        SELECT ticker, fecha, vol_relativo
+        FROM (
+            SELECT ticker, fecha, vol_relativo,
+                   ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+            FROM indicadores_tecnicos
+        ) t
+        WHERE rn <= 5
+    """
+    df_vol = query_df(sql_vol)
+
+    # Merge
+    df = df_p.copy()
+    df["fecha"] = pd.to_datetime(df["fecha"])
+
+    if not df_pat.empty:
+        df_pat["fecha"] = pd.to_datetime(df_pat["fecha"])
+        df = df.merge(df_pat, on=["ticker", "fecha"], how="left")
+    else:
+        for c in ["patron_hammer", "patron_engulfing_bull",
+                  "patron_engulfing_bear", "patron_shooting_star"]:
+            df[c] = 0
+
+    if not df_vol.empty:
+        df_vol["fecha"] = pd.to_datetime(df_vol["fecha"])
+        df = df.merge(df_vol[["ticker", "fecha", "vol_relativo"]],
+                      on=["ticker", "fecha"], how="left")
+    else:
+        df["vol_relativo"] = float("nan")
+
+    # Calculos numericos
+    for col in ["open", "high", "low", "close"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["rango"]          = (df["high"] - df["low"]).replace(0, float("nan"))
+    df["cuerpo"]         = (df["close"] - df["open"]).abs()
+    df["sombra_sup"]     = df["high"] - df[["close", "open"]].max(axis=1)
+    df["sombra_inf"]     = df[["close", "open"]].min(axis=1) - df["low"]
+    df["cuerpo_pct"]     = (df["cuerpo"]     / df["rango"] * 100).round(1)
+    df["sombra_sup_pct"] = (df["sombra_sup"] / df["rango"] * 100).round(1)
+    df["sombra_inf_pct"] = (df["sombra_inf"] / df["rango"] * 100).round(1)
+    df["cierre_rango"]   = ((df["close"] - df["low"]) / df["rango"] * 100).round(1)
+    df["tipo"]           = df.apply(
+        lambda r: "Alcista" if r["close"] >= r["open"] else "Bajista", axis=1
+    )
+
+    def _lbl_cuerpo(v):
+        if pd.isna(v): return "n/d"
+        if v > 70: return f"Grande ({v:.0f}%)"
+        if v > 40: return f"Medio ({v:.0f}%)"
+        if v > 20: return f"Pequeno ({v:.0f}%)"
+        return f"Doji ({v:.0f}%)"
+
+    def _patron(r):
+        if r.get("patron_hammer",         0): return "Hammer"
+        if r.get("patron_engulfing_bull",  0): return "Engulfing Bull"
+        if r.get("patron_engulfing_bear",  0): return "Engulfing Bear"
+        if r.get("patron_shooting_star",   0): return "Shooting Star"
+        return "-"
+
+    df["cuerpo_lbl"] = df["cuerpo_pct"].apply(_lbl_cuerpo)
+    df["patron"]     = df.apply(_patron, axis=1)
+
+    result = pd.DataFrame({
+        "ticker":           df["ticker"],
+        "fecha":            df["fecha"].dt.strftime("%Y-%m-%d"),
+        "close":            df["close"].round(2),
+        "tipo":             df["tipo"],
+        "cuerpo":           df["cuerpo_lbl"],
+        "sombra_sup_pct":   df["sombra_sup_pct"],
+        "sombra_inf_pct":   df["sombra_inf_pct"],
+        "cierre_rango_pct": df["cierre_rango"],
+        "patron":           df["patron"],
+        "vol_relativo":     df["vol_relativo"].round(2),
+    })
+    return result.sort_values(["ticker", "fecha"],
+                              ascending=[True, False]).reset_index(drop=True)
+
+
+def _query_conclusiones():
+    """
+    Resumen accionable para swing trading.
+    Sintetiza: señal ML + indicadores + vela del dia -> accion recomendada.
+    Acciones: PRIORIDAD > ESTUDIAR > MONITOREAR > OBSERVAR > EVITAR
+    """
+    # Señal ML (ultima por ticker)
+    sql_alertas = """
+        SELECT
+            a.ticker,
+            COALESCE(act.sector, 'Sin sector')        AS sector,
+            a.alert_nivel                             AS nivel,
+            a.alert_score                             AS score,
+            ROUND(a.ml_prob_ganancia::numeric*100, 1) AS ml_pct,
+            ROUND(a.precio_cierre::numeric, 2)        AS precio,
+            a.scan_fecha                              AS fecha_scan
+        FROM (
+            SELECT DISTINCT ON (ticker) *
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        ) a
+        LEFT JOIN activos act ON act.ticker = a.ticker
+    """
+    df_a = query_df(sql_alertas)
+
+    # Indicadores tecnicos (ultimo por ticker)
+    sql_ind = """
+        SELECT DISTINCT ON (ticker)
+            ticker,
+            ROUND(rsi14::numeric, 1)        AS rsi14,
+            ROUND(adx::numeric, 1)          AS adx,
+            ROUND(dist_sma200::numeric, 2)  AS dist_sma200_pct,
+            ROUND(vol_relativo::numeric, 2) AS vol_relativo
+        FROM indicadores_tecnicos
+        ORDER BY ticker, fecha DESC
+    """
+    df_ind = query_df(sql_ind)
+
+    # Ultima vela + patron del dia
+    sql_vela = """
+        SELECT
+            p.ticker,
+            CASE WHEN p.close >= p.open THEN 'Alcista' ELSE 'Bajista' END AS tipo_vela,
+            COALESCE(
+                CASE
+                    WHEN fp.patron_hammer         = 1 THEN 'Hammer'
+                    WHEN fp.patron_engulfing_bull = 1 THEN 'Engulfing Bull'
+                    WHEN fp.patron_engulfing_bear = 1 THEN 'Engulfing Bear'
+                    WHEN fp.patron_shooting_star  = 1 THEN 'Shooting Star'
+                    ELSE '-'
+                END, '-'
+            ) AS patron_vela
+        FROM (
+            SELECT DISTINCT ON (ticker) ticker, fecha, open, close
+            FROM precios_diarios
+            ORDER BY ticker, fecha DESC
+        ) p
+        LEFT JOIN (
+            SELECT DISTINCT ON (ticker) ticker, fecha,
+                   patron_hammer, patron_engulfing_bull,
+                   patron_engulfing_bear, patron_shooting_star
+            FROM features_precio_accion
+            ORDER BY ticker, fecha DESC
+        ) fp ON fp.ticker = p.ticker AND fp.fecha = p.fecha
+    """
+    try:
+        df_v = query_df(sql_vela)
+    except Exception:
+        df_v = pd.DataFrame()
+
+    # Merge
+    df = df_a.copy()
+    if not df_ind.empty:
+        df = df.merge(df_ind, on="ticker", how="left")
+    if not df_v.empty:
+        df = df.merge(df_v, on="ticker", how="left")
+    else:
+        df["tipo_vela"]  = "-"
+        df["patron_vela"] = "-"
+
+    # Accion recomendada basada en señales
+    def _accion(r):
+        nivel  = str(r.get("nivel",  "") or "")
+        ml_pct = float(r.get("ml_pct", 0) or 0)
+        if nivel == "COMPRA_FUERTE" and ml_pct >= 60:
+            return "PRIORIDAD"
+        if nivel == "COMPRA_FUERTE" or (nivel == "COMPRA" and ml_pct >= 55):
+            return "ESTUDIAR"
+        if nivel == "COMPRA" or (nivel == "NEUTRAL" and ml_pct >= 60):
+            return "MONITOREAR"
+        if nivel in ("VENTA", "VENTA_FUERTE"):
+            return "EVITAR"
+        return "OBSERVAR"
+
+    df["accion"] = df.apply(_accion, axis=1)
+
+    # Orden por accion + score
+    _orden = {"PRIORIDAD": 1, "ESTUDIAR": 2, "MONITOREAR": 3,
+              "OBSERVAR": 4, "EVITAR": 5}
+    df["_ord"] = df["accion"].map(_orden).fillna(6)
+    df = df.sort_values(["_ord", "score"], ascending=[True, False])
+    df = df.drop(columns=["_ord"]).reset_index(drop=True)
+
+    cols = ["ticker", "sector", "accion", "nivel", "score", "ml_pct",
+            "precio", "rsi14", "adx", "dist_sma200_pct", "vol_relativo",
+            "tipo_vela", "patron_vela", "fecha_scan"]
+    return df[[c for c in cols if c in df.columns]]
+
+
 # ─────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────
@@ -412,7 +651,7 @@ def exportar_a_sheets():
     resultados = {}
 
     # ── Tab 1: Dashboard ──────────────────────────────────────
-    _separador("Tab 1/3: Dashboard")
+    _separador("Tab 1/5: Dashboard")
     try:
         _log("Consultando PostgreSQL (alertas_scanner)...", "STEP")
         t = time.time()
@@ -434,7 +673,7 @@ def exportar_a_sheets():
         resultados["Dashboard"] = f"ERROR: {e}"
 
     # ── Tab 2: Analisis Tecnico ───────────────────────────────
-    _separador("Tab 2/3: Analisis Tecnico")
+    _separador("Tab 2/5: Analisis Tecnico")
     try:
         _log("Consultando PostgreSQL (indicadores_tecnicos)...", "STEP")
         t = time.time()
@@ -451,7 +690,7 @@ def exportar_a_sheets():
         resultados["Analisis Tecnico"] = f"ERROR: {e}"
 
     # ── Tab 3: Historial ──────────────────────────────────────
-    _separador("Tab 3/3: Historial")
+    _separador("Tab 3/5: Historial")
     try:
         _log("Consultando PostgreSQL (alertas_scanner 90 dias)...", "STEP")
         t = time.time()
@@ -470,6 +709,54 @@ def exportar_a_sheets():
         _log(f"FALLO en tab Historial: {e}", "ERROR")
         traceback.print_exc()
         resultados["Historial"] = f"ERROR: {e}"
+
+    # ── Tab 4: Velas ─────────────────────────────────────────
+    _separador("Tab 4/5: Velas")
+    try:
+        _log("Consultando PostgreSQL (precios + patrones + vol)...", "STEP")
+        t = time.time()
+        df4 = _query_velas()
+        _log(f"Query OK: {len(df4)} filas en {time.time()-t:.1f}s", "OK")
+
+        if not df4.empty:
+            n_alc = (df4["tipo"] == "Alcista").sum()
+            n_baj = (df4["tipo"] == "Bajista").sum()
+            patrones = df4[df4["patron"] != "-"]["patron"].value_counts().to_dict()
+            _log(f"Alcistas: {n_alc} | Bajistas: {n_baj} | Patrones: {patrones}", "INFO")
+
+        _escribir_tab(spreadsheet, "Velas", df4, col_nivel="tipo")
+        _log(f"Tab 'Velas' actualizado: {len(df4)} filas ({len(df4)//5} tickers x 5 dias)", "OK")
+        resultados["Velas"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Velas: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Velas"] = f"ERROR: {e}"
+
+    # ── Tab 5: Conclusiones ───────────────────────────────────
+    _separador("Tab 5/5: Conclusiones")
+    try:
+        _log("Construyendo resumen accionable para swing trading...", "STEP")
+        t = time.time()
+        df5 = _query_conclusiones()
+        _log(f"Query OK: {len(df5)} tickers en {time.time()-t:.1f}s", "OK")
+
+        if not df5.empty:
+            acciones = df5["accion"].value_counts().to_dict()
+            resumen  = ", ".join(f"{k}:{v}" for k, v in acciones.items())
+            _log(f"Distribucion acciones: {resumen}", "INFO")
+            prioritarios = df5[df5["accion"] == "PRIORIDAD"]["ticker"].tolist()
+            if prioritarios:
+                _log(f"PRIORIDAD: {', '.join(prioritarios)}", "OK")
+
+        _escribir_tab(spreadsheet, "Conclusiones", df5, col_nivel="accion")
+        _log(f"Tab 'Conclusiones' actualizado: {len(df5)} tickers", "OK")
+        resultados["Conclusiones"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Conclusiones: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Conclusiones"] = f"ERROR: {e}"
 
     # ── Resumen final ─────────────────────────────────────────
     _separador("Resumen")
