@@ -216,7 +216,8 @@ def _guardar_asignacion(ticker: str, scope: str):
 
 def incorporar_ticker(ticker: str,
                       umbral: float = UMBRAL_GANANCIA_DEFAULT,
-                      forzar: bool = False) -> dict:
+                      forzar: bool = False,
+                      sector: str = None) -> dict:
     """
     Descarga historial, evalua los 4 champion V3 y asigna el mejor.
     Usa split 70/15/15 TRAIN/TEST/BACKTEST, igual que el pipeline de entrenamiento.
@@ -258,8 +259,17 @@ def incorporar_ticker(ticker: str,
     try:
         from src.pipeline.data_manager import persistir_ticker_nuevo
         from src.indicators.technical import procesar_indicadores_ticker
-        persistir_ticker_nuevo(df_ohlcv, ticker, sector=None)
+        persistir_ticker_nuevo(df_ohlcv, ticker, sector=sector)
         procesar_indicadores_ticker(ticker, df_ohlcv, guardar_db=True)
+        # Actualizar sector en activos si fue provisto (ON CONFLICT DO NOTHING no lo hace)
+        if sector:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE activos SET sector = %s WHERE ticker = %s",
+                        (sector, ticker)
+                    )
+            print(f"         Sector '{sector}' asignado a {ticker}.")
     except Exception as e:
         print(f"  [WARN] No se pudo persistir en DB: {e}")
 

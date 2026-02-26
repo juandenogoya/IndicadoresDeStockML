@@ -236,7 +236,7 @@ def tab_agregar():
         "o incorporalo a la base de datos con modelo ML asignado."
     )
 
-    col1, col2 = st.columns([2, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         ticker_input = st.text_input(
             "Ticker",
@@ -244,6 +244,11 @@ def tab_agregar():
             max_chars=10,
         ).upper().strip()
     with col2:
+        sector_input = st.text_input(
+            "Sector (opcional)",
+            placeholder="Ej: Technology, Telecom",
+        ).strip() or None
+    with col3:
         umbral_pct = st.number_input(
             "Umbral retorno 20d (%) — para guardar",
             min_value=1.0, max_value=10.0, value=3.0, step=0.5,
@@ -292,6 +297,7 @@ def tab_agregar():
                     ticker_input,
                     umbral=umbral_pct / 100,
                     forzar=forzar,
+                    sector=sector_input,
                 )
             except Exception as e:
                 st.error(f"Error inesperado: {e}")
