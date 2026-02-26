@@ -162,8 +162,11 @@ def persistir_ticker_nuevo(df_ohlcv: pd.DataFrame, ticker: str,
         with conn.cursor() as cur:
             cur.execute(sql_activo, (ticker, nombre, sector))
 
-    # Upsert precios
-    upsert_precios(df_ohlcv, ticker)
+    # Upsert precios (upsert_precios espera df con columna adj_close)
+    df_save = df_ohlcv.copy()
+    if "adj_close" not in df_save.columns:
+        df_save["adj_close"] = df_save["close"]  # auto_adjust=True => close ya es ajustado
+    upsert_precios(df_save)
     print(f"  [DB] Ticker {ticker} persistido: {len(df_ohlcv)} barras.")
 
 
