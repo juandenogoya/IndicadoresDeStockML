@@ -1,0 +1,4 @@
+[server]
+# Desactiva el watcher de archivos basado en inotify
+# Evita el error "inotify watch limit reached" en Streamlit Cloud
+fileWatcherType = "none"
