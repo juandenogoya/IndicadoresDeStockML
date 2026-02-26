@@ -422,234 +422,166 @@ def tab_historial():
 # ─────────────────────────────────────────────────────────────
 
 def tab_analisis():
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
+    st.subheader("Indicadores Tecnicos — Vista Rapida")
 
-    st.subheader("Analisis Tecnico por Ticker")
+    # ── Query principal: ultima fila por ticker ────────────────
+    df = query("""
+        SELECT
+            i.ticker,
+            p.sector,
+            i.fecha,
+            pd.close                            AS precio,
+            ROUND(i.dist_sma21::numeric, 2)     AS vs_sma21_pct,
+            ROUND(i.dist_sma50::numeric, 2)     AS vs_sma50_pct,
+            ROUND(i.dist_sma200::numeric, 2)    AS vs_sma200_pct,
+            ROUND(i.rsi14::numeric, 1)          AS rsi,
+            ROUND(i.macd::numeric, 3)           AS macd,
+            ROUND(i.macd_signal::numeric, 3)    AS macd_signal,
+            ROUND(i.macd_hist::numeric, 3)      AS macd_hist,
+            ROUND(i.adx::numeric, 1)            AS adx,
+            ROUND(i.vol_relativo::numeric, 2)   AS vol_rel,
+            ROUND(i.atr14::numeric, 2)          AS atr,
+            ms.estructura_5,
+            ms.estructura_10,
+            CASE
+                WHEN ms.bos_bull_5=1  OR ms.bos_bull_10=1  THEN 'BOS+'
+                WHEN ms.bos_bear_5=1  OR ms.bos_bear_10=1  THEN 'BOS-'
+                WHEN ms.choch_bull_5=1 OR ms.choch_bull_10=1 THEN 'CHoCH+'
+                WHEN ms.choch_bear_5=1 OR ms.choch_bear_10=1 THEN 'CHoCH-'
+                ELSE ''
+            END                                 AS evento_ms,
+            a.alert_nivel,
+            ROUND(a.alert_score::numeric)       AS score,
+            ROUND(a.ml_prob_ganancia::numeric * 100, 1) AS ml_pct
+        FROM (
+            SELECT DISTINCT ON (ticker) ticker, fecha,
+                   dist_sma21, dist_sma50, dist_sma200,
+                   rsi14, macd, macd_signal, macd_hist,
+                   adx, vol_relativo, atr14
+            FROM indicadores_tecnicos
+            ORDER BY ticker, fecha DESC
+        ) i
+        JOIN (
+            SELECT DISTINCT ON (ticker) ticker, sector
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        ) p ON p.ticker = i.ticker
+        JOIN (
+            SELECT DISTINCT ON (ticker) ticker, fecha, close
+            FROM precios_diarios
+            ORDER BY ticker, fecha DESC
+        ) pd ON pd.ticker = i.ticker
+        LEFT JOIN (
+            SELECT DISTINCT ON (ticker) ticker,
+                   estructura_5, estructura_10,
+                   bos_bull_5, bos_bear_5, choch_bull_5, choch_bear_5,
+                   bos_bull_10, bos_bear_10, choch_bull_10, choch_bear_10
+            FROM features_market_structure
+            ORDER BY ticker, fecha DESC
+        ) ms ON ms.ticker = i.ticker
+        LEFT JOIN (
+            SELECT DISTINCT ON (ticker) ticker, alert_nivel, alert_score, ml_prob_ganancia
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        ) a ON a.ticker = i.ticker
+        ORDER BY p.sector, i.ticker
+    """)
 
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        df_tickers = query("SELECT DISTINCT ticker FROM precios_diarios ORDER BY ticker")
-        tickers = df_tickers["ticker"].tolist() if not df_tickers.empty else []
-        ticker_sel = st.selectbox("Ticker", tickers, key="analisis_ticker")
-    with col2:
-        periodo = st.selectbox("Periodo", ["3 meses", "6 meses", "1 ano", "2 anos"], index=1)
-        periodo_dias = {"3 meses": 90, "6 meses": 180, "1 ano": 365, "2 anos": 730}[periodo]
-
-    params = {"t": ticker_sel, "dias": periodo_dias}
-
-    df_p = query("""
-        SELECT fecha, open, high, low, close, volume
-        FROM precios_diarios
-        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
-        ORDER BY fecha
-    """, params)
-
-    df_i = query("""
-        SELECT fecha, sma21, sma50, sma200, rsi14,
-               macd, macd_signal, macd_hist,
-               bb_upper, bb_lower, bb_middle, adx, atr14
-        FROM indicadores_tecnicos
-        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
-        ORDER BY fecha
-    """, params)
-
-    df_ms = query("""
-        SELECT fecha, estructura_5, estructura_10,
-               bos_bull_5, bos_bear_5, choch_bull_5, choch_bear_5,
-               bos_bull_10, bos_bear_10, choch_bull_10, choch_bear_10
-        FROM features_market_structure
-        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
-          AND (bos_bull_5=1 OR bos_bear_5=1 OR choch_bull_5=1 OR choch_bear_5=1
-               OR bos_bull_10=1 OR bos_bear_10=1 OR choch_bull_10=1 OR choch_bear_10=1)
-        ORDER BY fecha
-    """, params)
-
-    df_al = query("""
-        SELECT alert_nivel, alert_score, ml_prob_ganancia, ml_modelo_usado, precio_cierre
-        FROM alertas_scanner
-        WHERE ticker = :t
-        ORDER BY scan_fecha DESC
-        LIMIT 1
-    """, {"t": ticker_sel})
-
-    if df_p.empty:
-        st.warning(f"Sin datos de precio para {ticker_sel}.")
+    if df.empty:
+        st.warning("Sin datos disponibles.")
         return
 
-    df_p["fecha"] = pd.to_datetime(df_p["fecha"])
-    df_i["fecha"] = pd.to_datetime(df_i["fecha"])
-    df_ms["fecha"] = pd.to_datetime(df_ms["fecha"])
+    # ── Filtro por sector ──────────────────────────────────────
+    sectores = ["Todos"] + sorted(df["sector"].dropna().unique().tolist())
+    sector_sel = st.selectbox("Sector", sectores, key="at_sector")
+    if sector_sel != "Todos":
+        df = df[df["sector"] == sector_sel]
 
-    df = df_p.merge(df_i, on="fecha", how="left")
+    # ── Formatear columnas ─────────────────────────────────────
+    def _fmt_pct(v):
+        if pd.isna(v):
+            return "-"
+        return f"+{v:.1f}%" if v >= 0 else f"{v:.1f}%"
 
-    ult = df.iloc[-1]
+    def _fmt_rsi(v):
+        if pd.isna(v):
+            return "-"
+        return f"{v:.0f}"
 
-    # ── Metricas resumen ──────────────────────────────────────
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Precio cierre", f"${ult['close']:.2f}")
-    c2.metric("RSI 14", f"{ult['rsi14']:.1f}" if pd.notna(ult['rsi14']) else "-")
-    c3.metric("ADX", f"{ult['adx']:.1f}" if pd.notna(ult['adx']) else "-")
+    def _fmt_macd(v):
+        if pd.isna(v):
+            return "-"
+        return "Alcista" if v > 0 else "Bajista"
 
-    est5  = {1: "Alcista", -1: "Bajista", 0: "Neutral"}.get(int(ult.get("estructura_5", 0) or 0), "-")
-    est10 = {1: "Alcista", -1: "Bajista", 0: "Neutral"}.get(int(ult.get("estructura_10", 0) or 0), "-")
+    def _fmt_adx(v):
+        if pd.isna(v):
+            return "-"
+        if v >= 25:
+            return f"{v:.0f} (Tend)"
+        return f"{v:.0f} (Deb)"
 
-    if not df_al.empty:
-        al = df_al.iloc[0]
-        nivel = al["alert_nivel"] or "NEUTRAL"
-        c4.metric("Senal ML", f"{_EMOJIS.get(nivel, '')} {nivel}")
-        c5.metric("Score / ML%", f"{al['alert_score']:.0f} / {al['ml_prob_ganancia']:.0%}")
-    else:
-        c4.metric("Senal ML", "-")
-        c5.metric("Score / ML%", "-")
+    def _fmt_est(v):
+        if pd.isna(v):
+            return "-"
+        return {1: "Alcista", -1: "Bajista", 0: "Neutral"}.get(int(v), "-")
+
+    def _fmt_volrel(v):
+        if pd.isna(v):
+            return "-"
+        return f"{v:.2f}x"
+
+    df_show = pd.DataFrame({
+        "Ticker":    df["ticker"],
+        "Sector":    df["sector"],
+        "Precio":    df["precio"].map(lambda x: f"${x:.2f}" if pd.notna(x) else "-"),
+        "vs SMA21":  df["vs_sma21_pct"].map(_fmt_pct),
+        "vs SMA50":  df["vs_sma50_pct"].map(_fmt_pct),
+        "vs SMA200": df["vs_sma200_pct"].map(_fmt_pct),
+        "RSI":       df["rsi"].map(_fmt_rsi),
+        "MACD":      df["macd_hist"].map(_fmt_macd),
+        "ADX":       df["adx"].map(_fmt_adx),
+        "Vol Rel":   df["vol_rel"].map(_fmt_volrel),
+        "ATR":       df["atr"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "-"),
+        "Est.5":     df["estructura_5"].map(_fmt_est),
+        "Est.10":    df["estructura_10"].map(_fmt_est),
+        "Evento MS": df["evento_ms"].fillna(""),
+        "Senal":     df["alert_nivel"].map(lambda x: f"{_EMOJIS.get(x,'')} {x}" if pd.notna(x) else "-"),
+        "Score":     df["score"].map(lambda x: f"{x:.0f}" if pd.notna(x) else "-"),
+        "ML%":       df["ml_pct"].map(lambda x: f"{x:.0f}%" if pd.notna(x) else "-"),
+    })
+
+    st.dataframe(
+        df_show,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Ticker":    st.column_config.TextColumn(width=65),
+            "Sector":    st.column_config.TextColumn(width=160),
+            "Precio":    st.column_config.TextColumn(width=80),
+            "vs SMA21":  st.column_config.TextColumn(width=80, help="% distancia precio vs SMA 21"),
+            "vs SMA50":  st.column_config.TextColumn(width=80, help="% distancia precio vs SMA 50"),
+            "vs SMA200": st.column_config.TextColumn(width=90, help="% distancia precio vs SMA 200"),
+            "RSI":       st.column_config.TextColumn(width=55, help="RSI 14 periodos"),
+            "MACD":      st.column_config.TextColumn(width=80, help="Histograma MACD positivo=Alcista"),
+            "ADX":       st.column_config.TextColumn(width=95, help="ADX: >25 tendencia definida"),
+            "Vol Rel":   st.column_config.TextColumn(width=75, help="Volumen relativo vs promedio 20d"),
+            "ATR":       st.column_config.TextColumn(width=60, help="Average True Range 14"),
+            "Est.5":     st.column_config.TextColumn(width=80, help="Estructura market structure 5 barras"),
+            "Est.10":    st.column_config.TextColumn(width=80, help="Estructura market structure 10 barras"),
+            "Evento MS": st.column_config.TextColumn(width=85, help="Ultimo evento BOS/CHoCH"),
+            "Senal":     st.column_config.TextColumn(width=150, help="Senal ML mas reciente"),
+            "Score":     st.column_config.TextColumn(width=60),
+            "ML%":       st.column_config.TextColumn(width=60),
+        },
+    )
 
     st.caption(
-        f"Estructura 5-barras: **{est5}** | "
-        f"Estructura 10-barras: **{est10}** | "
-        f"ATR: **{ult['atr14']:.2f}**" if pd.notna(ult['atr14']) else ""
-    )
-
-    # ── Figura Plotly ─────────────────────────────────────────
-    fig = make_subplots(
-        rows=4, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.02,
-        row_heights=[0.55, 0.15, 0.15, 0.15],
-        subplot_titles=("Precio + Indicadores", "Volumen", "RSI 14", "MACD"),
-    )
-
-    # Velas japonesas
-    fig.add_trace(go.Candlestick(
-        x=df["fecha"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="Precio",
-        increasing_line_color="#26a69a",
-        decreasing_line_color="#ef5350",
-    ), row=1, col=1)
-
-    # SMAs
-    for col_name, color, label in [
-        ("sma21",  "#f6c90e", "SMA 21"),
-        ("sma50",  "#fb8c00", "SMA 50"),
-        ("sma200", "#e040fb", "SMA 200"),
-    ]:
-        fig.add_trace(go.Scatter(
-            x=df["fecha"], y=df[col_name], name=label,
-            line=dict(color=color, width=1.3),
-        ), row=1, col=1)
-
-    # Bandas de Bollinger
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["bb_upper"], name="BB+",
-        line=dict(color="rgba(150,150,150,0.6)", width=0.8, dash="dot"),
-        showlegend=True,
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["bb_lower"], name="BB-",
-        line=dict(color="rgba(150,150,150,0.6)", width=0.8, dash="dot"),
-        fill="tonexty", fillcolor="rgba(150,150,150,0.05)",
-        showlegend=False,
-    ), row=1, col=1)
-
-    # Marcadores BOS / CHoCH sobre el grafico de precio
-    if not df_ms.empty:
-        fecha_close = df.set_index("fecha")["close"]
-
-        def _precio_cercano(f):
-            try:
-                return fecha_close.loc[f]
-            except KeyError:
-                idx = fecha_close.index.get_indexer([f], method="nearest")[0]
-                return fecha_close.iloc[idx]
-
-        for _, row_ms in df_ms.iterrows():
-            f = row_ms["fecha"]
-            p = _precio_cercano(f)
-
-            if row_ms.get("bos_bull_5") or row_ms.get("bos_bull_10"):
-                fig.add_trace(go.Scatter(
-                    x=[f], y=[p * 0.993], mode="markers+text",
-                    text=["BOS+"], textposition="bottom center",
-                    marker=dict(symbol="triangle-up", color="lime", size=9),
-                    name="BOS Bull", showlegend=False,
-                ), row=1, col=1)
-            if row_ms.get("bos_bear_5") or row_ms.get("bos_bear_10"):
-                fig.add_trace(go.Scatter(
-                    x=[f], y=[p * 1.007], mode="markers+text",
-                    text=["BOS-"], textposition="top center",
-                    marker=dict(symbol="triangle-down", color="#ef5350", size=9),
-                    name="BOS Bear", showlegend=False,
-                ), row=1, col=1)
-            if row_ms.get("choch_bull_5") or row_ms.get("choch_bull_10"):
-                fig.add_trace(go.Scatter(
-                    x=[f], y=[p * 0.986], mode="markers+text",
-                    text=["CHoCH+"], textposition="bottom center",
-                    marker=dict(symbol="star", color="cyan", size=9),
-                    name="CHoCH Bull", showlegend=False,
-                ), row=1, col=1)
-            if row_ms.get("choch_bear_5") or row_ms.get("choch_bear_10"):
-                fig.add_trace(go.Scatter(
-                    x=[f], y=[p * 1.014], mode="markers+text",
-                    text=["CHoCH-"], textposition="top center",
-                    marker=dict(symbol="star", color="orange", size=9),
-                    name="CHoCH Bear", showlegend=False,
-                ), row=1, col=1)
-
-    # Volumen coloreado
-    colors_vol = [
-        "#26a69a" if c >= o else "#ef5350"
-        for c, o in zip(df["close"], df["open"])
-    ]
-    fig.add_trace(go.Bar(
-        x=df["fecha"], y=df["volume"],
-        name="Volumen", marker_color=colors_vol, showlegend=False,
-    ), row=2, col=1)
-
-    # RSI
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["rsi14"], name="RSI",
-        line=dict(color="#2196F3", width=1.5),
-    ), row=3, col=1)
-    for nivel_rsi, color_rsi in [(70, "rgba(239,83,80,0.5)"), (30, "rgba(38,166,154,0.5)"), (50, "rgba(150,150,150,0.3)")]:
-        fig.add_shape(type="line", x0=df["fecha"].iloc[0], x1=df["fecha"].iloc[-1],
-                      y0=nivel_rsi, y1=nivel_rsi,
-                      line=dict(color=color_rsi, width=0.8, dash="dash"),
-                      row=3, col=1)
-
-    # MACD
-    colors_hist = ["#26a69a" if v >= 0 else "#ef5350" for v in df["macd_hist"].fillna(0)]
-    fig.add_trace(go.Bar(
-        x=df["fecha"], y=df["macd_hist"],
-        name="Histograma", marker_color=colors_hist, showlegend=False,
-    ), row=4, col=1)
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["macd"], name="MACD",
-        line=dict(color="#2196F3", width=1.2),
-    ), row=4, col=1)
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["macd_signal"], name="Signal",
-        line=dict(color="#FF5722", width=1.2),
-    ), row=4, col=1)
-
-    fig.update_layout(
-        height=780,
-        template="plotly_dark",
-        xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1, font=dict(size=11)),
-        margin=dict(l=0, r=0, t=35, b=0),
-    )
-    fig.update_yaxes(title_text="Precio USD", row=1, col=1)
-    fig.update_yaxes(title_text="Vol", row=2, col=1)
-    fig.update_yaxes(title_text="RSI", row=3, col=1, range=[0, 100])
-    fig.update_yaxes(title_text="MACD", row=4, col=1)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── Leyenda de marcadores ─────────────────────────────────
-    st.caption(
-        "Marcadores: "
-        "triangulo verde = BOS alcista | triangulo rojo = BOS bajista | "
-        "estrella cyan = CHoCH alcista | estrella naranja = CHoCH bajista"
+        "vs SMA: % por encima (+) o por debajo (-) de la media. "
+        "MACD: positivo del histograma. "
+        "ADX >25 = tendencia definida. "
+        "Vol Rel: volumen actual / promedio 20d. "
+        "Est: estructura de mercado (5 y 10 barras). "
+        "Evento MS: ultimo BOS o CHoCH registrado."
     )
 
 
