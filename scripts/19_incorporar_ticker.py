@@ -254,14 +254,27 @@ def incorporar_ticker(ticker: str,
         print(f"  ERROR: {msg}")
         return {"ticker": ticker, "error": msg}
 
-    # 1b. Persistir OHLCV e indicadores en DB (para que aparezca en Analisis Tecnico)
-    print("  [1b/5] Persistiendo precios e indicadores en DB...")
+    # 1b. Auto-detectar sector desde yfinance si no fue provisto manualmente
+    if not sector:
+        try:
+            import yfinance as yf
+            info = yf.Ticker(ticker).info
+            sector = info.get("sector") or info.get("sectorDisp") or None
+            if sector:
+                print(f"         Sector auto-detectado: '{sector}'")
+            else:
+                print("         Sector no disponible en yfinance.")
+        except Exception as e:
+            print(f"  [WARN] No se pudo obtener sector de yfinance: {e}")
+
+    # 1c. Persistir OHLCV e indicadores en DB (para que aparezca en Analisis Tecnico)
+    print("  [1c/5] Persistiendo precios e indicadores en DB...")
     try:
         from src.pipeline.data_manager import persistir_ticker_nuevo
         from src.indicators.technical import procesar_indicadores_ticker
         persistir_ticker_nuevo(df_ohlcv, ticker, sector=sector)
         procesar_indicadores_ticker(ticker, df_ohlcv, guardar_db=True)
-        # Actualizar sector en activos si fue provisto (ON CONFLICT DO NOTHING no lo hace)
+        # Actualizar sector en activos (ON CONFLICT DO NOTHING no lo hace)
         if sector:
             with get_connection() as conn:
                 with conn.cursor() as cur:

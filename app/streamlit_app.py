@@ -245,8 +245,10 @@ def tab_agregar():
         ).upper().strip()
     with col2:
         sector_input = st.text_input(
-            "Sector (opcional)",
-            placeholder="Ej: Technology, Telecom",
+            "Sector (override)",
+            placeholder="Auto-detectado desde yfinance",
+            help="Dejar vacio para auto-detectar via yfinance. "
+                 "Completar solo para sobreescribir la deteccion automatica.",
         ).strip() or None
     with col3:
         umbral_pct = st.number_input(
