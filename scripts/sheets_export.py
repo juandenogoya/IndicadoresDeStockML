@@ -25,9 +25,20 @@ import pathlib
 import pandas as pd
 from datetime import date, timedelta
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+ROOT = pathlib.Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+
+# Cargar .env local si existe (local dev)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+except ImportError:
+    pass
 
 from src.data.database import query_df
+
+# Ruta al archivo de credenciales local (para desarrollo)
+_LOCAL_KEY_FILE = ROOT / "secrets" / "google_sheets_key.json"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -61,15 +72,32 @@ def _get_spreadsheet():
     except ImportError:
         raise ImportError("Instalar: pip install gspread google-auth")
 
-    creds_json = os.environ.get("GOOGLE_SHEETS_KEY", "")
-    sheet_id   = os.environ.get("GOOGLE_SHEETS_ID", "")
-
-    if not creds_json:
-        raise ValueError("GOOGLE_SHEETS_KEY no configurado (GitHub Secret)")
+    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "").strip()
     if not sheet_id:
-        raise ValueError("GOOGLE_SHEETS_ID no configurado (GitHub Secret)")
+        raise ValueError(
+            "GOOGLE_SHEETS_ID no configurado.\n"
+            "  Local: agregar GOOGLE_SHEETS_ID=... en el archivo .env\n"
+            "  GitHub: agregar Secret GOOGLE_SHEETS_ID"
+        )
 
-    creds_dict = json.loads(creds_json)
+    # Prioridad 1: variable de entorno GOOGLE_SHEETS_KEY (GitHub Actions)
+    creds_json = os.environ.get("GOOGLE_SHEETS_KEY", "").strip()
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+
+    # Prioridad 2: archivo local secrets/google_sheets_key.json (desarrollo)
+    elif _LOCAL_KEY_FILE.exists():
+        print(f"  [local] Usando credenciales desde: {_LOCAL_KEY_FILE}")
+        with open(_LOCAL_KEY_FILE, "r", encoding="utf-8") as f:
+            creds_dict = json.load(f)
+
+    else:
+        raise ValueError(
+            "Credenciales de Google no encontradas.\n"
+            "  Opcion A (GitHub): configurar Secret GOOGLE_SHEETS_KEY\n"
+            f"  Opcion B (local):  guardar el JSON en {_LOCAL_KEY_FILE}"
+        )
+
     scopes = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
@@ -270,12 +298,19 @@ def _query_historial(dias: int = 90):
 def exportar_a_sheets():
     print("\n=== Google Sheets Export ===")
 
-    # Verificar credenciales antes de conectar a DB
-    if not os.environ.get("GOOGLE_SHEETS_KEY"):
-        print("  [SKIP] GOOGLE_SHEETS_KEY no configurado. Saltando export.")
-        return
-    if not os.environ.get("GOOGLE_SHEETS_ID"):
+    # Verificar que al menos el Sheet ID esté configurado
+    if not os.environ.get("GOOGLE_SHEETS_ID", "").strip():
         print("  [SKIP] GOOGLE_SHEETS_ID no configurado. Saltando export.")
+        return
+
+    # Verificar credenciales: env var o archivo local
+    tiene_creds = (
+        bool(os.environ.get("GOOGLE_SHEETS_KEY", "").strip())
+        or _LOCAL_KEY_FILE.exists()
+    )
+    if not tiene_creds:
+        print(f"  [SKIP] Credenciales no encontradas.")
+        print(f"         Guardar JSON del Service Account en: {_LOCAL_KEY_FILE}")
         return
 
     print("  Conectando a Google Sheets...")

@@ -54,3 +54,6 @@ desktop.ini
 
 # ── Claude ────────────────────────────────────────────────────
 .claude/
+
+# ── Google Sheets credentials (NUNCA versionar) ───────────────
+secrets/
