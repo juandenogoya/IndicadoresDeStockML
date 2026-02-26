@@ -516,9 +516,13 @@ def _analizar_sin_guardar(ticker_input: str):
         # ── Scoring rule-based ─────────────────────────────────
         try:
             from src.scoring.rule_based import calcular_scoring
+            # Asegurar que ambas columnas 'fecha' sean datetime64 para el merge
+            df_ind_sc = df_ind.copy()
+            if "fecha" in df_ind_sc.columns:
+                df_ind_sc["fecha"] = pd.to_datetime(df_ind_sc["fecha"])
             df_precios_s = df[["fecha", "close"]].copy()
             df_precios_s["fecha"] = pd.to_datetime(df_precios_s["fecha"])
-            df_sc = calcular_scoring(df_ind, df_precios_s, ticker_input)
+            df_sc = calcular_scoring(df_ind_sc, df_precios_s, ticker_input)
             if not df_sc.empty:
                 last_sc = df_sc.iloc[-1]
                 st.markdown("#### Scoring Tecnico — Ultimo Dia")
