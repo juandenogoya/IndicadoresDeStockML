@@ -586,247 +586,298 @@ def tab_analisis():
 
 
 # ─────────────────────────────────────────────────────────────
-# TAB 5: GRAFICO DE VELAS
+# TAB 5: ESTRUCTURA DE VELAS
 # ─────────────────────────────────────────────────────────────
 
 def tab_velas():
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
+    st.subheader("Estructura de Velas — Ultimos 5 Dias")
 
-    st.subheader("Grafico de Velas Diarias")
+    # ── Selector ticker ────────────────────────────────────────
+    df_tickers = query("SELECT DISTINCT ticker FROM precios_diarios ORDER BY ticker")
+    tickers = df_tickers["ticker"].tolist() if not df_tickers.empty else []
+    if not tickers:
+        st.warning("Sin tickers disponibles.")
+        return
+    ticker_sel = st.selectbox("Ticker", tickers, key="velas_ticker")
 
-    # ── Controles ─────────────────────────────────────────────
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        df_tickers = query("SELECT DISTINCT ticker FROM precios_diarios ORDER BY ticker")
-        tickers = df_tickers["ticker"].tolist() if not df_tickers.empty else []
-        ticker_sel = st.selectbox("Ticker", tickers, key="velas_ticker")
-    with col2:
-        periodo = st.selectbox(
-            "Periodo",
-            ["1 mes", "3 meses", "6 meses", "1 ano", "2 anos"],
-            index=2,
-            key="velas_periodo",
-        )
-        periodo_dias = {"1 mes": 30, "3 meses": 90, "6 meses": 180, "1 ano": 365, "2 anos": 730}[periodo]
-    with col3:
-        mostrar_bb = st.checkbox("Bollinger Bands", value=True, key="velas_bb")
-
-    params = {"t": ticker_sel, "dias": periodo_dias}
-
-    # ── Datos de precio ───────────────────────────────────────
+    # ── OHLCV ─────────────────────────────────────────────────
     df_p = query("""
         SELECT fecha, open, high, low, close, volume
         FROM precios_diarios
-        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
-        ORDER BY fecha
-    """, params)
-
-    # ── Indicadores ───────────────────────────────────────────
-    df_i = query("""
-        SELECT fecha, sma21, sma50, sma200,
-               bb_upper, bb_lower, bb_middle,
-               rsi14, macd, macd_signal, macd_hist,
-               adx, atr14
-        FROM indicadores_tecnicos
-        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
-        ORDER BY fecha
-    """, params)
-
-    # ── Market structure (solo eventos BOS/CHoCH) ─────────────
-    df_ms = query("""
-        SELECT fecha,
-               bos_bull_5, bos_bear_5, choch_bull_5, choch_bear_5,
-               bos_bull_10, bos_bear_10, choch_bull_10, choch_bear_10,
-               estructura_5, estructura_10
-        FROM features_market_structure
-        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
-          AND (bos_bull_5=1 OR bos_bear_5=1 OR choch_bull_5=1 OR choch_bear_5=1
-               OR bos_bull_10=1 OR bos_bear_10=1 OR choch_bull_10=1 OR choch_bear_10=1)
-        ORDER BY fecha
-    """, params)
-
-    # ── Ultima alerta ─────────────────────────────────────────
-    df_al = query("""
-        SELECT alert_nivel, alert_score, ml_prob_ganancia
-        FROM alertas_scanner
         WHERE ticker = :t
-        ORDER BY scan_fecha DESC
-        LIMIT 1
+        ORDER BY fecha DESC
+        LIMIT 5
     """, {"t": ticker_sel})
 
     if df_p.empty:
         st.warning(f"Sin datos de precio para {ticker_sel}.")
         return
 
+    # ── Patrones PA ────────────────────────────────────────────
+    df_pat = query("""
+        SELECT fecha,
+               COALESCE(patron_hammer, 0)         AS patron_hammer,
+               COALESCE(patron_engulfing_bull, 0) AS patron_engulfing_bull,
+               COALESCE(patron_engulfing_bear, 0) AS patron_engulfing_bear,
+               COALESCE(patron_shooting_star, 0)  AS patron_shooting_star
+        FROM features_precio_accion
+        WHERE ticker = :t
+        ORDER BY fecha DESC
+        LIMIT 5
+    """, {"t": ticker_sel})
+
+    # ── Vol relativo ───────────────────────────────────────────
+    df_vol = query("""
+        SELECT fecha, vol_relativo
+        FROM indicadores_tecnicos
+        WHERE ticker = :t
+        ORDER BY fecha DESC
+        LIMIT 5
+    """, {"t": ticker_sel})
+
+    # ── Merge ──────────────────────────────────────────────────
     df_p["fecha"] = pd.to_datetime(df_p["fecha"])
-    df_i["fecha"] = pd.to_datetime(df_i["fecha"])
-    df = df_p.merge(df_i, on="fecha", how="left")
+    df = df_p.copy()
 
-    if not df_ms.empty:
-        df_ms["fecha"] = pd.to_datetime(df_ms["fecha"])
-
-    # ── Metricas resumen ──────────────────────────────────────
-    ult = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else ult
-
-    delta_precio = float(ult["close"]) - float(prev["close"])
-    delta_pct    = delta_precio / float(prev["close"]) * 100
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Precio", f"${ult['close']:.2f}", f"{delta_pct:+.2f}%")
-    c2.metric("RSI 14", f"{ult['rsi14']:.1f}" if pd.notna(ult['rsi14']) else "-")
-    c3.metric("ADX",    f"{ult['adx']:.1f}"   if pd.notna(ult['adx'])   else "-")
-    c4.metric("ATR",    f"${ult['atr14']:.2f}" if pd.notna(ult['atr14']) else "-")
-
-    if not df_al.empty:
-        al    = df_al.iloc[0]
-        nivel = al["alert_nivel"] or "NEUTRAL"
-        c5.metric("Senal ML", f"{_EMOJIS.get(nivel, '')} {nivel}")
+    if not df_pat.empty:
+        df_pat["fecha"] = pd.to_datetime(df_pat["fecha"])
+        df = df.merge(df_pat, on="fecha", how="left")
     else:
-        c5.metric("Senal ML", "-")
+        for c in ["patron_hammer", "patron_engulfing_bull",
+                  "patron_engulfing_bear", "patron_shooting_star"]:
+            df[c] = 0
 
-    # ── Figura: 4 subplots ────────────────────────────────────
-    fig = make_subplots(
-        rows=4, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.02,
-        row_heights=[0.55, 0.15, 0.15, 0.15],
-        subplot_titles=(f"{ticker_sel} — Velas Diarias", "Volumen", "RSI 14", "MACD"),
+    if not df_vol.empty:
+        df_vol["fecha"] = pd.to_datetime(df_vol["fecha"])
+        df = df.merge(df_vol[["fecha", "vol_relativo"]], on="fecha", how="left")
+    else:
+        df["vol_relativo"] = float("nan")
+
+    df = df.sort_values("fecha", ascending=False).reset_index(drop=True)
+
+    # ── Calculos de estructura ─────────────────────────────────
+    df["rango"]      = (df["high"] - df["low"]).replace(0, float("nan"))
+    df["cuerpo"]     = (df["close"] - df["open"]).abs()
+    df["sombra_sup"] = df["high"] - df[["close", "open"]].max(axis=1)
+    df["sombra_inf"] = df[["close", "open"]].min(axis=1) - df["low"]
+    df["cuerpo_pct"]     = (df["cuerpo"]     / df["rango"] * 100).round(1)
+    df["sombra_sup_pct"] = (df["sombra_sup"] / df["rango"] * 100).round(1)
+    df["sombra_inf_pct"] = (df["sombra_inf"] / df["rango"] * 100).round(1)
+    df["cierre_rango"]   = ((df["close"] - df["low"]) / df["rango"] * 100).round(1)
+    df["es_alcista"]     = df["close"] >= df["open"]
+
+    # ── Helpers de etiqueta ────────────────────────────────────
+    def _lbl_cuerpo(v):
+        if pd.isna(v): return "n/d"
+        if v > 70: return f"Grande ({v:.0f}%)"
+        if v > 40: return f"Medio ({v:.0f}%)"
+        if v > 20: return f"Pequeno ({v:.0f}%)"
+        return f"Doji ({v:.0f}%)"
+
+    def _lbl_ssup(v):
+        if pd.isna(v): return "n/d"
+        if v > 60: return f"Larga ({v:.0f}%)"
+        if v > 30: return f"Media ({v:.0f}%)"
+        return f"Corta ({v:.0f}%)"
+
+    def _lbl_sinf(v):
+        if pd.isna(v): return "n/d"
+        if v > 60: return f"Larga ({v:.0f}%)"
+        if v > 30: return f"Media ({v:.0f}%)"
+        return f"Corta ({v:.0f}%)"
+
+    def _lbl_cr(v):
+        if pd.isna(v): return "n/d"
+        if v > 80: return f"Muy alto ({v:.0f}%)"
+        if v > 60: return f"Alto ({v:.0f}%)"
+        if v > 40: return f"Neutro ({v:.0f}%)"
+        if v > 20: return f"Bajo ({v:.0f}%)"
+        return f"Muy bajo ({v:.0f}%)"
+
+    def _patron(r):
+        if r.get("patron_hammer", 0):         return "Hammer"
+        if r.get("patron_engulfing_bull", 0): return "Engulfing Bull"
+        if r.get("patron_engulfing_bear", 0): return "Engulfing Bear"
+        if r.get("patron_shooting_star", 0):  return "Shooting Star"
+        return "-"
+
+    # ── Resumen de los 5 dias ──────────────────────────────────
+    n_alc   = int(df["es_alcista"].sum())
+    n_baj   = len(df) - n_alc
+    avg_cr  = df["cierre_rango"].mean()
+    avg_vol = df["vol_relativo"].mean() if df["vol_relativo"].notna().any() else float("nan")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Alcistas / Bajistas (5d)", f"{n_alc}  /  {n_baj}")
+    c2.metric("Cierre en rango prom.", f"{avg_cr:.0f}%" if pd.notna(avg_cr) else "-",
+              help="0% = cierra en minimo, 100% = cierra en maximo")
+    c3.metric("Volumen relativo prom.", f"{avg_vol:.2f}x" if pd.notna(avg_vol) else "-",
+              help="vs promedio 20 dias")
+
+    st.divider()
+
+    # ── Tabla principal ────────────────────────────────────────
+    rows = []
+    for _, r in df.iterrows():
+        alc = bool(r["es_alcista"])
+        tipo_emoji = "🟢" if alc else "🔴"
+
+        ss  = r["sombra_sup_pct"]
+        si  = r["sombra_inf_pct"]
+        cr  = r["cierre_rango"]
+        vol = r.get("vol_relativo", float("nan"))
+
+        # Sombra sup larga = presion vendedora = rojo
+        ss_e = "🔴" if (pd.notna(ss) and ss > 60) else ("🟡" if (pd.notna(ss) and ss > 30) else "🟢")
+        # Sombra inf larga = soporte = verde
+        si_e = "🟢" if (pd.notna(si) and si > 60) else ("🟡" if (pd.notna(si) and si > 30) else "🔴")
+        # Cierre alto = compradores = verde
+        cr_e = "🟢" if (pd.notna(cr) and cr > 60) else ("🟡" if (pd.notna(cr) and cr > 40) else "🔴")
+
+        if pd.notna(vol):
+            vol_e   = "🟢" if vol > 1.3 else ("🟡" if vol >= 0.9 else "🔴")
+            vol_txt = f"{vol_e} {vol:.2f}x"
+        else:
+            vol_txt = "-"
+
+        rows.append({
+            "Fecha":        r["fecha"].strftime("%d/%m"),
+            "Cierre":       f"${float(r['close']):.2f}",
+            "Tipo":         f"{tipo_emoji} {'Alcista' if alc else 'Bajista'}",
+            "Cuerpo":       _lbl_cuerpo(r["cuerpo_pct"]),
+            "S. Superior":  f"{ss_e} {_lbl_ssup(ss)}",
+            "S. Inferior":  f"{si_e} {_lbl_sinf(si)}",
+            "Cierre/Rango": f"{cr_e} {_lbl_cr(cr)}",
+            "Patron":       _patron(r),
+            "Volumen":      vol_txt,
+        })
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Fecha":        st.column_config.TextColumn(width=65),
+            "Cierre":       st.column_config.TextColumn(width=85),
+            "Tipo":         st.column_config.TextColumn(width=110),
+            "Cuerpo":       st.column_config.TextColumn(width=145),
+            "S. Superior":  st.column_config.TextColumn(width=165,
+                            help="Sombra superior como % del rango total. Larga = rechazo en maximos."),
+            "S. Inferior":  st.column_config.TextColumn(width=165,
+                            help="Sombra inferior como % del rango total. Larga = soporte en minimos."),
+            "Cierre/Rango": st.column_config.TextColumn(width=180,
+                            help="Donde cerro dentro del rango del dia. 100% = cerro en maximo."),
+            "Patron":       st.column_config.TextColumn(width=145),
+            "Volumen":      st.column_config.TextColumn(width=110,
+                            help="Volumen del dia vs promedio 20 dias."),
+        },
     )
 
-    # Velas
-    fig.add_trace(go.Candlestick(
-        x=df["fecha"],
-        open=df["open"], high=df["high"],
-        low=df["low"],   close=df["close"],
-        name="Precio",
-        increasing_line_color="#26a69a",
-        decreasing_line_color="#ef5350",
-    ), row=1, col=1)
+    # ── Lectura rapida — un bloque por dia ─────────────────────
+    st.divider()
+    st.markdown("**Lectura rapida:**")
 
-    # SMAs
-    for col_nm, color, label in [
-        ("sma21",  "#f6c90e", "SMA 21"),
-        ("sma50",  "#fb8c00", "SMA 50"),
-        ("sma200", "#e040fb", "SMA 200"),
-    ]:
-        if col_nm in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["fecha"], y=df[col_nm], name=label,
-                line=dict(color=color, width=1.3),
-            ), row=1, col=1)
+    for _, r in df.iterrows():
+        alc      = bool(r["es_alcista"])
+        tipo_str = "ALCISTA" if alc else "BAJISTA"
+        fecha_lbl = r["fecha"].strftime("%d/%m/%Y")
+        partes   = []
 
-    # Bollinger Bands (opcional)
-    if mostrar_bb and "bb_upper" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df["fecha"], y=df["bb_upper"], name="BB+",
-            line=dict(color="rgba(150,150,150,0.5)", width=0.8, dash="dot"),
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=df["fecha"], y=df["bb_lower"], name="BB-",
-            line=dict(color="rgba(150,150,150,0.5)", width=0.8, dash="dot"),
-            fill="tonexty", fillcolor="rgba(150,150,150,0.06)",
-            showlegend=False,
-        ), row=1, col=1)
+        cp = r["cuerpo_pct"]
+        if pd.notna(cp):
+            if cp > 70:
+                partes.append(f"cuerpo grande ({cp:.0f}%), conviccion {tipo_str.lower()} fuerte")
+            elif cp < 20:
+                partes.append(f"vela tipo doji ({cp:.0f}%), indecision, sin conviccion clara")
+            else:
+                partes.append(f"cuerpo {_lbl_cuerpo(cp).lower()}")
 
-    # Marcadores BOS / CHoCH
-    if not df_ms.empty:
-        fecha_close = df.set_index("fecha")["close"]
+        ss = r["sombra_sup_pct"]
+        if pd.notna(ss):
+            if ss > 60:
+                partes.append(f"sombra superior larga ({ss:.0f}%): rechazo en maximos, presion vendedora")
+            elif ss > 30:
+                partes.append(f"sombra superior media ({ss:.0f}%): resistencia moderada")
 
-        def _get_precio(f):
-            try:
-                return float(fecha_close.loc[f])
-            except KeyError:
-                idx = fecha_close.index.get_indexer([f], method="nearest")[0]
-                return float(fecha_close.iloc[idx])
+        si = r["sombra_inf_pct"]
+        if pd.notna(si):
+            if si > 60:
+                partes.append(f"sombra inferior larga ({si:.0f}%): soporte activo, compradores absorbieron")
+            elif si > 30:
+                partes.append(f"sombra inferior media ({si:.0f}%): soporte moderado")
 
-        _markers = [
-            ("bos_bull_5",   "bos_bull_10",   "BOS+",    "triangle-up",   "lime",   0.994),
-            ("bos_bear_5",   "bos_bear_10",   "BOS-",    "triangle-down", "#ef5350", 1.006),
-            ("choch_bull_5", "choch_bull_10", "CHoCH+",  "star",          "cyan",   0.987),
-            ("choch_bear_5", "choch_bear_10", "CHoCH-",  "star",          "orange", 1.013),
-        ]
-        for col5, col10, label, symbol, color, offset in _markers:
-            mask = df_ms[col5].astype(bool) | df_ms[col10].astype(bool)
-            eventos = df_ms[mask]
-            if eventos.empty:
-                continue
-            xs = eventos["fecha"].tolist()
-            ys = [_get_precio(f) * offset for f in xs]
-            pos = "bottom center" if offset < 1 else "top center"
-            fig.add_trace(go.Scatter(
-                x=xs, y=ys,
-                mode="markers+text",
-                text=[label] * len(xs),
-                textposition=pos,
-                marker=dict(symbol=symbol, color=color, size=9),
-                name=label,
-                showlegend=True,
-            ), row=1, col=1)
+        cr = r["cierre_rango"]
+        if pd.notna(cr):
+            if cr > 80:
+                partes.append(f"cerro en el {cr:.0f}% del rango: compradores dominaron al cierre")
+            elif cr < 20:
+                partes.append(f"cerro en el {cr:.0f}% del rango: vendedores dominaron al cierre")
+            elif cr > 60:
+                partes.append(f"cierre alto ({cr:.0f}%): precio sostenido")
+            elif cr < 40:
+                partes.append(f"cierre bajo ({cr:.0f}%): precio debil")
 
-    # Volumen coloreado
-    colors_vol = [
-        "#26a69a" if c >= o else "#ef5350"
-        for c, o in zip(df["close"], df["open"])
-    ]
-    fig.add_trace(go.Bar(
-        x=df["fecha"], y=df["volume"],
-        marker_color=colors_vol, name="Volumen", showlegend=False,
-    ), row=2, col=1)
+        pat = _patron(r)
+        if pat != "-":
+            partes.append(f"patron {pat}")
 
-    # RSI
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["rsi14"], name="RSI",
-        line=dict(color="#2196F3", width=1.5), showlegend=False,
-    ), row=3, col=1)
-    for lvl, clr in [(70, "rgba(239,83,80,0.4)"), (30, "rgba(38,166,154,0.4)"), (50, "rgba(180,180,180,0.25)")]:
-        fig.add_shape(
-            type="line",
-            x0=df["fecha"].iloc[0], x1=df["fecha"].iloc[-1],
-            y0=lvl, y1=lvl,
-            line=dict(color=clr, width=0.8, dash="dash"),
-            row=3, col=1,
+        vol = r.get("vol_relativo", float("nan"))
+        if pd.notna(vol):
+            if vol > 1.5:
+                partes.append(f"volumen {vol:.1f}x: confirma el movimiento")
+            elif vol < 0.8:
+                partes.append(f"volumen bajo ({vol:.1f}x): movimiento sin respaldo")
+
+        texto  = f"<b>{fecha_lbl} ({tipo_str}):</b> " + " | ".join(partes) + "."
+        bg     = "#1a3a1a" if alc else "#3a1a1a"
+        border = "#26a69a" if alc else "#ef5350"
+        st.markdown(
+            f'<div style="background:{bg};padding:10px 14px;border-radius:6px;'
+            f'border-left:3px solid {border};margin-bottom:8px;font-size:0.88rem;">'
+            f'{texto}</div>',
+            unsafe_allow_html=True,
         )
 
-    # MACD
-    colors_hist = ["#26a69a" if v >= 0 else "#ef5350" for v in df["macd_hist"].fillna(0)]
-    fig.add_trace(go.Bar(
-        x=df["fecha"], y=df["macd_hist"],
-        marker_color=colors_hist, name="Histograma", showlegend=False,
-    ), row=4, col=1)
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["macd"], name="MACD",
-        line=dict(color="#2196F3", width=1.2),
-    ), row=4, col=1)
-    fig.add_trace(go.Scatter(
-        x=df["fecha"], y=df["macd_signal"], name="Signal",
-        line=dict(color="#FF5722", width=1.2),
-    ), row=4, col=1)
-
-    # ── Layout ────────────────────────────────────────────────
-    fig.update_layout(
-        height=800,
-        template="plotly_dark",
-        xaxis_rangeslider_visible=False,
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.01,
-            xanchor="right", x=1, font=dict(size=10),
-        ),
-        margin=dict(l=0, r=0, t=40, b=0),
-    )
-    fig.update_yaxes(title_text="USD",  row=1, col=1)
-    fig.update_yaxes(title_text="Vol",  row=2, col=1)
-    fig.update_yaxes(title_text="RSI",  row=3, col=1, range=[0, 100])
-    fig.update_yaxes(title_text="MACD", row=4, col=1)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.caption(
-        "BOS+/- = Break of Structure alcista/bajista  |  "
-        "CHoCH+/- = Change of Character alcista/bajista  |  "
-        "Datos: precios_diarios + indicadores_tecnicos + features_market_structure (Railway PostgreSQL)"
-    )
+    # ── Guia de interpretacion (expandible) ───────────────────
+    st.divider()
+    with st.expander("Guia de interpretacion"):
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            st.markdown("**Sombra Superior**")
+            st.markdown("🔴 **Larga (>60%)** — Rechazo en maximos. Vendedores tomaron control. Resistencia activa.")
+            st.markdown("🟡 **Media (30-60%)** — Resistencia moderada, no dominante.")
+            st.markdown("🟢 **Corta (<30%)** — Sin resistencia. Precio cerro sostenido cerca del maximo.")
+            st.markdown("")
+            st.markdown("**Sombra Inferior**")
+            st.markdown("🟢 **Larga (>60%)** — Rechazo en minimos. Compradores absorbieron la caida. Soporte activo.")
+            st.markdown("🟡 **Media (30-60%)** — Soporte moderado.")
+            st.markdown("🔴 **Corta (<30%)** — Sin defensa en los minimos. Precio cayo sin resistencia.")
+        with gc2:
+            st.markdown("**Cuerpo**")
+            st.markdown("**Grande (>70%)** — Fuerte conviccion. Dominio claro de compradores o vendedores.")
+            st.markdown("**Medio (40-70%)** — Conviccion moderada. Direccion clara pero sin dominio total.")
+            st.markdown("**Pequeno (20-40%)** — Poca conviccion. Equilibrio con leve sesgo.")
+            st.markdown("**Doji (<20%)** — Indecision. Compradores y vendedores empatados.")
+            st.markdown("")
+            st.markdown("**Cierre en Rango** *(0% = cerro en minimo | 100% = cerro en maximo)*")
+            st.markdown("🟢 **>80%** — Compradores dominaron al cierre. Sesgo alcista fuerte.")
+            st.markdown("🟢 **60-80%** — Cierre alto, precio sostenido.")
+            st.markdown("🟡 **40-60%** — Neutro, sin conviccion al cierre.")
+            st.markdown("🔴 **20-40%** — Cierre bajo, sesgo bajista.")
+            st.markdown("🔴 **<20%** — Vendedores dominaron al cierre. Sesgo bajista fuerte.")
+        st.markdown("")
+        st.markdown("**Patrones**")
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            st.markdown("**Hammer** — Sombra inferior larga tras caida. Rechazo fuerte en minimos. "
+                        "Posible reversion alcista. Mas valido con volumen alto.")
+            st.markdown("**Shooting Star** — Sombra superior larga tras subida. Rechazo en maximos. "
+                        "Posible reversion bajista.")
+        with col_p2:
+            st.markdown("**Engulfing Bull** — Vela alcista envuelve completamente la bajista anterior. "
+                        "Reversion alcista fuerte.")
+            st.markdown("**Engulfing Bear** — Vela bajista envuelve completamente la alcista anterior. "
+                        "Reversion bajista fuerte.")
 
 
 # ─────────────────────────────────────────────────────────────
