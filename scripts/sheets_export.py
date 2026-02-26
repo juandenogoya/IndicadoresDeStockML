@@ -359,21 +359,31 @@ def _query_analisis():
 
 def _query_historial(dias: int = 90):
     fecha_desde = (date.today() - timedelta(days=dias)).isoformat()
+    # DISTINCT ON (date(scan_fecha), ticker): un registro por dia por ticker,
+    # el mas reciente (ya garantizado en DB por el DELETE previo al INSERT,
+    # pero lo dejamos aqui como respaldo para datos historicos ya existentes).
     sql = """
         SELECT
-            scan_fecha                                       AS fecha,
-            ticker,
-            alert_nivel                                      AS nivel,
-            alert_score                                      AS score,
-            ROUND(ml_prob_ganancia::numeric*100, 1)         AS ml_pct,
-            ROUND(precio_cierre::numeric, 2)                AS precio_cierre,
-            ROUND(retorno_1d_real::numeric*100,  2)         AS retorno_1d_pct,
-            ROUND(retorno_5d_real::numeric*100,  2)         AS retorno_5d_pct,
-            ROUND(retorno_20d_real::numeric*100, 2)         AS retorno_20d_pct,
-            CASE WHEN verificado THEN 'si' ELSE 'no' END    AS verificado
-        FROM alertas_scanner
-        WHERE scan_fecha >= :fecha_desde
-        ORDER BY scan_fecha DESC, alert_score DESC
+            fecha, ticker, nivel, score, ml_pct,
+            precio_cierre, retorno_1d_pct, retorno_5d_pct, retorno_20d_pct,
+            verificado
+        FROM (
+            SELECT DISTINCT ON (date(scan_fecha), ticker)
+                scan_fecha                                       AS fecha,
+                ticker,
+                alert_nivel                                      AS nivel,
+                alert_score                                      AS score,
+                ROUND(ml_prob_ganancia::numeric*100, 1)         AS ml_pct,
+                ROUND(precio_cierre::numeric, 2)                AS precio_cierre,
+                ROUND(retorno_1d_real::numeric*100,  2)         AS retorno_1d_pct,
+                ROUND(retorno_5d_real::numeric*100,  2)         AS retorno_5d_pct,
+                ROUND(retorno_20d_real::numeric*100, 2)         AS retorno_20d_pct,
+                CASE WHEN verificado THEN 'si' ELSE 'no' END    AS verificado
+            FROM alertas_scanner
+            WHERE scan_fecha >= :fecha_desde
+            ORDER BY date(scan_fecha) DESC, ticker, scan_fecha DESC
+        ) sub
+        ORDER BY fecha DESC, score DESC
     """
     return query_df(sql, params={"fecha_desde": fecha_desde})
 

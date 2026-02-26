@@ -36,7 +36,11 @@ def _native(v):
 
 
 def _persistir_alertas(resultados: list):
-    """Inserta resultados en alertas_scanner."""
+    """
+    Inserta resultados en alertas_scanner.
+    Antes del INSERT elimina los registros de hoy para los mismos tickers,
+    garantizando que solo quede el ultimo scan del dia (idempotente).
+    """
     from src.data.database import get_connection
 
     campos = (
@@ -50,20 +54,35 @@ def _persistir_alertas(resultados: list):
         "dias_sl_10", "dias_sh_10",
         "alert_score", "alert_nivel", "alert_detalle",
     )
-    sql = f"""
-        INSERT INTO alertas_scanner ({', '.join(campos)})
-        VALUES ({', '.join(f'%({c})s' for c in campos)})
-    """
+
     records = [
         {k: _native(r.get(k)) for k in campos}
         for r in resultados if not r.get("error")
     ]
     if not records:
         return
+
+    tickers_ok = [r["ticker"] for r in records]
+
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # Eliminar registros del dia para evitar duplicados
+            cur.execute(
+                "DELETE FROM alertas_scanner "
+                "WHERE date(scan_fecha) = CURRENT_DATE AND ticker = ANY(%s)",
+                (tickers_ok,)
+            )
+            n_del = cur.rowcount
+
+            # Insertar el scan actual (unico del dia)
+            sql = f"""
+                INSERT INTO alertas_scanner ({', '.join(campos)})
+                VALUES ({', '.join(f'%({c})s' for c in campos)})
+            """
             psycopg2.extras.execute_batch(cur, sql, records, page_size=100)
-    log(f"  DB: {len(records)} alertas guardadas en alertas_scanner.")
+
+    log(f"  DB: {len(records)} alertas guardadas "
+        f"({n_del} registros previos del dia eliminados).")
 
 
 def paso_actualizar_datos() -> dict:
