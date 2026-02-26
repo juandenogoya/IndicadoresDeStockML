@@ -253,6 +253,16 @@ def incorporar_ticker(ticker: str,
         print(f"  ERROR: {msg}")
         return {"ticker": ticker, "error": msg}
 
+    # 1b. Persistir OHLCV e indicadores en DB (para que aparezca en Analisis Tecnico)
+    print("  [1b/5] Persistiendo precios e indicadores en DB...")
+    try:
+        from src.pipeline.data_manager import persistir_ticker_nuevo
+        from src.indicators.technical import procesar_indicadores_ticker
+        persistir_ticker_nuevo(df_ohlcv, ticker, sector=None)
+        procesar_indicadores_ticker(ticker, df_ohlcv, guardar_db=True)
+    except Exception as e:
+        print(f"  [WARN] No se pudo persistir en DB: {e}")
+
     # 2. Construir dataset con 53 features + label
     print("  [2/5] Calculando 53 features V3 + label_binario...")
     df = _construir_dataset(df_ohlcv, ticker, umbral)
