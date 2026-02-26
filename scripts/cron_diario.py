@@ -3,6 +3,7 @@ cron_diario.py
 Script orquestador para Railway (cron L-V a las 17:30 ET / 20:30 UTC).
 
 Pasos:
+    0. Actualizar precios e indicadores tecnicos (delta ultimos 10 dias)
     1. Scanner de alertas para todos los tickers del universo
     2. Verificacion post-facto de alertas pendientes
     3. Notificacion Telegram con resumen + errores criticos
@@ -63,6 +64,77 @@ def _persistir_alertas(resultados: list):
         with conn.cursor() as cur:
             psycopg2.extras.execute_batch(cur, sql, records, page_size=100)
     log(f"  DB: {len(records)} alertas guardadas en alertas_scanner.")
+
+
+def paso_actualizar_datos() -> dict:
+    """
+    Paso 0: Actualiza precios e indicadores tecnicos para TODOS los tickers en DB.
+
+    Flujo por ticker:
+      1. Descarga ultimos 10 dias desde Stooq -> upsert en precios_diarios
+      2. Carga historico completo (500 barras) desde DB
+      3. Recalcula indicadores sobre el historico completo -> upsert en indicadores_tecnicos
+
+    Nota: necesitamos el historico completo porque calcular_indicadores() requiere
+    al menos 200 barras para SMA200. No se puede usar solo el delta de 10 dias.
+    """
+    from datetime import date, timedelta
+    from src.data.download import descargar_ticker_stooq
+    from src.data.database import upsert_precios, query_df
+    from src.pipeline.data_manager import cargar_precios_db
+    from src.indicators.technical import procesar_indicadores_ticker
+
+    # Obtener TODOS los tickers activos en DB (incluye tickers externos como VZ)
+    try:
+        df_activos = query_df(
+            "SELECT ticker FROM activos WHERE activo = TRUE ORDER BY ticker"
+        )
+        tickers_db = df_activos["ticker"].tolist() if not df_activos.empty else []
+    except Exception as e:
+        log(f"  [WARN] No se pudo leer activos de DB: {e}")
+        # Fallback a ALL_TICKERS de config
+        from src.utils.config import ALL_TICKERS
+        tickers_db = ALL_TICKERS
+
+    if not tickers_db:
+        log("  [WARN] Lista de tickers vacia, saltando actualizacion.")
+        return {"ok": 0, "error": 0}
+
+    start_delta = str(date.today() - timedelta(days=10))
+    log(f"  {len(tickers_db)} tickers, delta desde {start_delta}...")
+
+    n_ok = 0
+    n_err = 0
+
+    for i, ticker in enumerate(tickers_db, 1):
+        try:
+            # 1. Descargar precios recientes y upsert
+            df_new = descargar_ticker_stooq(ticker, start=start_delta)
+            if df_new.empty:
+                log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: Stooq sin datos nuevos.")
+                n_err += 1
+                continue
+            upsert_precios(df_new)
+
+            # 2. Cargar historico completo desde DB para calculo valido de SMA200
+            df_full = cargar_precios_db(ticker, ultimas_n=500)
+            if len(df_full) < 250:
+                log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: historico insuficiente "
+                    f"({len(df_full)} barras).")
+                n_err += 1
+                continue
+
+            # 3. Calcular y guardar indicadores sobre el historico completo
+            procesar_indicadores_ticker(ticker, df_full, guardar_db=True)
+            ultima = df_new["fecha"].max()
+            log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: OK (ultima barra: {ultima})")
+            n_ok += 1
+
+        except Exception as e:
+            log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: ERROR - {str(e)[:80]}")
+            n_err += 1
+
+    return {"ok": n_ok, "error": n_err}
 
 
 def paso_scanner() -> list:
@@ -162,14 +234,25 @@ def paso_verificacion() -> int:
 
 def main():
     log("=" * 55)
-    log("  CRON DIARIO  |  Scanner + Verificacion")
+    log("  CRON DIARIO  |  Actualizar + Scanner + Verificacion")
     log(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
     log("=" * 55)
 
     errores = []
 
+    # ── Paso 0: Actualizar precios e indicadores ───────────────
+    log("\n[0/3] Actualizacion diaria de precios e indicadores...")
+    try:
+        stats = paso_actualizar_datos()
+        log(f"  Actualizar OK: {stats['ok']} tickers actualizados, "
+            f"{stats['error']} con error.")
+    except Exception:
+        msg = traceback.format_exc()
+        log(f"  ERROR en actualizacion (no critico, continua):\n{msg[:300]}")
+        # No se agrega a errores criticos — el scanner puede seguir con datos existentes
+
     # ── Paso 1: Scanner ───────────────────────────────────────
-    log("\n[1/2] Scanner de alertas...")
+    log("\n[1/3] Scanner de alertas...")
     try:
         resultados = paso_scanner()
         n_ok  = sum(1 for r in resultados if not r.get("error"))
@@ -181,7 +264,7 @@ def main():
         errores.append(f"Scanner:\n{msg}")
 
     # ── Paso 2: Verificacion post-facto ───────────────────────
-    log("\n[2/2] Verificacion post-facto...")
+    log("\n[2/3] Verificacion post-facto...")
     try:
         n = paso_verificacion()
         log(f"  Verificacion OK: {n} alertas actualizadas.")
@@ -190,7 +273,7 @@ def main():
         log(f"  ERROR en verificacion:\n{msg}")
         errores.append(f"Verificacion:\n{msg}")
 
-    # ── Resultado final ───────────────────────────────────────
+    # ── Resultado final ──────────────────────────────────────
     log("\n" + "=" * 55)
     if errores:
         log(f"  FINALIZADO CON {len(errores)} ERROR(ES)")
