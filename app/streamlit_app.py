@@ -586,6 +586,250 @@ def tab_analisis():
 
 
 # ─────────────────────────────────────────────────────────────
+# TAB 5: GRAFICO DE VELAS
+# ─────────────────────────────────────────────────────────────
+
+def tab_velas():
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    st.subheader("Grafico de Velas Diarias")
+
+    # ── Controles ─────────────────────────────────────────────
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        df_tickers = query("SELECT DISTINCT ticker FROM precios_diarios ORDER BY ticker")
+        tickers = df_tickers["ticker"].tolist() if not df_tickers.empty else []
+        ticker_sel = st.selectbox("Ticker", tickers, key="velas_ticker")
+    with col2:
+        periodo = st.selectbox(
+            "Periodo",
+            ["1 mes", "3 meses", "6 meses", "1 ano", "2 anos"],
+            index=2,
+            key="velas_periodo",
+        )
+        periodo_dias = {"1 mes": 30, "3 meses": 90, "6 meses": 180, "1 ano": 365, "2 anos": 730}[periodo]
+    with col3:
+        mostrar_bb = st.checkbox("Bollinger Bands", value=True, key="velas_bb")
+
+    params = {"t": ticker_sel, "dias": periodo_dias}
+
+    # ── Datos de precio ───────────────────────────────────────
+    df_p = query("""
+        SELECT fecha, open, high, low, close, volume
+        FROM precios_diarios
+        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
+        ORDER BY fecha
+    """, params)
+
+    # ── Indicadores ───────────────────────────────────────────
+    df_i = query("""
+        SELECT fecha, sma21, sma50, sma200,
+               bb_upper, bb_lower, bb_middle,
+               rsi14, macd, macd_signal, macd_hist,
+               adx, atr14
+        FROM indicadores_tecnicos
+        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
+        ORDER BY fecha
+    """, params)
+
+    # ── Market structure (solo eventos BOS/CHoCH) ─────────────
+    df_ms = query("""
+        SELECT fecha,
+               bos_bull_5, bos_bear_5, choch_bull_5, choch_bear_5,
+               bos_bull_10, bos_bear_10, choch_bull_10, choch_bear_10,
+               estructura_5, estructura_10
+        FROM features_market_structure
+        WHERE ticker = :t AND fecha >= CURRENT_DATE - :dias
+          AND (bos_bull_5=1 OR bos_bear_5=1 OR choch_bull_5=1 OR choch_bear_5=1
+               OR bos_bull_10=1 OR bos_bear_10=1 OR choch_bull_10=1 OR choch_bear_10=1)
+        ORDER BY fecha
+    """, params)
+
+    # ── Ultima alerta ─────────────────────────────────────────
+    df_al = query("""
+        SELECT alert_nivel, alert_score, ml_prob_ganancia
+        FROM alertas_scanner
+        WHERE ticker = :t
+        ORDER BY scan_fecha DESC
+        LIMIT 1
+    """, {"t": ticker_sel})
+
+    if df_p.empty:
+        st.warning(f"Sin datos de precio para {ticker_sel}.")
+        return
+
+    df_p["fecha"] = pd.to_datetime(df_p["fecha"])
+    df_i["fecha"] = pd.to_datetime(df_i["fecha"])
+    df = df_p.merge(df_i, on="fecha", how="left")
+
+    if not df_ms.empty:
+        df_ms["fecha"] = pd.to_datetime(df_ms["fecha"])
+
+    # ── Metricas resumen ──────────────────────────────────────
+    ult = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else ult
+
+    delta_precio = float(ult["close"]) - float(prev["close"])
+    delta_pct    = delta_precio / float(prev["close"]) * 100
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Precio", f"${ult['close']:.2f}", f"{delta_pct:+.2f}%")
+    c2.metric("RSI 14", f"{ult['rsi14']:.1f}" if pd.notna(ult['rsi14']) else "-")
+    c3.metric("ADX",    f"{ult['adx']:.1f}"   if pd.notna(ult['adx'])   else "-")
+    c4.metric("ATR",    f"${ult['atr14']:.2f}" if pd.notna(ult['atr14']) else "-")
+
+    if not df_al.empty:
+        al    = df_al.iloc[0]
+        nivel = al["alert_nivel"] or "NEUTRAL"
+        c5.metric("Senal ML", f"{_EMOJIS.get(nivel, '')} {nivel}")
+    else:
+        c5.metric("Senal ML", "-")
+
+    # ── Figura: 4 subplots ────────────────────────────────────
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.02,
+        row_heights=[0.55, 0.15, 0.15, 0.15],
+        subplot_titles=(f"{ticker_sel} — Velas Diarias", "Volumen", "RSI 14", "MACD"),
+    )
+
+    # Velas
+    fig.add_trace(go.Candlestick(
+        x=df["fecha"],
+        open=df["open"], high=df["high"],
+        low=df["low"],   close=df["close"],
+        name="Precio",
+        increasing_line_color="#26a69a",
+        decreasing_line_color="#ef5350",
+    ), row=1, col=1)
+
+    # SMAs
+    for col_nm, color, label in [
+        ("sma21",  "#f6c90e", "SMA 21"),
+        ("sma50",  "#fb8c00", "SMA 50"),
+        ("sma200", "#e040fb", "SMA 200"),
+    ]:
+        if col_nm in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df["fecha"], y=df[col_nm], name=label,
+                line=dict(color=color, width=1.3),
+            ), row=1, col=1)
+
+    # Bollinger Bands (opcional)
+    if mostrar_bb and "bb_upper" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df["fecha"], y=df["bb_upper"], name="BB+",
+            line=dict(color="rgba(150,150,150,0.5)", width=0.8, dash="dot"),
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=df["fecha"], y=df["bb_lower"], name="BB-",
+            line=dict(color="rgba(150,150,150,0.5)", width=0.8, dash="dot"),
+            fill="tonexty", fillcolor="rgba(150,150,150,0.06)",
+            showlegend=False,
+        ), row=1, col=1)
+
+    # Marcadores BOS / CHoCH
+    if not df_ms.empty:
+        fecha_close = df.set_index("fecha")["close"]
+
+        def _get_precio(f):
+            try:
+                return float(fecha_close.loc[f])
+            except KeyError:
+                idx = fecha_close.index.get_indexer([f], method="nearest")[0]
+                return float(fecha_close.iloc[idx])
+
+        _markers = [
+            ("bos_bull_5",   "bos_bull_10",   "BOS+",    "triangle-up",   "lime",   0.994),
+            ("bos_bear_5",   "bos_bear_10",   "BOS-",    "triangle-down", "#ef5350", 1.006),
+            ("choch_bull_5", "choch_bull_10", "CHoCH+",  "star",          "cyan",   0.987),
+            ("choch_bear_5", "choch_bear_10", "CHoCH-",  "star",          "orange", 1.013),
+        ]
+        for col5, col10, label, symbol, color, offset in _markers:
+            mask = df_ms[col5].astype(bool) | df_ms[col10].astype(bool)
+            eventos = df_ms[mask]
+            if eventos.empty:
+                continue
+            xs = eventos["fecha"].tolist()
+            ys = [_get_precio(f) * offset for f in xs]
+            pos = "bottom center" if offset < 1 else "top center"
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys,
+                mode="markers+text",
+                text=[label] * len(xs),
+                textposition=pos,
+                marker=dict(symbol=symbol, color=color, size=9),
+                name=label,
+                showlegend=True,
+            ), row=1, col=1)
+
+    # Volumen coloreado
+    colors_vol = [
+        "#26a69a" if c >= o else "#ef5350"
+        for c, o in zip(df["close"], df["open"])
+    ]
+    fig.add_trace(go.Bar(
+        x=df["fecha"], y=df["volume"],
+        marker_color=colors_vol, name="Volumen", showlegend=False,
+    ), row=2, col=1)
+
+    # RSI
+    fig.add_trace(go.Scatter(
+        x=df["fecha"], y=df["rsi14"], name="RSI",
+        line=dict(color="#2196F3", width=1.5), showlegend=False,
+    ), row=3, col=1)
+    for lvl, clr in [(70, "rgba(239,83,80,0.4)"), (30, "rgba(38,166,154,0.4)"), (50, "rgba(180,180,180,0.25)")]:
+        fig.add_shape(
+            type="line",
+            x0=df["fecha"].iloc[0], x1=df["fecha"].iloc[-1],
+            y0=lvl, y1=lvl,
+            line=dict(color=clr, width=0.8, dash="dash"),
+            row=3, col=1,
+        )
+
+    # MACD
+    colors_hist = ["#26a69a" if v >= 0 else "#ef5350" for v in df["macd_hist"].fillna(0)]
+    fig.add_trace(go.Bar(
+        x=df["fecha"], y=df["macd_hist"],
+        marker_color=colors_hist, name="Histograma", showlegend=False,
+    ), row=4, col=1)
+    fig.add_trace(go.Scatter(
+        x=df["fecha"], y=df["macd"], name="MACD",
+        line=dict(color="#2196F3", width=1.2),
+    ), row=4, col=1)
+    fig.add_trace(go.Scatter(
+        x=df["fecha"], y=df["macd_signal"], name="Signal",
+        line=dict(color="#FF5722", width=1.2),
+    ), row=4, col=1)
+
+    # ── Layout ────────────────────────────────────────────────
+    fig.update_layout(
+        height=800,
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01,
+            xanchor="right", x=1, font=dict(size=10),
+        ),
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+    fig.update_yaxes(title_text="USD",  row=1, col=1)
+    fig.update_yaxes(title_text="Vol",  row=2, col=1)
+    fig.update_yaxes(title_text="RSI",  row=3, col=1, range=[0, 100])
+    fig.update_yaxes(title_text="MACD", row=4, col=1)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        "BOS+/- = Break of Structure alcista/bajista  |  "
+        "CHoCH+/- = Change of Character alcista/bajista  |  "
+        "Datos: precios_diarios + indicadores_tecnicos + features_market_structure (Railway PostgreSQL)"
+    )
+
+
+# ─────────────────────────────────────────────────────────────
 # APP PRINCIPAL
 # ─────────────────────────────────────────────────────────────
 
@@ -620,7 +864,13 @@ try:
 except Exception:
     pass
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "➕ Agregar Ticker", "📋 Historial", "📈 Analisis Tecnico"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Dashboard",
+    "➕ Agregar Ticker",
+    "📋 Historial",
+    "📈 Analisis Tecnico",
+    "🕯️ Velas",
+])
 
 with tab1:
     tab_dashboard()
@@ -633,3 +883,6 @@ with tab3:
 
 with tab4:
     tab_analisis()
+
+with tab5:
+    tab_velas()
