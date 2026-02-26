@@ -713,6 +713,32 @@ def tab_analisis():
         ORDER BY COALESCE(p.sector, 'ZZZ'), i.ticker
     """)
 
+    # ── Diagnostico de conexion (expandible) ──────────────────
+    with st.expander("Diagnostico de conexion", expanded=df.empty):
+        try:
+            engine = _get_engine()
+            host = str(engine.url).split("@")[-1].split("/")[0] if "@" in str(engine.url) else "local"
+            st.code(f"DB host: {host}")
+        except Exception as e:
+            st.code(f"DB host: error — {e}")
+
+        d_ind = query("SELECT COUNT(DISTINCT ticker) AS n FROM indicadores_tecnicos")
+        d_pre = query("SELECT COUNT(DISTINCT ticker) AS n FROM precios_diarios")
+        d_act = query("SELECT COUNT(*) AS n FROM activos WHERE modelo_asignado IS NOT NULL")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Tickers en indicadores_tecnicos", int(d_ind.iloc[0]["n"]) if not d_ind.empty else "?")
+        c2.metric("Tickers en precios_diarios",      int(d_pre.iloc[0]["n"]) if not d_pre.empty else "?")
+        c3.metric("Tickers en activos (con modelo)", int(d_act.iloc[0]["n"]) if not d_act.empty else "?")
+
+        st.write("**Tickers en el resultado de esta query:**", sorted(df["ticker"].tolist()) if not df.empty else "ninguno")
+
+        tickers_check = ["VZ", "HMC", "TM"]
+        for t in tickers_check:
+            r = query("SELECT COUNT(*) AS n FROM indicadores_tecnicos WHERE ticker = :t", {"t": t})
+            n = int(r.iloc[0]["n"]) if not r.empty else 0
+            estado = "OK" if n > 0 else "FALTA"
+            st.write(f"  {t}: indicadores_tecnicos={n} rows [{estado}]")
+
     if df.empty:
         st.warning("Sin datos disponibles.")
         return
