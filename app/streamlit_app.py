@@ -232,8 +232,8 @@ def _cargar_mod_19():
 def tab_agregar():
     st.subheader("Incorporar Nuevo Ticker")
     st.write(
-        "Descarga 5 anos de historial, evalua los 4 modelos champion V3 "
-        "y asigna el mejor al ticker."
+        "Analiza un ticker para ver su estructura tecnica, "
+        "o incorporalo a la base de datos con modelo ML asignado."
     )
 
     col1, col2 = st.columns([2, 1])
@@ -245,14 +245,14 @@ def tab_agregar():
         ).upper().strip()
     with col2:
         umbral_pct = st.number_input(
-            "Umbral retorno 20d (%)",
+            "Umbral retorno 20d (%) — para guardar",
             min_value=1.0, max_value=10.0, value=3.0, step=0.5,
         )
 
     forzar = st.checkbox("Re-evaluar si ya tiene modelo asignado")
 
     if not ticker_input:
-        st.info("Ingresa un ticker para comenzar la evaluacion.")
+        st.info("Ingresa un ticker para comenzar.")
         return
 
     # Verificar asignacion actual
@@ -264,7 +264,27 @@ def tab_agregar():
         st.info(f"**{ticker_input}** ya tiene modelo asignado: "
                 f"**{df_actual.iloc[0]['modelo_asignado']}**")
 
-    if st.button("Evaluar Modelos", type="primary"):
+    # ── Dos botones ────────────────────────────────────────────
+    col_b1, col_b2 = st.columns(2)
+    btn_sin_guardar = col_b1.button(
+        "Analizar sin guardar",
+        type="secondary",
+        use_container_width=True,
+        help="Descarga datos con yfinance y muestra analisis tecnico SIN guardar en la DB",
+    )
+    btn_guardar = col_b2.button(
+        "Analizar y guardar en DB",
+        type="primary",
+        use_container_width=True,
+        help="Descarga datos, evalua los 4 modelos champion V3 y asigna el mejor al ticker",
+    )
+
+    # ── BOTON 1: Analizar sin guardar ──────────────────────────
+    if btn_sin_guardar:
+        _analizar_sin_guardar(ticker_input)
+
+    # ── BOTON 2: Analizar y guardar en DB ──────────────────────
+    if btn_guardar:
         with st.spinner(f"Procesando {ticker_input}... puede tardar 1-2 minutos"):
             try:
                 mod19 = _cargar_mod_19()
@@ -310,17 +330,17 @@ def tab_agregar():
         c2.metric("Filas TEST",  resultado.get("n_test", "-"))
         c3.metric("Filas BACKTEST", resultado.get("n_backtest", "-"))
 
-        # Tabla comparativa
+        # Tabla comparativa de modelos
         f1_todos = resultado.get("f1_todos", {})
         if f1_todos:
             rows = []
             ganador = resultado["modelo_asignado"]
             for scope, vals in sorted(f1_todos.items(), key=lambda x: -x[1]["test"]):
                 rows.append({
-                    "Modelo":       scope,
-                    "F1 TEST":      f"{vals['test']:.4f}",
-                    "F1 BACKTEST":  f"{vals['backtest']:.4f}" if vals.get("backtest") is not None else "N/A",
-                    "Ganador":      "SI" if scope == ganador else "",
+                    "Modelo":      scope,
+                    "F1 TEST":     f"{vals['test']:.4f}",
+                    "F1 BACKTEST": f"{vals['backtest']:.4f}" if vals.get("backtest") is not None else "N/A",
+                    "Ganador":     "SI" if scope == ganador else "",
                 })
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
@@ -330,6 +350,204 @@ def tab_agregar():
             f"automaticamente, agregalo a `ACTIVOS` en `src/utils/config.py` y hace "
             f"`git push`. El cron de GitHub Actions lo incluira desde el proximo dia habil."
         )
+
+
+def _analizar_sin_guardar(ticker_input: str):
+    """
+    Descarga datos via yfinance y muestra analisis tecnico en Streamlit
+    SIN guardar ningun dato en la base de datos.
+    """
+    with st.spinner(f"Descargando datos de {ticker_input}..."):
+        raw = None
+        try:
+            import yfinance as yf
+            # Intentar con multi_level_index=False (yfinance >= 0.2.38)
+            try:
+                raw = yf.download(
+                    ticker_input, period="5y",
+                    auto_adjust=True, progress=False,
+                    multi_level_index=False,
+                )
+            except TypeError:
+                # Version antigua de yfinance sin ese parametro
+                raw = yf.download(
+                    ticker_input, period="5y",
+                    auto_adjust=True, progress=False,
+                )
+        except Exception as e:
+            st.error(f"Error al descargar datos: {e}")
+            return
+
+    if raw is None or len(raw) == 0:
+        st.warning(
+            f"**yfinance no pudo descargar datos para {ticker_input}** "
+            f"(puede estar bloqueado en Streamlit Cloud).\n\n"
+            f"Ejecuta localmente:\n\n"
+            f"```\npython scripts/19_incorporar_ticker.py {ticker_input}\n```"
+        )
+        return
+
+    # ── Normalizar columnas ────────────────────────────────────
+    df = raw.copy().reset_index()
+    # Aplanar MultiIndex si existe (yfinance nuevo devuelve MultiIndex)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0].lower() for c in df.columns]
+    else:
+        df.columns = [str(c).lower() for c in df.columns]
+    if "date" in df.columns:
+        df = df.rename(columns={"date": "fecha"})
+    elif "datetime" in df.columns:
+        df = df.rename(columns={"datetime": "fecha"})
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    df = df.sort_values("fecha").reset_index(drop=True)
+
+    # Verificar columnas minimas
+    required = ["fecha", "open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        st.error(
+            f"Columnas faltantes: {missing}. "
+            f"Columnas disponibles: {list(df.columns)}"
+        )
+        return
+
+    n = len(df)
+    fecha_ini = df["fecha"].min().strftime("%Y-%m-%d")
+    fecha_fin = df["fecha"].max().strftime("%Y-%m-%d")
+    st.success(
+        f"**{ticker_input}** — {n} sesiones ({fecha_ini} al {fecha_fin})  "
+        f"| Datos en memoria, **no guardados en DB**"
+    )
+
+    # ─────────────────────────────────────────────────────────
+    # Estructura de velas: ultimos 5 dias
+    # ─────────────────────────────────────────────────────────
+    st.markdown("#### Estructura de Velas — Ultimos 5 Dias")
+    df5 = df.tail(5).copy()
+    filas_velas = []
+    for _, row in df5.iterrows():
+        o = float(row["open"])
+        h = float(row["high"])
+        l = float(row["low"])
+        c = float(row["close"])
+        rango  = h - l
+        cuerpo = abs(c - o)
+        ssup   = h - max(o, c)
+        sinf   = min(o, c) - l
+        es_alc = c >= o
+        cuerpo_pct = round(cuerpo / rango * 100, 1) if rango > 0 else 0.0
+        ssup_pct   = round(ssup   / rango * 100, 1) if rango > 0 else 0.0
+        sinf_pct   = round(sinf   / rango * 100, 1) if rango > 0 else 0.0
+        cr         = round((c - l) / rango * 100, 1) if rango > 0 else 50.0
+
+        # Interpretacion simplificada
+        dir_str = "Alcista" if es_alc else "Bajista"
+        cuerpo_lbl = (
+            "Cuerpo largo"   if cuerpo_pct >= 60
+            else "Cuerpo med" if cuerpo_pct >= 30
+            else "Doji/Peq"
+        )
+        ssup_lbl  = "S.Sup larga" if ssup_pct >= 30 else ""
+        sinf_lbl  = "S.Inf larga" if sinf_pct >= 30 else ""
+        interp = " | ".join(x for x in [dir_str, cuerpo_lbl, ssup_lbl, sinf_lbl] if x)
+
+        filas_velas.append({
+            "Fecha":      row["fecha"].strftime("%d/%m/%y"),
+            "Dir":        "Alc" if es_alc else "Baj",
+            "Cierre":     f"{c:.2f}",
+            "Cuerpo%":    f"{cuerpo_pct:.1f}%",
+            "S.Sup%":     f"{ssup_pct:.1f}%",
+            "S.Inf%":     f"{sinf_pct:.1f}%",
+            "Cier/Rng%":  f"{cr:.1f}%",
+            "Lectura":    interp,
+        })
+    st.dataframe(pd.DataFrame(filas_velas), hide_index=True, use_container_width=True)
+
+    # ─────────────────────────────────────────────────────────
+    # Indicadores tecnicos
+    # ─────────────────────────────────────────────────────────
+    df_ind = None
+    try:
+        from src.indicators.technical import calcular_indicadores
+        df_ind = calcular_indicadores(df, ticker_input)
+    except Exception as e:
+        st.warning(f"No se pudieron calcular indicadores: {e}")
+
+    if df_ind is not None and not df_ind.empty:
+        last = df_ind.iloc[-1]
+
+        st.markdown("#### Indicadores Tecnicos — Ultimo Dia")
+        ci1, ci2, ci3, ci4 = st.columns(4)
+        ci1.metric(
+            "RSI14",
+            f"{float(last['rsi14']):.1f}" if pd.notna(last.get("rsi14")) else "-",
+            help="<35 oversold, >65 overbought"
+        )
+        ci2.metric(
+            "MACD Hist",
+            f"{float(last['macd_hist']):+.4f}" if pd.notna(last.get("macd_hist")) else "-",
+            help=">0 momentum alcista"
+        )
+        ci3.metric(
+            "ADX",
+            f"{float(last['adx']):.1f}" if pd.notna(last.get("adx")) else "-",
+            help=">25 tendencia definida"
+        )
+        ci4.metric(
+            "Vol Relativo",
+            f"{float(last['vol_relativo']):.2f}x" if pd.notna(last.get("vol_relativo")) else "-",
+            help="Volumen vs promedio 20d"
+        )
+
+        ci5, ci6, ci7 = st.columns(3)
+        ci5.metric(
+            "vs SMA21",
+            f"{float(last['dist_sma21']):+.2f}%" if pd.notna(last.get("dist_sma21")) else "-"
+        )
+        ci6.metric(
+            "vs SMA50",
+            f"{float(last['dist_sma50']):+.2f}%" if pd.notna(last.get("dist_sma50")) else "-"
+        )
+        ci7.metric(
+            "vs SMA200",
+            f"{float(last['dist_sma200']):+.2f}%" if pd.notna(last.get("dist_sma200")) else "-"
+        )
+
+        # ── Scoring rule-based ─────────────────────────────────
+        try:
+            from src.scoring.rule_based import calcular_scoring
+            df_precios_s = df[["fecha", "close"]].copy()
+            df_precios_s["fecha"] = pd.to_datetime(df_precios_s["fecha"])
+            df_sc = calcular_scoring(df_ind, df_precios_s, ticker_input)
+            if not df_sc.empty:
+                last_sc = df_sc.iloc[-1]
+                st.markdown("#### Scoring Tecnico — Ultimo Dia")
+                cs1, cs2, cs3 = st.columns(3)
+                cs1.metric("Score ponderado",  f"{float(last_sc['score_ponderado']):.2f}")
+                cs2.metric("Senal",            str(last_sc["senal"]))
+                cs3.metric("Condiciones OK",   f"{int(last_sc['condiciones_ok'])}/6")
+
+                cond_rows = [
+                    {"Condicion": "RSI oversold (<35)",  "Peso": "20%", "Estado": "OK" if last_sc.get("cond_rsi")      else "-"},
+                    {"Condicion": "MACD Hist > 0",        "Peso": "20%", "Estado": "OK" if last_sc.get("cond_macd")     else "-"},
+                    {"Condicion": "Precio > SMA21",       "Peso": "10%", "Estado": "OK" if last_sc.get("cond_sma21")    else "-"},
+                    {"Condicion": "Precio > SMA50",       "Peso": "15%", "Estado": "OK" if last_sc.get("cond_sma50")    else "-"},
+                    {"Condicion": "Precio > SMA200",      "Peso": "20%", "Estado": "OK" if last_sc.get("cond_sma200")   else "-"},
+                    {"Condicion": "Momentum > 0",         "Peso": "15%", "Estado": "OK" if last_sc.get("cond_momentum") else "-"},
+                ]
+                st.dataframe(
+                    pd.DataFrame(cond_rows),
+                    hide_index=True, use_container_width=True,
+                )
+        except Exception as e:
+            st.warning(f"No se pudo calcular scoring: {e}")
+
+    st.divider()
+    st.info(
+        f"Analisis completado **sin guardar datos** en la DB.  \n"
+        f"Para incorporar **{ticker_input}** al sistema completo con modelo ML, "
+        f"usa el boton **'Analizar y guardar en DB'**."
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -461,11 +679,7 @@ def tab_analisis():
             FROM indicadores_tecnicos
             ORDER BY ticker, fecha DESC
         ) i
-        JOIN (
-            SELECT DISTINCT ON (ticker) ticker, sector
-            FROM alertas_scanner
-            ORDER BY ticker, scan_fecha DESC
-        ) p ON p.ticker = i.ticker
+        LEFT JOIN activos p ON p.ticker = i.ticker
         JOIN (
             SELECT DISTINCT ON (ticker) ticker, fecha, close
             FROM precios_diarios
@@ -484,7 +698,7 @@ def tab_analisis():
             FROM alertas_scanner
             ORDER BY ticker, scan_fecha DESC
         ) a ON a.ticker = i.ticker
-        ORDER BY p.sector, i.ticker
+        ORDER BY COALESCE(p.sector, 'ZZZ'), i.ticker
     """)
 
     if df.empty:
