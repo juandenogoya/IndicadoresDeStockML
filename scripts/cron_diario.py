@@ -4,9 +4,11 @@ Script orquestador para Railway (cron L-V a las 17:30 ET / 20:30 UTC).
 
 Pasos:
     0. Actualizar precios e indicadores tecnicos (delta ultimos 10 dias)
-    1. Scanner de alertas para todos los tickers del universo
-    2. Verificacion post-facto de alertas pendientes
-    3. Notificacion Telegram con resumen + errores criticos
+    1. Upsert features_precio_accion y features_market_structure
+    2. Scanner de alertas para todos los tickers del universo
+    3. Backtesting PA (TRUNCATE + re-run) -- mantiene FIN_SEGMENTO al dia
+    4. Verificacion post-facto de alertas pendientes
+    5. Notificacion Telegram con resumen + errores criticos
 
 Diseñado para correr como proceso desechable (start + exit).
 Logs disponibles en Railway Dashboard > Deployments > Logs.
@@ -159,6 +161,52 @@ def paso_actualizar_datos() -> dict:
     return {"ok": n_ok, "error": n_err}
 
 
+def paso_actualizar_features_db() -> dict:
+    """
+    Paso 1: Upsert de features_precio_accion y features_market_structure.
+
+    Lee todos los tickers de precios_diarios (no filtrado por ALL_TICKERS)
+    y hace upsert de las features calculadas. Necesario para que
+    paso_backtesting_pa() use datos del dia en FIN_SEGMENTO.
+
+    Prerequisito: paso_actualizar_datos() debe haber corrido primero.
+    """
+    from src.indicators.precio_accion import procesar_features_precio_accion
+    from src.indicators.market_structure import procesar_features_market_structure
+
+    log("  Calculando features_precio_accion (upsert)...")
+    df_pa = procesar_features_precio_accion()
+    log(f"  features_precio_accion OK: {len(df_pa):,} filas")
+
+    log("  Calculando features_market_structure (upsert)...")
+    df_ms = procesar_features_market_structure()
+    log(f"  features_market_structure OK: {len(df_ms):,} filas")
+
+    return {"pa": len(df_pa), "ms": len(df_ms)}
+
+
+def paso_backtesting_pa() -> int:
+    """
+    Paso 3: Re-ejecuta el backtesting PA (EV1-4 x SV1-4) desde FECHA_INICIO_BT.
+
+    Hace TRUNCATE + re-simula operaciones_bt_pa y resultados_bt_pa.
+    Al correr con los precios del dia, las posiciones aun abiertas al cierre
+    quedan con motivo_salida = 'FIN_SEGMENTO'. Esto alimenta la columna
+    estado_pa (ENTRAR / EN GANANCIA / SALIR / NEUTRO) en Google Sheets.
+
+    Prerequisito: paso_actualizar_features_db() debe haber corrido primero.
+    """
+    from src.backtesting.simulator_pa import ejecutar_backtesting_pa
+    from src.backtesting.metrics_pa import calcular_y_guardar_resultados_pa
+
+    df_ops = ejecutar_backtesting_pa()
+    log(f"  Backtesting PA OK: {len(df_ops):,} operaciones simuladas")
+
+    calcular_y_guardar_resultados_pa(df_ops)
+    log("  Resultados PA guardados.")
+    return len(df_ops)
+
+
 def paso_scanner() -> list:
     """
     Corre el scanner para todos los tickers del universo.
@@ -256,14 +304,14 @@ def paso_verificacion() -> int:
 
 def main():
     log("=" * 55)
-    log("  CRON DIARIO  |  Actualizar + Scanner + Verificacion")
+    log("  CRON DIARIO  |  Actualizar + Scanner + BT-PA + Verificacion")
     log(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
     log("=" * 55)
 
     errores = []
 
     # ── Paso 0: Actualizar precios e indicadores ───────────────
-    log("\n[0/3] Actualizacion diaria de precios e indicadores...")
+    log("\n[0/4] Actualizacion diaria de precios e indicadores...")
     try:
         stats = paso_actualizar_datos()
         log(f"  Actualizar OK: {stats['ok']} tickers actualizados, "
@@ -273,8 +321,18 @@ def main():
         log(f"  ERROR en actualizacion (no critico, continua):\n{msg[:300]}")
         # No se agrega a errores criticos — el scanner puede seguir con datos existentes
 
-    # ── Paso 1: Scanner ───────────────────────────────────────
-    log("\n[1/3] Scanner de alertas...")
+    # ── Paso 1: Features PA + Market Structure ─────────────────
+    log("\n[1/4] Upsert features_precio_accion y features_market_structure...")
+    try:
+        stats_feat = paso_actualizar_features_db()
+        log(f"  Features OK: PA={stats_feat['pa']:,} filas, MS={stats_feat['ms']:,} filas.")
+    except Exception:
+        msg = traceback.format_exc()
+        log(f"  ERROR en features (no critico, continua):\n{msg[:300]}")
+        # No critico: el scanner calcula features en memoria de todas formas
+
+    # ── Paso 2: Scanner ───────────────────────────────────────
+    log("\n[2/4] Scanner de alertas...")
     try:
         resultados = paso_scanner()
         n_ok  = sum(1 for r in resultados if not r.get("error"))
@@ -285,8 +343,18 @@ def main():
         log(f"  ERROR CRITICO en scanner:\n{msg}")
         errores.append(f"Scanner:\n{msg}")
 
-    # ── Paso 2: Verificacion post-facto ───────────────────────
-    log("\n[2/3] Verificacion post-facto...")
+    # ── Paso 3: Backtesting PA ────────────────────────────────
+    log("\n[3/4] Backtesting PA (TRUNCATE + re-run para estado_pa)...")
+    try:
+        n_ops = paso_backtesting_pa()
+        log(f"  Backtesting PA OK: {n_ops:,} operaciones.")
+    except Exception:
+        msg = traceback.format_exc()
+        log(f"  ERROR en backtesting PA (no critico):\n{msg[:300]}")
+        # No critico: estado_pa quedara con datos del dia anterior
+
+    # ── Paso 4: Verificacion post-facto ───────────────────────
+    log("\n[4/4] Verificacion post-facto...")
     try:
         n = paso_verificacion()
         log(f"  Verificacion OK: {n} alertas actualizadas.")

@@ -101,6 +101,11 @@ NIVEL_COLOR = {
     "CMD":           {"red": 0.87, "green": 0.94, "blue": 1.00},  # azul claro
     "ARCHIVO":       {"red": 1.00, "green": 0.97, "blue": 0.82},  # amarillo claro
     "GIT":           {"red": 0.96, "green": 0.88, "blue": 0.77},  # naranja claro
+    # Estado PA (tab Analisis Tecnico)
+    "ENTRAR":        {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
+    "EN GANANCIA":   {"red": 0.13, "green": 0.55, "blue": 0.13},  # verde oscuro
+    "SALIR":         {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
+    # NEUTRO ya definido arriba (blanco)
 }
 
 _COLOR_HEADER     = {"red": 0.20, "green": 0.29, "blue": 0.49}   # azul oscuro
@@ -334,6 +339,19 @@ def _query_dashboard():
 
 def _query_analisis():
     sql = """
+        WITH ultimo_scan AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                (pa_ev1 + pa_ev2 + pa_ev3 + pa_ev4) > 0          AS hay_entrada,
+                (bear_bos10 + bear_choch10 + bear_estructura) > 0 AS hay_bear
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        ),
+        posicion_abierta AS (
+            SELECT DISTINCT ticker
+            FROM operaciones_bt_pa
+            WHERE motivo_salida = 'FIN_SEGMENTO'
+        )
         SELECT
             i.ticker,
             COALESCE(act.sector, 'Sin sector')        AS sector,
@@ -346,7 +364,13 @@ def _query_analisis():
             ROUND(i.dist_sma200::numeric, 2)          AS dist_sma200_pct,
             ROUND(i.vol_relativo::numeric, 2)         AS vol_relativo,
             ROUND(i.atr14::numeric, 2)                AS atr14,
-            i.fecha                                   AS fecha_indicador
+            i.fecha                                   AS fecha_indicador,
+            CASE
+                WHEN pa.ticker IS NOT NULL AND us.hay_bear  THEN 'SALIR'
+                WHEN pa.ticker IS NOT NULL                  THEN 'EN GANANCIA'
+                WHEN us.hay_entrada                         THEN 'ENTRAR'
+                ELSE                                             'NEUTRO'
+            END                                       AS estado_pa
         FROM (
             SELECT DISTINCT ON (ticker) ticker, fecha,
                    rsi14, macd, adx, dist_sma21, dist_sma50, dist_sma200,
@@ -360,6 +384,8 @@ def _query_analisis():
             FROM precios_diarios
             ORDER BY ticker, fecha DESC
         ) pd ON pd.ticker = i.ticker
+        LEFT JOIN ultimo_scan us ON us.ticker = i.ticker
+        LEFT JOIN posicion_abierta pa ON pa.ticker = i.ticker
         ORDER BY i.ticker
     """
     return query_df(sql)
@@ -845,7 +871,7 @@ def exportar_a_sheets():
         df2 = _query_analisis()
         _log(f"Query OK: {len(df2)} tickers en {time.time()-t:.1f}s", "OK")
 
-        _escribir_tab(spreadsheet, "Analisis Tecnico", df2)
+        _escribir_tab(spreadsheet, "Analisis Tecnico", df2, col_nivel="estado_pa")
         _log(f"Tab 'Analisis Tecnico' actualizado: {len(df2)} tickers", "OK")
         resultados["Analisis Tecnico"] = "OK"
 
