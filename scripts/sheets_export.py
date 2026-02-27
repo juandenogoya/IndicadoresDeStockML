@@ -375,9 +375,9 @@ def _query_historial(dias: int = 90):
                 alert_score                                      AS score,
                 ROUND(ml_prob_ganancia::numeric*100, 1)         AS ml_pct,
                 ROUND(precio_cierre::numeric, 2)                AS precio_cierre,
-                ROUND(retorno_1d_real::numeric*100,  2)         AS retorno_1d_pct,
-                ROUND(retorno_5d_real::numeric*100,  2)         AS retorno_5d_pct,
-                ROUND(retorno_20d_real::numeric*100, 2)         AS retorno_20d_pct,
+                ROUND(retorno_1d_real::numeric,  2)             AS retorno_1d_pct,
+                ROUND(retorno_5d_real::numeric,  2)             AS retorno_5d_pct,
+                ROUND(retorno_20d_real::numeric, 2)             AS retorno_20d_pct,
                 CASE WHEN verificado THEN 'si' ELSE 'no' END    AS verificado
             FROM alertas_scanner
             WHERE scan_fecha >= :fecha_desde
