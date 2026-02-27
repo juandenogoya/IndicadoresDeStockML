@@ -348,9 +348,12 @@ def _query_analisis():
             ORDER BY ticker, scan_fecha DESC
         ),
         posicion_abierta AS (
-            SELECT DISTINCT ticker
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                fecha_entrada
             FROM operaciones_bt_pa
             WHERE motivo_salida = 'FIN_SEGMENTO'
+            ORDER BY ticker, fecha_entrada DESC
         )
         SELECT
             i.ticker,
@@ -370,7 +373,12 @@ def _query_analisis():
                 WHEN pa.ticker IS NOT NULL                  THEN 'EN GANANCIA'
                 WHEN us.hay_entrada                         THEN 'ENTRAR'
                 ELSE                                             'NEUTRO'
-            END                                       AS estado_pa
+            END                                       AS estado_pa,
+            pa.fecha_entrada                          AS fecha_in,
+            CASE
+                WHEN pa.ticker IS NOT NULL AND us.hay_bear THEN CURRENT_DATE
+                ELSE NULL
+            END                                       AS fecha_out
         FROM (
             SELECT DISTINCT ON (ticker) ticker, fecha,
                    rsi14, macd, adx, dist_sma21, dist_sma50, dist_sma200,
