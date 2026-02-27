@@ -188,6 +188,8 @@ def simular_segmento_pa(df: pd.DataFrame, ticker: str,
                 "dias_posicion":      dias_posicion,
                 "retorno_pct":        round(retorno_pct, 4),
                 "resultado":          resultado,
+                "stop_loss":          round(stop_loss, 4) if stop_loss is not None else None,
+                "take_profit":        round(take_profit, 4) if take_profit is not None else None,
             })
 
             # Resetear estado
@@ -214,6 +216,8 @@ def simular_segmento_pa(df: pd.DataFrame, ticker: str,
             "dias_posicion":      dias_posicion,
             "retorno_pct":        round(retorno_pct, 4),
             "resultado":          clasificar_resultado_pa(retorno_pct),
+            "stop_loss":          round(stop_loss, 4) if stop_loss is not None else None,
+            "take_profit":        round(take_profit, 4) if take_profit is not None else None,
         })
 
     return operaciones
@@ -292,15 +296,279 @@ def _persistir_operaciones_pa(df_ops: pd.DataFrame):
             (estrategia_entrada, estrategia_salida, ticker, segmento,
              fecha_entrada, precio_entrada, score_entrada,
              fecha_salida, precio_salida, motivo_salida,
-             dias_posicion, retorno_pct, resultado)
+             dias_posicion, retorno_pct, resultado,
+             stop_loss, take_profit)
         VALUES
             (%(estrategia_entrada)s, %(estrategia_salida)s, %(ticker)s, %(segmento)s,
              %(fecha_entrada)s, %(precio_entrada)s, %(score_entrada)s,
              %(fecha_salida)s, %(precio_salida)s, %(motivo_salida)s,
-             %(dias_posicion)s, %(retorno_pct)s, %(resultado)s)
+             %(dias_posicion)s, %(retorno_pct)s, %(resultado)s,
+             %(stop_loss)s, %(take_profit)s)
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             psycopg2.extras.execute_batch(cur, sql, records, page_size=500)
 
     print(f"  Operaciones PA persistidas: {len(records):,} registros.")
+
+
+# ─────────────────────────────────────────────────────────────
+# Helper incremental: ultima barra de un ticker
+# ─────────────────────────────────────────────────────────────
+
+def _cargar_ultima_barra_ticker(ticker: str):
+    """
+    Carga la ultima barra disponible para un ticker con todas sus features.
+    Retorna pd.Series o None si no hay datos o faltan indicadores.
+    """
+    sql = """
+        SELECT
+            p.fecha,
+            p.open, p.high, p.low, p.close, p.volume,
+            i.atr14,
+
+            pa.es_alcista,
+            pa.patron_hammer,
+            pa.patron_engulfing_bull,
+            pa.vol_spike,
+            pa.up_vol_5d,
+            pa.vol_price_confirm,
+
+            ms.estructura_5,    ms.estructura_10,
+            ms.bos_bull_5,      ms.bos_bear_5,
+            ms.choch_bull_5,    ms.choch_bear_5,
+            ms.bos_bull_10,     ms.bos_bear_10,
+            ms.choch_bull_10,   ms.choch_bear_10,
+            ms.dist_sh_5_pct,   ms.dist_sl_5_pct,
+            ms.dias_sh_5,       ms.dias_sl_5,
+            ms.dist_sh_10_pct,  ms.dist_sl_10_pct,
+            ms.dias_sh_10,      ms.dias_sl_10,
+            ms.impulso_5_pct,   ms.impulso_10_pct,
+
+            s.score_ponderado
+
+        FROM precios_diarios p
+        JOIN  indicadores_tecnicos          i  ON p.ticker = i.ticker  AND p.fecha = i.fecha
+        LEFT JOIN features_precio_accion   pa  ON p.ticker = pa.ticker AND p.fecha = pa.fecha
+        LEFT JOIN features_market_structure ms  ON p.ticker = ms.ticker AND p.fecha = ms.fecha
+        LEFT JOIN scoring_tecnico           s  ON p.ticker = s.ticker  AND p.fecha = s.fecha
+        WHERE p.ticker = :ticker
+        ORDER BY p.fecha DESC
+        LIMIT 1
+    """
+    df = query_df(sql, params={"ticker": ticker})
+    if df.empty:
+        return None
+    row = df.iloc[0].copy()
+    row["fecha"] = pd.to_datetime(row["fecha"])
+    return row
+
+
+# ─────────────────────────────────────────────────────────────
+# Backtesting incremental: solo el dia actual
+# ─────────────────────────────────────────────────────────────
+
+def ejecutar_backtesting_pa_incremental(tickers: list = None,
+                                         guardar_db: bool = True) -> dict:
+    """
+    Actualiza el backtesting PA de forma incremental procesando solo el dia actual.
+
+    Flujo:
+        1. Lee posiciones abiertas (FIN_SEGMENTO) de operaciones_bt_pa.
+        2. Para cada posicion: evalua si se cierra hoy con la ultima barra disponible.
+           - Si cierra: UPDATE con motivo/precio/retorno reales.
+           - Si sigue abierta: UPDATE precio_salida=close_actual, dias+1, retorno actual.
+        3. Para combos (ticker x EV x SV) sin posicion: evalua entrada en la ultima barra.
+           - Si hay senal: INSERT FIN_SEGMENTO (precio_entrada = close del dia de senal).
+
+    Simplificacion vs full-rerun:
+        - Entrada al close del dia de senal (no al open de T+1).
+        - dias_posicion se incrementa en 1 por cada ejecucion del cron (aprox. trading days).
+
+    Returns:
+        dict con {"cerradas": n, "actualizadas": n, "nuevas": n}
+
+    Prerequisito: columnas stop_loss y take_profit deben existir en operaciones_bt_pa.
+    Ejecutar scripts/21_migrar_bt_incremental.py la primera vez.
+    """
+    import psycopg2.extras
+
+    tickers = tickers or ALL_TICKERS
+
+    # ── 1. Cargar posiciones abiertas ─────────────────────────────────────────
+    df_abiertas = query_df("""
+        SELECT id, estrategia_entrada, estrategia_salida, ticker, segmento,
+               fecha_entrada, precio_entrada, score_entrada,
+               stop_loss, take_profit, dias_posicion
+        FROM operaciones_bt_pa
+        WHERE motivo_salida = 'FIN_SEGMENTO'
+    """)
+    if not df_abiertas.empty:
+        df_abiertas = df_abiertas[df_abiertas["ticker"].isin(tickers)].copy()
+
+    # ── 2. Cargar ultima barra de cada ticker afectado ─────────────────────────
+    tickers_abiertos = df_abiertas["ticker"].unique().tolist() if not df_abiertas.empty else []
+    tickers_todos    = list(set(list(tickers) + tickers_abiertos))
+
+    ultima_barra = {}
+    for t in tickers_todos:
+        row = _cargar_ultima_barra_ticker(t)
+        if row is not None:
+            ultima_barra[t] = row
+
+    # ── 3. Procesar posiciones abiertas ───────────────────────────────────────
+    ops_cerrar       = []
+    ops_update       = []
+    combos_ocupados  = set()   # (ticker, ee, es) con posicion abierta
+
+    for _, pos in df_abiertas.iterrows():
+        ticker = pos["ticker"]
+        ee     = pos["estrategia_entrada"]
+        es     = pos["estrategia_salida"]
+
+        if ticker not in ultima_barra:
+            combos_ocupados.add((ticker, ee, es))
+            continue
+
+        row = ultima_barra[ticker]
+        pe  = float(pos["precio_entrada"])
+
+        # Reconstruir stop_loss (fallback si NULL en DB)
+        sl_raw = pos["stop_loss"]
+        sl = pe * 0.95 if (sl_raw is None or pd.isna(sl_raw)) else float(sl_raw)
+
+        tp_raw = pos["take_profit"]
+        tp = None if (tp_raw is None or pd.isna(tp_raw)) else float(tp_raw)
+
+        dias = int(pos["dias_posicion"]) + 1
+
+        cerrar, motivo, precio_salida = check_salida_pa(row, es, sl, tp, dias)
+
+        if cerrar:
+            retorno_pct = (float(precio_salida) / pe - 1) * 100
+            ops_cerrar.append({
+                "id":            int(pos["id"]),
+                "fecha_salida":  row["fecha"].date() if hasattr(row["fecha"], "date") else row["fecha"],
+                "precio_salida": round(float(precio_salida), 4),
+                "motivo_salida": motivo,
+                "dias_posicion": dias,
+                "retorno_pct":   round(retorno_pct, 4),
+                "resultado":     clasificar_resultado_pa(retorno_pct),
+            })
+            # combo queda libre para nueva entrada
+
+        else:
+            # Sigue abierta: actualizar precio actual y dias
+            combos_ocupados.add((ticker, ee, es))
+            close_actual   = float(row["close"])
+            retorno_actual = (close_actual / pe - 1) * 100
+            ops_update.append({
+                "id":            int(pos["id"]),
+                "precio_salida": round(close_actual, 4),
+                "dias_posicion": dias,
+                "retorno_pct":   round(retorno_actual, 4),
+                "resultado":     clasificar_resultado_pa(retorno_actual),
+            })
+
+    # ── 4. Evaluar nuevas entradas ────────────────────────────────────────────
+    ops_nuevas = []
+
+    for ticker in tickers:
+        if ticker not in ultima_barra:
+            continue
+
+        row = ultima_barra[ticker]
+
+        for ee in ESTRATEGIAS_ENTRADA_PA:
+            if not check_entrada_pa(row, ee):
+                continue
+
+            # Hay senal de entrada para este ticker + estrategia de entrada
+            atr_raw = row["atr14"] if "atr14" in row.index else None
+            atr = float(atr_raw) if (atr_raw is not None and not pd.isna(atr_raw)) \
+                  else float(row["close"]) * 0.02
+
+            precio_entrada = float(row["close"])   # simplificacion: close del dia de senal
+
+            sp = row["score_ponderado"] if "score_ponderado" in row.index else None
+            score_entrada = round(float(sp), 4) \
+                if (sp is not None and not pd.isna(sp)) else None
+
+            fecha_entrada = row["fecha"].date() if hasattr(row["fecha"], "date") else row["fecha"]
+
+            for es in ESTRATEGIAS_SALIDA_PA:
+                if (ticker, ee, es) in combos_ocupados:
+                    continue  # ya hay posicion abierta para este combo
+
+                sl, tp = calcular_stops_iniciales_pa(precio_entrada, atr, es)
+
+                ops_nuevas.append({
+                    "estrategia_entrada": ee,
+                    "estrategia_salida":  es,
+                    "ticker":             ticker,
+                    "segmento":           "FULL",
+                    "fecha_entrada":      fecha_entrada,
+                    "precio_entrada":     round(precio_entrada, 4),
+                    "score_entrada":      score_entrada,
+                    "fecha_salida":       fecha_entrada,   # mismo dia, se actualiza diariamente
+                    "precio_salida":      round(precio_entrada, 4),
+                    "motivo_salida":      "FIN_SEGMENTO",
+                    "dias_posicion":      0,
+                    "retorno_pct":        0.0,
+                    "resultado":          "NEUTRO",
+                    "stop_loss":          sl,
+                    "take_profit":        tp,
+                })
+
+    # ── 5. Persistir en DB ────────────────────────────────────────────────────
+    if guardar_db:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+
+                if ops_cerrar:
+                    psycopg2.extras.execute_batch(cur, """
+                        UPDATE operaciones_bt_pa SET
+                            fecha_salida  = %(fecha_salida)s,
+                            precio_salida = %(precio_salida)s,
+                            motivo_salida = %(motivo_salida)s,
+                            dias_posicion = %(dias_posicion)s,
+                            retorno_pct   = %(retorno_pct)s,
+                            resultado     = %(resultado)s
+                        WHERE id = %(id)s
+                    """, ops_cerrar, page_size=100)
+
+                if ops_update:
+                    psycopg2.extras.execute_batch(cur, """
+                        UPDATE operaciones_bt_pa SET
+                            precio_salida = %(precio_salida)s,
+                            dias_posicion = %(dias_posicion)s,
+                            retorno_pct   = %(retorno_pct)s,
+                            resultado     = %(resultado)s
+                        WHERE id = %(id)s
+                    """, ops_update, page_size=200)
+
+                if ops_nuevas:
+                    psycopg2.extras.execute_batch(cur, """
+                        INSERT INTO operaciones_bt_pa
+                            (estrategia_entrada, estrategia_salida, ticker, segmento,
+                             fecha_entrada, precio_entrada, score_entrada,
+                             fecha_salida, precio_salida, motivo_salida,
+                             dias_posicion, retorno_pct, resultado,
+                             stop_loss, take_profit)
+                        VALUES
+                            (%(estrategia_entrada)s, %(estrategia_salida)s, %(ticker)s, %(segmento)s,
+                             %(fecha_entrada)s, %(precio_entrada)s, %(score_entrada)s,
+                             %(fecha_salida)s, %(precio_salida)s, %(motivo_salida)s,
+                             %(dias_posicion)s, %(retorno_pct)s, %(resultado)s,
+                             %(stop_loss)s, %(take_profit)s)
+                    """, ops_nuevas, page_size=200)
+
+    print(f"  BT Incremental: {len(ops_cerrar)} cerradas, "
+          f"{len(ops_update)} actualizadas, "
+          f"{len(ops_nuevas)} nuevas.")
+
+    return {
+        "cerradas":     len(ops_cerrar),
+        "actualizadas": len(ops_update),
+        "nuevas":       len(ops_nuevas),
+    }
