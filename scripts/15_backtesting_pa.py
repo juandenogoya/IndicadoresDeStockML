@@ -24,7 +24,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.backtesting.simulator_pa import ejecutar_backtesting_pa, ESTRATEGIAS_ENTRADA_PA, ESTRATEGIAS_SALIDA_PA
+from src.backtesting.simulator_pa import ejecutar_backtesting_pa, ESTRATEGIAS_ENTRADA_PA, ESTRATEGIAS_SALIDA_PA, FECHA_INICIO_BT
 from src.backtesting.metrics_pa import calcular_y_guardar_resultados_pa, ranking_estrategias_pa
 from src.data.database import query_df, ejecutar_sql
 
@@ -99,13 +99,9 @@ def imprimir_distribucion_motivos(df_ops):
     """Muestra como se distribuyen los motivos de salida."""
     if df_ops.empty:
         return
-    bt_ops = df_ops[df_ops["segmento"] == "BACKTEST"]
-    if bt_ops.empty:
-        return
-
-    print(f"\n  Distribucion de motivos de salida (BACKTEST):")
-    dist = bt_ops["motivo_salida"].value_counts()
-    total = len(bt_ops)
+    print(f"\n  Distribucion de motivos de salida (FULL):")
+    dist = df_ops["motivo_salida"].value_counts()
+    total = len(df_ops)
     for motivo, cnt in dist.items():
         print(f"    {motivo:<20}: {cnt:>5}  ({cnt/total*100:.1f}%)")
 
@@ -119,6 +115,7 @@ def main():
     print(f"  Estrategias entrada : {', '.join(ESTRATEGIAS_ENTRADA_PA)}")
     print(f"  Estrategias salida  : {', '.join(ESTRATEGIAS_SALIDA_PA)}")
     print(f"  Combinaciones       : {len(ESTRATEGIAS_ENTRADA_PA) * len(ESTRATEGIAS_SALIDA_PA)} (4x4)")
+    print(f"  Periodo             : {FECHA_INICIO_BT} -> hoy  (segmento: FULL)")
     print(f"  Tablas output       : operaciones_bt_pa, resultados_bt_pa")
     print(f"  Inicio              : {inicio.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 65)
@@ -162,9 +159,8 @@ def main():
         traceback.print_exc()
         sys.exit(1)
 
-    # Rankings por segmento
-    for seg in ["TRAIN", "TEST", "BACKTEST"]:
-        imprimir_ranking(seg)
+    # Ranking segmento FULL
+    imprimir_ranking("FULL")
 
     # Distribucion de motivos en BACKTEST
     imprimir_distribucion_motivos(df_ops)

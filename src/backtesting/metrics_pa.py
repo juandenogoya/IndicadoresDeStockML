@@ -109,7 +109,7 @@ def calcular_y_guardar_resultados_pa(df_ops: pd.DataFrame):
 # Ranking de estrategias PA (lectura desde DB)
 # ─────────────────────────────────────────────────────────────
 
-def ranking_estrategias_pa(segmento: str = "TRAIN",
+def ranking_estrategias_pa(segmento: str = "FULL",
                             min_ops: int = 5) -> pd.DataFrame:
     """
     Retorna el ranking de las 16 combinaciones EV x SV ordenado por
@@ -135,7 +135,7 @@ def ranking_estrategias_pa(segmento: str = "TRAIN",
 
 
 def ranking_por_ticker_pa(estrategia_entrada: str, estrategia_salida: str,
-                           segmento: str = "TRAIN") -> pd.DataFrame:
+                           segmento: str = "FULL") -> pd.DataFrame:
     """Retorna el ranking de tickers para una combinacion EV x SV dada."""
     sql = """
         SELECT

@@ -11,18 +11,22 @@ Carga datos de 5 tablas:
 
 Escribe en operaciones_bt_pa (sin tocar operaciones_backtest).
 
-Mismas reglas de ejecucion que el backtesting original:
+Reglas de ejecucion:
     - Una posicion abierta a la vez por ticker
     - Senal en dia T -> entrada al OPEN del dia T+1
     - SL/TP evaluados contra HIGH/LOW intraday
     - Cierre por condicion estructural o score: al CLOSE del dia
-    - Posicion abierta al final del segmento: cierre forzado al CLOSE
+    - Posicion abierta al final del historico: cierre forzado al CLOSE
+
+Periodo fijo: desde FECHA_INICIO_BT (2023-01-01) hasta hoy.
+Las estrategias son reglas fijas (no ML), no hay data leakage.
+Un solo segmento "FULL" — sin split TRAIN/TEST/BACKTEST.
 """
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict
-from src.utils.config import ALL_TICKERS, TRAIN_RATIO, TEST_RATIO
+from typing import List
+from src.utils.config import ALL_TICKERS
 from src.backtesting.strategies_pa import (
     check_entrada_pa,
     calcular_stops_iniciales_pa,
@@ -36,9 +40,9 @@ from src.data.database import query_df, get_connection
 # Constantes
 # ─────────────────────────────────────────────────────────────
 
+FECHA_INICIO_BT        = "2023-01-01"   # Fecha fija de inicio del backtesting
 ESTRATEGIAS_ENTRADA_PA = ["EV1", "EV2", "EV3", "EV4"]
 ESTRATEGIAS_SALIDA_PA  = ["SV1", "SV2", "SV3", "SV4"]
-SEGMENTOS              = ["TRAIN", "TEST", "BACKTEST"]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -47,7 +51,7 @@ SEGMENTOS              = ["TRAIN", "TEST", "BACKTEST"]
 
 def cargar_datos_ticker_pa(ticker: str) -> pd.DataFrame:
     """
-    Carga datos combinados de 5 tablas para un ticker.
+    Carga datos combinados de 5 tablas para un ticker desde FECHA_INICIO_BT.
 
     LEFT JOIN para features_precio_accion, features_market_structure y scoring_tecnico:
     las primeras N barras no tienen estas features (periodo de calentamiento).
@@ -82,31 +86,17 @@ def cargar_datos_ticker_pa(ticker: str) -> pd.DataFrame:
             s.score_ponderado
 
         FROM precios_diarios p
-        JOIN  indicadores_tecnicos       i  ON p.ticker = i.ticker  AND p.fecha = i.fecha
-        LEFT JOIN features_precio_accion pa ON p.ticker = pa.ticker AND p.fecha = pa.fecha
-        LEFT JOIN features_market_structure ms ON p.ticker = ms.ticker AND p.fecha = ms.fecha
-        LEFT JOIN scoring_tecnico          s  ON p.ticker = s.ticker  AND p.fecha = s.fecha
+        JOIN  indicadores_tecnicos          i  ON p.ticker = i.ticker  AND p.fecha = i.fecha
+        LEFT JOIN features_precio_accion   pa  ON p.ticker = pa.ticker AND p.fecha = pa.fecha
+        LEFT JOIN features_market_structure ms  ON p.ticker = ms.ticker AND p.fecha = ms.fecha
+        LEFT JOIN scoring_tecnico           s  ON p.ticker = s.ticker  AND p.fecha = s.fecha
         WHERE p.ticker = :ticker
+          AND p.fecha  >= :fecha_inicio
         ORDER BY p.fecha ASC
     """
-    df = query_df(sql, params={"ticker": ticker})
+    df = query_df(sql, params={"ticker": ticker, "fecha_inicio": FECHA_INICIO_BT})
     df["fecha"] = pd.to_datetime(df["fecha"])
     return df.reset_index(drop=True)
-
-
-def dividir_segmentos(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-    """
-    Split temporal 70/15/15 TRAIN/TEST/BACKTEST (mismo criterio que el backtesting original).
-    No aleatorio para evitar data leakage.
-    """
-    n       = len(df)
-    i_train = int(n * TRAIN_RATIO)
-    i_test  = int(n * (TRAIN_RATIO + TEST_RATIO))
-    return {
-        "TRAIN":    df.iloc[:i_train].reset_index(drop=True),
-        "TEST":     df.iloc[i_train:i_test].reset_index(drop=True),
-        "BACKTEST": df.iloc[i_test:].reset_index(drop=True),
-    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -234,55 +224,47 @@ def simular_segmento_pa(df: pd.DataFrame, ticker: str,
 # ─────────────────────────────────────────────────────────────
 
 def ejecutar_backtesting_pa(tickers: list = None,
-                             segmentos: list = None,
                              guardar_db: bool = True) -> pd.DataFrame:
     """
-    Ejecuta la matriz 4x4 PA para todos los tickers y segmentos.
+    Ejecuta la matriz 4x4 PA para todos los tickers.
+
+    Usa el periodo completo desde FECHA_INICIO_BT hasta hoy,
+    sin split TRAIN/TEST/BACKTEST (las estrategias son reglas fijas, sin entrenamiento).
+    Todas las operaciones se etiquetan con segmento = "FULL".
 
     Args:
         tickers:    lista de tickers (None = ALL_TICKERS)
-        segmentos:  lista de segmentos (None = todos)
         guardar_db: persistir operaciones en PostgreSQL
 
     Returns:
         DataFrame con todas las operaciones simuladas
     """
-    tickers   = tickers   or ALL_TICKERS
-    segmentos = segmentos or SEGMENTOS
+    tickers = tickers or ALL_TICKERS
 
     todas_ops    = []
     total_combis = len(tickers) * len(ESTRATEGIAS_ENTRADA_PA) * len(ESTRATEGIAS_SALIDA_PA)
 
-    print(f"\nCargando datos y ejecutando {total_combis} combinaciones PA...\n")
+    print(f"\n  Periodo: {FECHA_INICIO_BT} -> hoy  |  Segmento: FULL")
+    print(f"  {total_combis} combinaciones ({len(tickers)} tickers x 4 entradas x 4 salidas)\n")
     print("-" * 65)
 
     for ticker in tickers:
         print(f"  [{ticker}] Cargando datos...", end=" ")
-        df_completo = cargar_datos_ticker_pa(ticker)
+        df_full = cargar_datos_ticker_pa(ticker)
 
-        if len(df_completo) < 50:
+        if len(df_full) < 50:
             print("insuficientes datos, omitido.")
             continue
 
-        segms = dividir_segmentos(df_completo)
-        print(
-            f"OK | TRAIN:{len(segms['TRAIN'])} "
-            f"TEST:{len(segms['TEST'])} "
-            f"BACKTEST:{len(segms['BACKTEST'])}"
-        )
+        print(f"OK | {len(df_full)} barras ({df_full['fecha'].min().date()} a {df_full['fecha'].max().date()})")
 
-        for seg_nombre in segmentos:
-            df_seg = segms[seg_nombre]
-            if df_seg.empty:
-                continue
-
-            for ee in ESTRATEGIAS_ENTRADA_PA:
-                for es in ESTRATEGIAS_SALIDA_PA:
-                    ops = simular_segmento_pa(df_seg, ticker, ee, es, seg_nombre)
-                    todas_ops.extend(ops)
+        for ee in ESTRATEGIAS_ENTRADA_PA:
+            for es in ESTRATEGIAS_SALIDA_PA:
+                ops = simular_segmento_pa(df_full, ticker, ee, es, "FULL")
+                todas_ops.extend(ops)
 
     print("-" * 65)
-    print(f"Simulacion PA completada: {len(todas_ops):,} operaciones totales.")
+    print(f"  Simulacion PA completada: {len(todas_ops):,} operaciones totales.")
 
     df_ops = pd.DataFrame(todas_ops) if todas_ops else pd.DataFrame()
 
