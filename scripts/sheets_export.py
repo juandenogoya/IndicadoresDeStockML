@@ -87,6 +87,10 @@ NIVEL_COLOR = {
     # Tipo vela (tab Velas)
     "Alcista":       {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
     "Bajista":       {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
+    # Resultado operaciones (tab BT Trades)
+    "GANANCIA":      {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
+    "PERDIDA":       {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
+    "NEUTRO":        {"red": 1.00, "green": 1.00, "blue": 1.00},  # blanco
     # Accion recomendada (tab Conclusiones)
     "PRIORIDAD":     {"red": 0.13, "green": 0.55, "blue": 0.13},  # verde oscuro
     "ESTUDIAR":      {"red": 0.72, "green": 0.96, "blue": 0.72},  # verde claro
@@ -617,6 +621,68 @@ def _query_conclusiones():
     return df[[c for c in cols if c in df.columns]]
 
 
+def _query_bt_resumen():
+    """
+    Resumen del backtesting PA por ticker para la estrategia champion EV4/SV1.
+    Periodo: FECHA_INICIO_BT (2023-01-01) -> hoy, segmento FULL.
+    Incluye todos los tickers activos aunque tengan 0 operaciones.
+    """
+    sql = """
+        SELECT
+            a.sector,
+            a.ticker,
+            COUNT(o.id)                                                       AS total_ops,
+            COALESCE(SUM(CASE WHEN o.resultado='GANANCIA' THEN 1 ELSE 0 END), 0) AS ganadoras,
+            COALESCE(SUM(CASE WHEN o.resultado='PERDIDA'  THEN 1 ELSE 0 END), 0) AS perdedoras,
+            COALESCE(SUM(CASE WHEN o.resultado='NEUTRO'   THEN 1 ELSE 0 END), 0) AS neutros,
+            ROUND(COALESCE(
+                AVG(CASE WHEN o.resultado='GANANCIA' THEN 100.0 ELSE 0.0 END), 0
+            )::numeric, 1)                                                    AS wr_pct,
+            ROUND(COALESCE(AVG(o.retorno_pct), 0)::numeric, 2)               AS ret_prom,
+            ROUND(COALESCE(
+                SUM(CASE WHEN o.retorno_pct > 0 THEN o.retorno_pct ELSE 0 END) /
+                NULLIF(ABS(SUM(CASE WHEN o.retorno_pct < 0 THEN o.retorno_pct ELSE 0 END)), 0)
+            , 0)::numeric, 2)                                                 AS profit_factor
+        FROM activos a
+        LEFT JOIN operaciones_bt_pa o
+               ON a.ticker              = o.ticker
+              AND o.estrategia_entrada  = 'EV4'
+              AND o.estrategia_salida   = 'SV1'
+              AND o.segmento            = 'FULL'
+        WHERE a.activo = TRUE
+        GROUP BY a.sector, a.ticker
+        ORDER BY a.sector, profit_factor DESC NULLS LAST, a.ticker
+    """
+    return query_df(sql)
+
+
+def _query_bt_trades():
+    """
+    Log de operaciones individuales del champion EV4/SV1 FULL.
+    Incluye sector del ticker via join con activos.
+    """
+    sql = """
+        SELECT
+            a.sector,
+            o.ticker,
+            o.fecha_entrada::text                        AS fecha_entrada,
+            ROUND(o.precio_entrada::numeric, 2)          AS precio_entrada,
+            o.fecha_salida::text                         AS fecha_salida,
+            ROUND(o.precio_salida::numeric, 2)           AS precio_salida,
+            o.dias_posicion                              AS dias,
+            ROUND(o.retorno_pct::numeric, 2)             AS retorno_pct,
+            o.resultado,
+            o.motivo_salida                              AS motivo
+        FROM operaciones_bt_pa o
+        JOIN activos a ON a.ticker = o.ticker
+        WHERE o.estrategia_entrada = 'EV4'
+          AND o.estrategia_salida  = 'SV1'
+          AND o.segmento           = 'FULL'
+        ORDER BY a.sector, o.ticker, o.fecha_entrada
+    """
+    return query_df(sql)
+
+
 # ─────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────
@@ -661,7 +727,7 @@ def exportar_a_sheets():
     resultados = {}
 
     # ── Tab 1: Dashboard ──────────────────────────────────────
-    _separador("Tab 1/5: Dashboard")
+    _separador("Tab 1/7: Dashboard")
     try:
         _log("Consultando PostgreSQL (alertas_scanner)...", "STEP")
         t = time.time()
@@ -683,7 +749,7 @@ def exportar_a_sheets():
         resultados["Dashboard"] = f"ERROR: {e}"
 
     # ── Tab 2: Analisis Tecnico ───────────────────────────────
-    _separador("Tab 2/5: Analisis Tecnico")
+    _separador("Tab 2/7: Analisis Tecnico")
     try:
         _log("Consultando PostgreSQL (indicadores_tecnicos)...", "STEP")
         t = time.time()
@@ -700,7 +766,7 @@ def exportar_a_sheets():
         resultados["Analisis Tecnico"] = f"ERROR: {e}"
 
     # ── Tab 3: Historial ──────────────────────────────────────
-    _separador("Tab 3/5: Historial")
+    _separador("Tab 3/7: Historial")
     try:
         _log("Consultando PostgreSQL (alertas_scanner 90 dias)...", "STEP")
         t = time.time()
@@ -721,7 +787,7 @@ def exportar_a_sheets():
         resultados["Historial"] = f"ERROR: {e}"
 
     # ── Tab 4: Velas ─────────────────────────────────────────
-    _separador("Tab 4/5: Velas")
+    _separador("Tab 4/7: Velas")
     try:
         _log("Consultando PostgreSQL (precios + patrones + vol)...", "STEP")
         t = time.time()
@@ -744,7 +810,7 @@ def exportar_a_sheets():
         resultados["Velas"] = f"ERROR: {e}"
 
     # ── Tab 5: Conclusiones ───────────────────────────────────
-    _separador("Tab 5/5: Conclusiones")
+    _separador("Tab 5/7: Conclusiones")
     try:
         _log("Construyendo resumen accionable para swing trading...", "STEP")
         t = time.time()
@@ -767,6 +833,53 @@ def exportar_a_sheets():
         _log(f"FALLO en tab Conclusiones: {e}", "ERROR")
         traceback.print_exc()
         resultados["Conclusiones"] = f"ERROR: {e}"
+
+    # ── Tab 6: BT Resumen ─────────────────────────────────────
+    _separador("Tab 6/7: BT Resumen")
+    try:
+        _log("Consultando PostgreSQL (backtesting EV4/SV1 por ticker)...", "STEP")
+        t = time.time()
+        df6 = _query_bt_resumen()
+        _log(f"Query OK: {len(df6)} tickers en {time.time()-t:.1f}s", "OK")
+
+        if not df6.empty:
+            con_ops = (df6["total_ops"] > 0).sum()
+            sin_ops = (df6["total_ops"] == 0).sum()
+            avg_wr  = df6[df6["total_ops"] > 0]["wr_pct"].mean()
+            _log(f"Tickers con ops: {con_ops} | Sin ops: {sin_ops} | WR% promedio: {avg_wr:.1f}%", "INFO")
+
+        _escribir_tab(spreadsheet, "BT Resumen", df6)
+        _log(f"Tab 'BT Resumen' actualizado: {len(df6)} tickers (EV4/SV1 FULL)", "OK")
+        resultados["BT Resumen"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab BT Resumen: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["BT Resumen"] = f"ERROR: {e}"
+
+    # ── Tab 7: BT Trades ──────────────────────────────────────
+    _separador("Tab 7/7: BT Trades")
+    try:
+        _log("Consultando PostgreSQL (operaciones EV4/SV1 individuales)...", "STEP")
+        t = time.time()
+        df7 = _query_bt_trades()
+        _log(f"Query OK: {len(df7)} operaciones en {time.time()-t:.1f}s", "OK")
+
+        if not df7.empty:
+            ganadoras = (df7["resultado"] == "GANANCIA").sum()
+            perdedoras = (df7["resultado"] == "PERDIDA").sum()
+            wr = ganadoras / len(df7) * 100
+            ret_prom = df7["retorno_pct"].mean()
+            _log(f"G:{ganadoras} | P:{perdedoras} | WR:{wr:.1f}% | RetProm:{ret_prom:.2f}%", "INFO")
+
+        _escribir_tab(spreadsheet, "BT Trades", df7, col_nivel="resultado")
+        _log(f"Tab 'BT Trades' actualizado: {len(df7)} operaciones (EV4/SV1 2023->hoy)", "OK")
+        resultados["BT Trades"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab BT Trades: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["BT Trades"] = f"ERROR: {e}"
 
     # ── Resumen final ─────────────────────────────────────────
     _separador("Resumen")
