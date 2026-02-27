@@ -45,7 +45,7 @@ TELEGRAM_CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID")
 # ── Proyecto ──────────────────────────────────────────────────
 START_DATE = os.getenv("START_DATE", "2020-01-01")
 
-# ── Universo de Activos ───────────────────────────────────────
+# ── Universo de Activos (con modelos ML entrenados) ──────────
 ACTIVOS = {
     "Financials": ["JPM", "BAC", "MS", "GS", "WFC", "AXP"],
     "Consumer Staples": ["KO", "PEP", "PG", "PM", "CL", "MO"],
@@ -54,10 +54,47 @@ ACTIVOS = {
     "Communication Services": ["VZ"],
 }
 
-# Lista plana de todos los tickers
-ALL_TICKERS = [ticker for tickers in ACTIVOS.values() for ticker in tickers]
+# ── Tickers adicionales para BT (sin modelo ML propio) ───────
+# Solo estrategias tecnicas PA (EV1-4 / SV1-4). Se descargan precios
+# y se calculan features diariamente. Los modelos ML usan global_rf.
+BT_EXTRA_TICKERS = [
+    # Technology
+    "NVDA", "AAPL", "GOOG", "MSFT", "AMZN", "META", "TSM", "AVGO",
+    "ASML", "MU", "AMD", "INTC", "IBM", "QCOM", "CRM", "DELL", "MSI",
+    "SNOW", "ACN", "AI", "GLOB", "ERIC",
+    # Automotive / EV
+    "TSLA", "HMC", "XPEV", "NIO", "NIU",
+    # Healthcare
+    "LLY", "JNJ", "UNH", "PFE", "MRNA", "GSK", "CVS",
+    # Energy
+    "XOM", "CVX", "BP", "SHEL", "TTE", "OXY", "HAL", "FSLR", "VIST",
+    # Financials (additional)
+    "V", "MA", "C", "AIG", "PYPL", "UPST",
+    # Consumer Discretionary (additional)
+    "MCD", "NKE", "MELI", "ABNB", "EBAY", "ETSY", "TRIP", "SNAP",
+    "LYFT", "UBER", "NFLX", "DIS", "AAP",
+    # Consumer Staples (additional)
+    "UL", "HSY",
+    # Industrials
+    "CAT", "RTX", "HON", "LMT", "DE", "UPS", "MMM", "BA", "RKLB",
+    # Materials / Mining
+    "NEM", "PAAS", "CDE", "HL", "HMY", "AU", "MP", "LAC", "B",
+    # Real Estate
+    "PLD",
+    # Airlines
+    "DAL", "UAL", "AAL",
+    # Telecom (additional)
+    "T", "VOD",
+    # Brazil
+    "PBR", "ITUB", "VALE", "NU", "BBD", "BSBR", "XP", "STNE", "PAGS", "SID",
+    # China / Southeast Asia
+    "BABA", "BIDU", "JD", "SE",
+]
 
-# Mapa inverso: ticker -> sector
+# Lista plana de todos los tickers (ML + BT extra)
+ALL_TICKERS = [t for tickers in ACTIVOS.values() for t in tickers] + BT_EXTRA_TICKERS
+
+# Mapa inverso: ticker -> sector (solo para los que tienen modelo ML)
 TICKER_SECTOR = {
     ticker: sector
     for sector, tickers in ACTIVOS.items()

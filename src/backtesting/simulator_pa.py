@@ -228,7 +228,8 @@ def simular_segmento_pa(df: pd.DataFrame, ticker: str,
 # ─────────────────────────────────────────────────────────────
 
 def ejecutar_backtesting_pa(tickers: list = None,
-                             guardar_db: bool = True) -> pd.DataFrame:
+                             guardar_db: bool = True,
+                             truncate: bool = True) -> pd.DataFrame:
     """
     Ejecuta la matriz 4x4 PA para todos los tickers.
 
@@ -239,6 +240,9 @@ def ejecutar_backtesting_pa(tickers: list = None,
     Args:
         tickers:    lista de tickers (None = ALL_TICKERS)
         guardar_db: persistir operaciones en PostgreSQL
+        truncate:   si True (default), TRUNCATE antes de insertar;
+                    si False, solo borra registros de los tickers especificados
+                    (util para incorporar tickers nuevos sin perder historial)
 
     Returns:
         DataFrame con todas las operaciones simuladas
@@ -273,21 +277,36 @@ def ejecutar_backtesting_pa(tickers: list = None,
     df_ops = pd.DataFrame(todas_ops) if todas_ops else pd.DataFrame()
 
     if guardar_db and not df_ops.empty:
-        _persistir_operaciones_pa(df_ops)
+        _persistir_operaciones_pa(df_ops, truncate=truncate,
+                                  tickers_filtro=tickers if not truncate else None)
 
     return df_ops
 
 
-def _persistir_operaciones_pa(df_ops: pd.DataFrame):
+def _persistir_operaciones_pa(df_ops: pd.DataFrame,
+                               truncate: bool = True,
+                               tickers_filtro: list = None):
     """
     Persiste operaciones en operaciones_bt_pa.
-    TRUNCATE previo para garantizar reproducibilidad (re-run limpio).
+
+    Si truncate=True (default): TRUNCATE ambas tablas antes de insertar.
+    Si truncate=False: DELETE solo los registros de tickers_filtro,
+    luego INSERT (util para agregar tickers nuevos sin borrar historial).
     """
     import psycopg2.extras
     from src.data.database import ejecutar_sql
 
-    ejecutar_sql("TRUNCATE TABLE operaciones_bt_pa RESTART IDENTITY")
-    ejecutar_sql("TRUNCATE TABLE resultados_bt_pa  RESTART IDENTITY")
+    if truncate:
+        ejecutar_sql("TRUNCATE TABLE operaciones_bt_pa RESTART IDENTITY")
+        ejecutar_sql("TRUNCATE TABLE resultados_bt_pa  RESTART IDENTITY")
+    elif tickers_filtro:
+        # Borrar solo los tickers que vamos a re-insertar (idempotente)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM operaciones_bt_pa WHERE ticker = ANY(%s)",
+                    (tickers_filtro,)
+                )
 
     records = df_ops.to_dict(orient="records")
 
