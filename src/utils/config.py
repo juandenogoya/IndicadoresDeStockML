@@ -51,6 +51,7 @@ ACTIVOS = {
     "Consumer Staples": ["KO", "PEP", "PG", "PM", "CL", "MO"],
     "Consumer Discretionary": ["TGT", "WMT", "COST", "HD", "LOW"],
     "Automotive": ["F", "GM", "STLA", "TM"],
+    "Communication Services": ["VZ"],
 }
 
 # Lista plana de todos los tickers
