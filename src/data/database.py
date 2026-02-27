@@ -70,8 +70,8 @@ def insertar_df(df: pd.DataFrame, tabla: str, if_exists: str = "append"):
 
 def upsert_precios(df: pd.DataFrame):
     """
-    Inserta o actualiza precios diarios usando ON CONFLICT DO NOTHING.
-    Evita duplicados por (ticker, fecha).
+    Inserta o actualiza precios diarios.
+    ON CONFLICT DO UPDATE permite sobreescribir datos incorrectos (ej: volumenes Stooq).
     """
     records = df.to_dict(orient="records")
     sql = """
@@ -80,7 +80,13 @@ def upsert_precios(df: pd.DataFrame):
         VALUES
             (%(ticker)s, %(fecha)s, %(open)s, %(high)s, %(low)s,
              %(close)s, %(volume)s, %(adj_close)s)
-        ON CONFLICT (ticker, fecha) DO NOTHING
+        ON CONFLICT (ticker, fecha) DO UPDATE SET
+            open      = EXCLUDED.open,
+            high      = EXCLUDED.high,
+            low       = EXCLUDED.low,
+            close     = EXCLUDED.close,
+            volume    = EXCLUDED.volume,
+            adj_close = EXCLUDED.adj_close
     """
     with get_connection() as conn:
         with conn.cursor() as cur:

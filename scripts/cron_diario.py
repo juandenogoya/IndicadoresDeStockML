@@ -90,7 +90,9 @@ def paso_actualizar_datos() -> dict:
     Paso 0: Actualiza precios e indicadores tecnicos para TODOS los tickers en DB.
 
     Flujo por ticker:
-      1. Descarga ultimos 10 dias desde Stooq -> upsert en precios_diarios
+      1. Descarga ultimos 10 dias desde yfinance -> upsert en precios_diarios
+         (yfinance en lugar de Stooq: volumenes correctos para datos recientes;
+          Stooq devuelve volumenes identicos/placeholder para las ultimas fechas)
       2. Carga historico completo (500 barras) desde DB
       3. Recalcula indicadores sobre el historico completo -> upsert en indicadores_tecnicos
 
@@ -98,9 +100,8 @@ def paso_actualizar_datos() -> dict:
     al menos 200 barras para SMA200. No se puede usar solo el delta de 10 dias.
     """
     from datetime import date, timedelta
-    from src.data.download import descargar_ticker_stooq
+    from src.pipeline.data_manager import descargar_yfinance, cargar_precios_db
     from src.data.database import upsert_precios, query_df
-    from src.pipeline.data_manager import cargar_precios_db
     from src.indicators.technical import procesar_indicadores_ticker
 
     # Obtener TODOS los tickers activos en DB (incluye tickers externos como VZ)
@@ -119,20 +120,22 @@ def paso_actualizar_datos() -> dict:
         log("  [WARN] Lista de tickers vacia, saltando actualizacion.")
         return {"ok": 0, "error": 0}
 
-    start_delta = str(date.today() - timedelta(days=10))
-    log(f"  {len(tickers_db)} tickers, delta desde {start_delta}...")
+    log(f"  {len(tickers_db)} tickers (via yfinance, periodo 1mo)...")
 
     n_ok = 0
     n_err = 0
 
     for i, ticker in enumerate(tickers_db, 1):
         try:
-            # 1. Descargar precios recientes y upsert
-            df_new = descargar_ticker_stooq(ticker, start=start_delta)
+            # 1. Descargar precios recientes con yfinance (volumenes correctos) y upsert
+            df_new = descargar_yfinance(ticker, periodo="1mo")
             if df_new.empty:
-                log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: Stooq sin datos nuevos.")
+                log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: yfinance sin datos.")
                 n_err += 1
                 continue
+            # upsert_precios requiere columna adj_close
+            if "adj_close" not in df_new.columns:
+                df_new["adj_close"] = df_new["close"]
             upsert_precios(df_new)
 
             # 2. Cargar historico completo desde DB para calculo valido de SMA200
