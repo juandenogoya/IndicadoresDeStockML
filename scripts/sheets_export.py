@@ -97,6 +97,10 @@ NIVEL_COLOR = {
     "MONITOREAR":    {"red": 1.00, "green": 1.00, "blue": 0.75},  # amarillo claro
     "OBSERVAR":      {"red": 1.00, "green": 1.00, "blue": 1.00},  # blanco
     "EVITAR":        {"red": 1.00, "green": 0.71, "blue": 0.71},  # rojo claro
+    # Tipo de paso (tab Nuevo Activo)
+    "CMD":           {"red": 0.87, "green": 0.94, "blue": 1.00},  # azul claro
+    "ARCHIVO":       {"red": 1.00, "green": 0.97, "blue": 0.82},  # amarillo claro
+    "GIT":           {"red": 0.96, "green": 0.88, "blue": 0.77},  # naranja claro
 }
 
 _COLOR_HEADER     = {"red": 0.20, "green": 0.29, "blue": 0.49}   # azul oscuro
@@ -684,6 +688,91 @@ def _query_bt_trades():
 
 
 # ─────────────────────────────────────────────────────────────
+# Procedimiento: agregar nuevo activo (contenido estatico)
+# ─────────────────────────────────────────────────────────────
+
+def _datos_nuevo_activo() -> pd.DataFrame:
+    """
+    Tabla de referencia con los pasos para incorporar un nuevo ticker.
+    Contenido estatico: no lee de la DB.
+    Tipos de paso: CMD (azul), ARCHIVO (amarillo), GIT (naranja).
+    """
+    pasos = [
+        {
+            "paso":    "1",
+            "tipo":    "CMD",
+            "accion":  "Incorporar ticker en la DB",
+            "comando": "python scripts/19_incorporar_ticker.py TICKER --forzar",
+            "notas":   "Descarga 5 anios yfinance -> precios_diarios + indicadores_tecnicos + asigna modelo ML champion",
+        },
+        {
+            "paso":    "2",
+            "tipo":    "CMD",
+            "accion":  "Calcular scoring tecnico",
+            "comando": "python scripts/03_calcular_scoring.py",
+            "notas":   "Prerequisito obligatorio del backtesting PA (script 15 verifica que scoring_tecnico no este vacio)",
+        },
+        {
+            "paso":    "3",
+            "tipo":    "ARCHIVO",
+            "accion":  "Agregar ticker a config.py",
+            "comando": "src/utils/config.py  ->  dict ACTIVOS",
+            "notas":   "Sector: usar el mismo que tiene en tabla activos (auto-detectado por yfinance). Si es sector nuevo, agregar como nueva key",
+        },
+        {
+            "paso":    "4",
+            "tipo":    "CMD",
+            "accion":  "Recalcular features precio/accion",
+            "comando": "python scripts/09_calcular_precio_accion.py",
+            "notas":   "Lee todos los tickers en precios_diarios, hace upsert automatico. No hay que filtrar por ticker",
+        },
+        {
+            "paso":    "5",
+            "tipo":    "CMD",
+            "accion":  "Recalcular features market structure",
+            "comando": "python scripts/12_calcular_market_structure.py",
+            "notas":   "Lee todos los tickers en precios_diarios, hace upsert automatico. No hay que filtrar por ticker",
+        },
+        {
+            "paso":    "6",
+            "tipo":    "CMD",
+            "accion":  "Re-ejecutar backtesting PA",
+            "comando": "python scripts/15_backtesting_pa.py",
+            "notas":   "TRUNCATE + re-simula EV1-4 x SV1-4 desde 2023-01-01 para todos los tickers de ALL_TICKERS en config.py",
+        },
+        {
+            "paso":    "7",
+            "tipo":    "CMD",
+            "accion":  "Actualizar Google Sheets",
+            "comando": "python scripts/sheets_export.py",
+            "notas":   "Opcional localmente. El cron diario (GitHub Actions L-V 17:30 ET) lo ejecuta automaticamente",
+        },
+        {
+            "paso":    "8",
+            "tipo":    "GIT",
+            "accion":  "Commit y push a GitHub",
+            "comando": "git add src/utils/config.py && git commit -m 'feat: agregar TICKER (Sector)' && git push origin main",
+            "notas":   "Obligatorio para que GitHub Actions (cron) y Streamlit Cloud usen el nuevo ticker",
+        },
+        {
+            "paso":    "---",
+            "tipo":    "ARCHIVO",
+            "accion":  "CONSULTAR SECTOR en tabla activos",
+            "comando": "SELECT ticker, sector FROM activos WHERE activo=TRUE ORDER BY sector, ticker",
+            "notas":   "Ejecutar en psql o DBeaver para ver el sector asignado antes de editar config.py (paso 3)",
+        },
+        {
+            "paso":    "---",
+            "tipo":    "ARCHIVO",
+            "accion":  "VERIFICAR features cargadas",
+            "comando": "SELECT ticker, COUNT(*) n_pa FROM features_precio_accion GROUP BY ticker ORDER BY ticker",
+            "notas":   "Si n_pa=0 para algun ticker despues del paso 4, revisar que precios_diarios tiene datos validos (close>0)",
+        },
+    ]
+    return pd.DataFrame(pasos)
+
+
+# ─────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────
 
@@ -835,7 +924,7 @@ def exportar_a_sheets():
         resultados["Conclusiones"] = f"ERROR: {e}"
 
     # ── Tab 6: BT Resumen ─────────────────────────────────────
-    _separador("Tab 6/7: BT Resumen")
+    _separador("Tab 6/8: BT Resumen")
     try:
         _log("Consultando PostgreSQL (backtesting EV4/SV1 por ticker)...", "STEP")
         t = time.time()
@@ -858,7 +947,7 @@ def exportar_a_sheets():
         resultados["BT Resumen"] = f"ERROR: {e}"
 
     # ── Tab 7: BT Trades ──────────────────────────────────────
-    _separador("Tab 7/7: BT Trades")
+    _separador("Tab 7/8: BT Trades")
     try:
         _log("Consultando PostgreSQL (operaciones EV4/SV1 individuales)...", "STEP")
         t = time.time()
@@ -880,6 +969,19 @@ def exportar_a_sheets():
         _log(f"FALLO en tab BT Trades: {e}", "ERROR")
         traceback.print_exc()
         resultados["BT Trades"] = f"ERROR: {e}"
+
+    # ── Tab 8: Nuevo Activo ───────────────────────────────────
+    _separador("Tab 8/8: Nuevo Activo")
+    try:
+        df8 = _datos_nuevo_activo()
+        _escribir_tab(spreadsheet, "Nuevo Activo", df8, col_nivel="tipo")
+        _log(f"Tab 'Nuevo Activo' actualizado: {len(df8)} pasos", "OK")
+        resultados["Nuevo Activo"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Nuevo Activo: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Nuevo Activo"] = f"ERROR: {e}"
 
     # ── Resumen final ─────────────────────────────────────────
     _separador("Resumen")
