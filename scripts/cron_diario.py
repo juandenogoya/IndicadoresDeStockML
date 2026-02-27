@@ -279,6 +279,13 @@ def paso_scanner() -> list:
                 "dist_sh_10_pct":    fp.get("dist_sh_10_pct"),
                 "dias_sl_10":        fp.get("dias_sl_10"),
                 "dias_sh_10":        fp.get("dias_sh_10"),
+                # Patrones de vela (para Mensaje 2 Telegram)
+                "patron_hammer":         fp.get("patron_hammer"),
+                "patron_shooting_star":  fp.get("patron_shooting_star"),
+                "patron_engulfing_bull": fp.get("patron_engulfing_bull"),
+                "patron_engulfing_bear": fp.get("patron_engulfing_bear"),
+                "es_alcista":            fp.get("es_alcista"),
+                "vol_spike":             fp.get("vol_spike"),
                 "alert_score":       alert_score,
                 "alert_nivel":       alert_nivel,
                 "alert_detalle":     alert_detalle,
