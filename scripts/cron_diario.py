@@ -91,22 +91,17 @@ def paso_actualizar_datos() -> dict:
     """
     Paso 0: Actualiza precios e indicadores tecnicos para TODOS los tickers en DB.
 
-    Flujo por ticker:
-      1. Descarga ultimos 10 dias desde yfinance -> upsert en precios_diarios
-         (yfinance en lugar de Stooq: volumenes correctos para datos recientes;
-          Stooq devuelve volumenes identicos/placeholder para las ultimas fechas)
-      2. Carga historico completo (500 barras) desde DB
-      3. Recalcula indicadores sobre el historico completo -> upsert en indicadores_tecnicos
-
-    Nota: necesitamos el historico completo porque calcular_indicadores() requiere
-    al menos 200 barras para SMA200. No se puede usar solo el delta de 10 dias.
+    Descarga en una sola llamada batch (yf.download con lista de tickers) para
+    evitar rate-limiting en GitHub Actions. Luego procesa cada ticker con los
+    datos recibidos y recalcula indicadores desde el historico completo en DB.
     """
-    from datetime import date, timedelta
-    from src.pipeline.data_manager import descargar_yfinance, cargar_precios_db
+    import yfinance as yf
+    import pandas as pd
+    from src.pipeline.data_manager import cargar_precios_db
     from src.data.database import upsert_precios, query_df
     from src.indicators.technical import procesar_indicadores_ticker
 
-    # Obtener TODOS los tickers activos en DB (incluye tickers externos como VZ)
+    # Obtener TODOS los tickers activos en DB
     try:
         df_activos = query_df(
             "SELECT ticker FROM activos WHERE activo = TRUE ORDER BY ticker"
@@ -114,7 +109,6 @@ def paso_actualizar_datos() -> dict:
         tickers_db = df_activos["ticker"].tolist() if not df_activos.empty else []
     except Exception as e:
         log(f"  [WARN] No se pudo leer activos de DB: {e}")
-        # Fallback a ALL_TICKERS de config
         from src.utils.config import ALL_TICKERS
         tickers_db = ALL_TICKERS
 
@@ -122,40 +116,83 @@ def paso_actualizar_datos() -> dict:
         log("  [WARN] Lista de tickers vacia, saltando actualizacion.")
         return {"ok": 0, "error": 0}
 
-    log(f"  {len(tickers_db)} tickers (via yfinance, periodo 1mo)...")
+    log(f"  {len(tickers_db)} tickers — descarga batch (1 sola llamada yfinance)...")
+
+    # 1. Descarga batch: UNA sola llamada para todos los tickers
+    try:
+        raw_all = yf.download(
+            tickers=tickers_db,
+            period="1mo",
+            auto_adjust=True,
+            progress=False,
+            group_by="ticker",
+            threads=False,
+        )
+    except Exception as e:
+        log(f"  [ERROR] Descarga batch yfinance fallo: {e}. Saltando actualizacion.")
+        return {"ok": 0, "error": len(tickers_db)}
+
+    if raw_all is None or raw_all.empty:
+        log("  [WARN] yfinance batch no retorno datos. Saltando actualizacion.")
+        return {"ok": 0, "error": len(tickers_db)}
+
+    log(f"  Batch descargado: {raw_all.shape[0]} filas x {raw_all.shape[1]} columnas.")
 
     n_ok = 0
     n_err = 0
 
     for i, ticker in enumerate(tickers_db, 1):
         try:
-            # 1. Descargar precios recientes con yfinance (volumenes correctos) y upsert
-            df_new = descargar_yfinance(ticker, periodo="1mo")
-            if df_new.empty:
-                log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: yfinance sin datos.")
-                n_err += 1
-                continue
-            # upsert_precios requiere columna adj_close
-            if "adj_close" not in df_new.columns:
-                df_new["adj_close"] = df_new["close"]
-            upsert_precios(df_new)
+            # 2. Extraer datos del ticker desde el DataFrame batch
+            if isinstance(raw_all.columns, pd.MultiIndex):
+                lvl0 = raw_all.columns.get_level_values(0).unique().tolist()
+                lvl1 = raw_all.columns.get_level_values(1).unique().tolist()
+                if ticker in lvl0:
+                    df_t = raw_all[ticker].copy()
+                elif ticker in lvl1:
+                    df_t = raw_all.xs(ticker, axis=1, level=1).copy()
+                else:
+                    raise ValueError(f"{ticker} no encontrado en resultado batch")
+            else:
+                # Solo un ticker en el batch (fallback)
+                df_t = raw_all.copy()
 
-            # 2. Cargar historico completo desde DB para calculo valido de SMA200
+            df_t = df_t.reset_index()
+            df_t.columns = [
+                c[0].lower() if isinstance(c, tuple) else str(c).lower()
+                for c in df_t.columns
+            ]
+            df_t = df_t.rename(columns={"date": "fecha", "price": "fecha"})
+            if "fecha" not in df_t.columns:
+                raise ValueError("columna fecha no encontrada en batch")
+
+            df_t["fecha"] = pd.to_datetime(df_t["fecha"])
+            cols_needed = [c for c in ["fecha", "open", "high", "low", "close", "volume"]
+                           if c in df_t.columns]
+            df_t = df_t[cols_needed].dropna(subset=["close"])
+            df_t = df_t[df_t["close"] > 0]
+            df_t["ticker"] = ticker
+            df_t["adj_close"] = df_t["close"]
+            df_t = df_t.sort_values("fecha").reset_index(drop=True)
+
+            if df_t.empty:
+                raise ValueError("sin datos validos en resultado batch")
+
+            upsert_precios(df_t)
+
+            # 3. Cargar historico completo desde DB para SMA200
             df_full = cargar_precios_db(ticker, ultimas_n=500)
             if len(df_full) < 250:
-                log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: historico insuficiente "
-                    f"({len(df_full)} barras).")
-                n_err += 1
-                continue
+                raise ValueError(f"historico insuficiente ({len(df_full)} barras)")
 
-            # 3. Calcular y guardar indicadores sobre el historico completo
+            # 4. Recalcular indicadores
             procesar_indicadores_ticker(ticker, df_full, guardar_db=True)
-            ultima = df_new["fecha"].max()
-            log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: OK (ultima barra: {ultima})")
+            ultima = df_t["fecha"].max()
+            log(f"    [{i:03d}/{len(tickers_db)}] {ticker}: OK (ultima: {ultima.date()})")
             n_ok += 1
 
         except Exception as e:
-            log(f"    [{i:02d}/{len(tickers_db)}] {ticker}: ERROR - {str(e)[:80]}")
+            log(f"    [{i:03d}/{len(tickers_db)}] {ticker}: ERROR - {str(e)[:80]}")
             n_err += 1
 
     return {"ok": n_ok, "error": n_err}
