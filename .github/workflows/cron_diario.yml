@@ -2,9 +2,8 @@ name: Cron Diario Scanner
 
 on:
   schedule:
-    # L-V a las 18:30 UTC (15:30 hora Argentina) -- PRUEBA temporal
-    # Produccion recomendada: 30 20 * * 1-5 (20:30 UTC = 17:30 Argentina, post-cierre NYSE)
-    - cron: '30 18 * * 1-5'
+    # L-V a las 23:00 UTC (20:00 hora Argentina, post-cierre NYSE + margen)
+    - cron: '0 23 * * 1-5'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:
