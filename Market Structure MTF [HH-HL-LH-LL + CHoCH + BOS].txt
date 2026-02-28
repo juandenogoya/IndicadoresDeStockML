@@ -1,0 +1,269 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © JuanDeNogoya
+
+//@version=6
+indicator('Market Structure MTF [HH/HL/LH/LL + CHoCH + BOS]', overlay = true, max_labels_count = 500, max_lines_count = 500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//                                  INPUTS
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Pivot Detection
+pivotLen = input.int(5, 'Pivot Length', minval = 2, maxval = 50, group = 'Structure Settings', 
+             tooltip = 'Number of bars on each side to confirm a pivot. Higher = less sensitive.')
+
+// Multi-Timeframe
+useMTF = input.bool(false, 'Show HTF Structure', group = 'Multi-Timeframe', 
+             tooltip = 'Display structure from a higher timeframe')
+htfRes = input.timeframe('D', 'HTF Timeframe', group = 'Multi-Timeframe', 
+             tooltip = 'Select the higher timeframe to analyze')
+
+// Visualization
+showLocal = input.bool(true, 'Show Local Structure', group = 'Visualization', 
+             tooltip = 'Display structure of the current timeframe')
+bosBuffer = input.int(1, 'BOS Buffer (bars)', minval = 1, maxval = 20, group = 'Filters', 
+             tooltip = 'Minimum bars between BOS signals to avoid repetition in consolidation')
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//                           LOCAL TIMEFRAME LOGIC
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Pivot Detection
+phLocal = ta.pivothigh(high, pivotLen, pivotLen)
+plLocal = ta.pivotlow(low, pivotLen, pivotLen)
+
+// State Variables
+var float lastPH = na
+var float lastPL = na
+var int trend = 0
+var int lastBosBar = 0
+var int lastBosDir = 0
+
+// ──────────────────────────────────────────────────────────────────────────
+// BOS Crossover/Crossunder - MUST BE OUTSIDE CONDITIONAL BLOCKS
+// ──────────────────────────────────────────────────────────────────────────
+crossOverLastPH = ta.crossover(close, nz(lastPH))
+crossUnderLastPL = ta.crossunder(close, nz(lastPL))
+
+// Process Local Structure
+if showLocal
+    // ──────────────────────────────────────────────────────────────────────────
+    // PIVOT HIGH CLASSIFICATION
+    // ──────────────────────────────────────────────────────────────────────────
+    if not na(phLocal)
+        string labelText = ''
+        color labelColor = color.gray
+
+        if na(lastPH)
+            labelText := 'PH'
+            labelColor := color.gray
+        else if phLocal > lastPH
+            labelText := 'HH'
+            labelColor := color.green
+            if trend == -1
+                labelText := 'CHoCH'
+                labelColor := color.orange
+            trend := 1
+        else
+            labelText := 'LH'
+            labelColor := color.red
+            if trend == 1
+                labelText := 'CHoCH'
+                labelColor := color.orange
+            trend := -1
+
+        label.new(bar_index - pivotLen, phLocal, labelText, 
+                  style = label.style_label_down, 
+                  color = labelColor, 
+                  textcolor = color.white, 
+                  size = size.small)
+
+        lastPH := phLocal
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PIVOT LOW CLASSIFICATION
+    // ──────────────────────────────────────────────────────────────────────────
+    if not na(plLocal)
+        string labelText = ''
+        color labelColor = color.gray
+
+        if na(lastPL)
+            labelText := 'PL'
+            labelColor := color.gray
+        else if plLocal > lastPL
+            labelText := 'HL'
+            labelColor := color.green
+        else
+            labelText := 'LL'
+            labelColor := color.red
+
+        label.new(bar_index - pivotLen, plLocal, labelText, 
+                  style = label.style_label_up, 
+                  color = labelColor, 
+                  textcolor = color.white, 
+                  size = size.small)
+
+        lastPL := plLocal
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // BOS DETECTION WITH ANTI-REPETITION
+    // ──────────────────────────────────────────────────────────────────────────
+    bosUp = trend == 1 and not na(lastPH) and crossOverLastPH
+    bosDown = trend == -1 and not na(lastPL) and crossUnderLastPL
+
+    canShowBosUp = bosUp and bar_index - lastBosBar >= bosBuffer and (lastBosDir != 1 or close > lastPH * 1.001)
+    canShowBosDown = bosDown and bar_index - lastBosBar >= bosBuffer and (lastBosDir != -1 or close < lastPL * 0.999)
+
+    if canShowBosUp
+        label.new(bar_index, high, 'BOS', 
+                  style = label.style_label_down, 
+                  color = color.blue, 
+                  textcolor = color.white, 
+                  size = size.tiny)
+        lastBosBar := bar_index
+        lastBosDir := 1
+
+    if canShowBosDown
+        label.new(bar_index, low, 'BOS', 
+                  style = label.style_label_up, 
+                  color = color.blue, 
+                  textcolor = color.white, 
+                  size = size.tiny)
+        lastBosBar := bar_index
+        lastBosDir := -1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//                         HIGHER TIMEFRAME LOGIC
+// ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+// ══════════════════════════════════════════════════════════════════════════════
+
+// HTF Data Requests (must be outside conditional blocks)
+htfHigh = request.security(syminfo.tickerid, htfRes, high)
+htfLow = request.security(syminfo.tickerid, htfRes, low)
+htfClose = request.security(syminfo.tickerid, htfRes, close)
+
+phHTF = request.security(syminfo.tickerid, htfRes, ta.pivothigh(high, pivotLen, pivotLen))
+plHTF = request.security(syminfo.tickerid, htfRes, ta.pivotlow(low, pivotLen, pivotLen))
+
+// HTF State Variables
+var float htfLastPH = na
+var float htfLastPL = na
+var int htfTrend = 0
+var int htfLastBosBar = 0
+var int htfLastBosDir = 0
+
+// Detect new HTF pivots
+newHTFPivotHigh = not na(phHTF) and (na(phHTF[1]) or phHTF != phHTF[1])
+newHTFPivotLow = not na(plHTF) and (na(plHTF[1]) or plHTF != plHTF[1])
+
+// ──────────────────────────────────────────────────────────────────────────
+// HTF BOS Crossover/Crossunder - MUST BE OUTSIDE CONDITIONAL BLOCKS
+// ──────────────────────────────────────────────────────────────────────────
+htfCrossOverLastPH = ta.crossover(htfClose, nz(htfLastPH))
+htfCrossUnderLastPL = ta.crossunder(htfClose, nz(htfLastPL))
+
+// Process HTF Structure (only if enabled)
+if useMTF
+    // ──────────────────────────────────────────────────────────────────────────
+    // HTF PIVOT HIGH CLASSIFICATION
+    // ──────────────────────────────────────────────────────────────────────────
+    if newHTFPivotHigh
+        string labelText = ''
+        color labelColor = color.gray
+
+        if na(htfLastPH)
+            labelText := 'PH'
+            labelColor := color.purple
+        else if phHTF > htfLastPH
+            labelText := 'HH'
+            labelColor := color.teal
+            if htfTrend == -1
+                labelText := 'CHoCH'
+                labelColor := color.yellow
+            htfTrend := 1
+        else
+            labelText := 'LH'
+            labelColor := color.maroon
+            if htfTrend == 1
+                labelText := 'CHoCH'
+                labelColor := color.yellow
+            htfTrend := -1
+
+        label.new(bar_index, phHTF, '(' + htfRes + ') ' + labelText, 
+                  style = label.style_label_down, 
+                  color = labelColor, 
+                  textcolor = color.white, 
+                  size = size.normal)
+
+        line.new(bar_index - 50, phHTF, bar_index, phHTF, 
+                 color = labelColor, 
+                 style = line.style_dashed, 
+                 width = 1)
+
+        htfLastPH := phHTF
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // HTF PIVOT LOW CLASSIFICATION
+    // ──────────────────────────────────────────────────────────────────────────
+    if newHTFPivotLow
+        string labelText = ''
+        color labelColor = color.gray
+
+        if na(htfLastPL)
+            labelText := 'PL'
+            labelColor := color.purple
+        else if plHTF > htfLastPL
+            labelText := 'HL'
+            labelColor := color.teal
+        else
+            labelText := 'LL'
+            labelColor := color.maroon
+
+        label.new(bar_index, plHTF, '(' + htfRes + ') ' + labelText, 
+                  style = label.style_label_up, 
+                  color = labelColor, 
+                  textcolor = color.white, 
+                  size = size.normal)
+
+        line.new(bar_index - 50, plHTF, bar_index, plHTF, 
+                 color = labelColor, 
+                 style = line.style_dashed, 
+                 width = 1)
+
+        htfLastPL := plHTF
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // HTF BOS DETECTION
+    // ──────────────────────────────────────────────────────────────────────────
+    htfBosUp = htfTrend == 1 and not na(htfLastPH) and htfCrossOverLastPH
+    htfBosDown = htfTrend == -1 and not na(htfLastPL) and htfCrossUnderLastPL
+
+    canShowHTFBosUp = htfBosUp and bar_index - htfLastBosBar >= bosBuffer and htfLastBosDir != 1
+    canShowHTFBosDown = htfBosDown and bar_index - htfLastBosBar >= bosBuffer and htfLastBosDir != -1
+
+    if canShowHTFBosUp
+        label.new(bar_index, high, '(' + htfRes + ') BOS', 
+                  style = label.style_label_down, 
+                  color = color.navy, 
+                  textcolor = color.white, 
+                  size = size.small)
+        htfLastBosBar := bar_index
+        htfLastBosDir := 1
+
+    if canShowHTFBosDown
+        label.new(bar_index, low, '(' + htfRes + ') BOS', 
+                  style = label.style_label_up, 
+                  color = color.navy, 
+                  textcolor = color.white, 
+                  size = size.small)
+        htfLastBosBar := bar_index
+        htfLastBosDir := -1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// END OF SCRIPT
+// ══════════════════════════════════════════════════════════════════════════════
