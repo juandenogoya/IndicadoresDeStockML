@@ -142,9 +142,18 @@ TEST_RATIO  = 0.15
 
 # ── Configuración ML ─────────────────────────────────────────
 # Sectores con modelo propio en el challenger sectorial.
-# Automotive excluido: solo 3 tickers, datos insuficientes para
-# un modelo sectorial robusto. Usará el Global Champion.
-SECTORES_ML = ["Financials", "Consumer Staples", "Consumer Discretionary"]
+# Sectores con modelos propios (requieren min ~3 tickers coherentes y ~3000 TRAIN rows).
+# Automotive excluido: solo 3 tickers. Consumer Cyclical excluido: muy heterogeneo.
+# Actualizacion 2026-03-30: se agregan Technology (24t), Financial Services (12t),
+# Industrials (12t) gracias a la expansion a 124 tickers.
+SECTORES_ML = [
+    "Financials",              # JPM, BAC, MS, GS, WFC          (5 tickers)
+    "Consumer Staples",        # KO, PEP, PG, PM, CL, MO        (6 tickers)
+    "Consumer Discretionary",  # TGT, WMT, COST, HD, LOW        (5 tickers)
+    "Technology",              # NVDA, AAPL, MSFT, GOOG...      (24 tickers) NUEVO
+    "Financial Services",      # V, MA, C, AIG, PYPL, UPST...   (12 tickers) NUEVO
+    "Industrials",             # CAT, RTX, HON, LMT, DE...      (12 tickers) NUEVO
+]
 
 # Directorio donde se serializan los modelos entrenados
 _BASE_DIR     = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
