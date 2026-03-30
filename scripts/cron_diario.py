@@ -1,17 +1,23 @@
 """
 cron_diario.py
-Script orquestador para Railway (cron L-V a las 17:30 ET / 20:30 UTC).
+Script orquestador para GitHub Actions (cron L-V a las 13:00 UTC / 10:00 ARG).
+
+Autonomo: descarga precios via yfinance batch (period=1mo) sin depender
+de ningun script local previo. El script local actualizar_precios_railway.py
+es un pre-carga OPCIONAL que mejora la latencia pero no es requerido.
 
 Pasos:
-    0. Actualizar precios e indicadores tecnicos (delta ultimos 10 dias)
-    1. Upsert features_precio_accion y features_market_structure
-    2. Scanner de alertas para todos los tickers del universo
-    3. Backtesting PA (TRUNCATE + re-run) -- mantiene FIN_SEGMENTO al dia
-    4. Verificacion post-facto de alertas pendientes
-    5. Notificacion Telegram con resumen + errores criticos
+    PRE. Watchdog: alerta Telegram si precios tienen >3 dias de atraso
+    0.   Actualizar precios e indicadores tecnicos (yfinance batch, 124 tickers)
+    1.   Upsert features_precio_accion y features_market_structure
+    2.   Scanner de alertas ML para todos los tickers del universo
+    3.   Backtesting PA incremental (cierra/abre posiciones)
+    4.   Verificacion post-facto de alertas pendientes (retorno_1d/5d/20d_real)
+    5.   Notificacion Telegram con resumen + errores criticos
 
-Diseñado para correr como proceso desechable (start + exit).
-Logs disponibles en Railway Dashboard > Deployments > Logs.
+Nota de disponibilidad GitHub Actions: para que el cron scheduled siga activo,
+el repo necesita al menos un push a main cada 60 dias. Sin actividad,
+GitHub puede pausar los scheduled workflows silenciosamente.
 """
 
 import sys
@@ -357,11 +363,52 @@ def paso_verificacion() -> int:
     return mod.verificar_alertas()
 
 
+def watchdog_datos():
+    """
+    Verifica que los precios en DB no tengan mas de 3 dias calendario de atraso.
+    Si estan desactualizados envia alerta Telegram ANTES de correr el resto.
+
+    Esto detecta el caso donde GitHub Actions estuvo pausado o fallando
+    en silencio: el primer dia que vuelve a correr, avisa inmediatamente.
+    """
+    from src.data.database import query_df
+    try:
+        df = query_df("SELECT MAX(fecha) AS ultima FROM precios_diarios")
+        if df.empty or df.iloc[0]["ultima"] is None:
+            return
+        import pandas as pd
+        from datetime import date
+        ultima = pd.to_datetime(df.iloc[0]["ultima"]).date()
+        hoy    = date.today()
+        dias   = (hoy - ultima).days
+        if dias > 3:
+            msg = (
+                f"WATCHDOG: datos desactualizados\n"
+                f"Ultima fecha en precios_diarios: {ultima}\n"
+                f"Hoy: {hoy} ({dias} dias de atraso)\n"
+                f"Posible causa: cron pausado o GitHub Actions inactivo."
+            )
+            log(f"  [WARN] {msg.replace(chr(10), ' | ')}")
+            try:
+                from src.pipeline.telegram_notifier import _send
+                _send(f"<b>ALERTA WATCHDOG</b>\n<code>{msg}</code>")
+            except Exception as e:
+                log(f"  [WARN] Telegram watchdog no enviado: {e}")
+        else:
+            log(f"  Datos OK: ultima fecha {ultima} ({dias} dias)")
+    except Exception as e:
+        log(f"  [WARN] Watchdog fallido (no critico): {e}")
+
+
 def main():
     log("=" * 55)
     log("  CRON DIARIO  |  Actualizar + Scanner + BT-PA + Verificacion")
     log(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
     log("=" * 55)
+
+    # ── Watchdog: alerta si datos llevan >3 dias sin actualizar ───
+    log("\n[PRE] Watchdog de datos frescos...")
+    watchdog_datos()
 
     errores = []
 
