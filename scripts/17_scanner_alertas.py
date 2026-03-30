@@ -197,6 +197,13 @@ def procesar_ticker(ticker: str, modelos: dict,
         "dist_sh_10_pct":  features_pa.get("dist_sh_10_pct"),
         "dias_sl_10":      features_pa.get("dias_sl_10"),
         "dias_sh_10":      features_pa.get("dias_sh_10"),
+        # Patrones de vela (para Mensaje 2 Telegram)
+        "patron_hammer":         features_pa.get("patron_hammer"),
+        "patron_shooting_star":  features_pa.get("patron_shooting_star"),
+        "patron_engulfing_bull": features_pa.get("patron_engulfing_bull"),
+        "patron_engulfing_bear": features_pa.get("patron_engulfing_bear"),
+        "es_alcista":            features_pa.get("es_alcista"),
+        "vol_spike":             features_pa.get("vol_spike"),
         # Alerta
         "alert_score":   alert_score,
         "alert_nivel":   alert_nivel,
