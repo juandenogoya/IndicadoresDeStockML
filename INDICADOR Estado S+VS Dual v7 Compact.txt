@@ -1,0 +1,319 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © JuanDeNogoya Trading Strategy Monitor v7 - Compact Dual Panel
+
+//@version=6
+indicator("INDICADOR Estado S+VS Dual v7 Compact", overlay=true)
+
+// ==================== INPUTS ====================
+grupoMA = "Medias Móviles"
+emaLen = input.int(50, "EMA Período", group=grupoMA)
+smaLen = input.int(200, "SMA Período", group=grupoMA)
+
+grupoScore = "Scoring"
+rsiLen = input.int(14, "RSI Período", group=grupoScore)
+rsiUmbral = input.int(40, "RSI Umbral (<)", group=grupoScore)
+scoreMinimo = input.float(2.0, "Score Mínimo Entrada", group=grupoScore)
+
+grupoVol = "Volumen"
+volLen = input.int(20, "Volumen Promedio Período", group=grupoVol)
+
+grupoPH = "LastPH"
+phLen = input.int(5, "Pivot High Barras", group=grupoPH)
+phBuffer = input.float(1.0, "Buffer Resistencia %", group=grupoPH)
+
+grupoBOS = "BOS"
+bosLookback = input.int(10, "BOS Lookback Barras", group=grupoBOS)
+
+grupoSalida = "Salida Combinada v4"
+beTrigger = input.float(1.0, "BE Trigger %", group=grupoSalida)
+trailStopPct = input.float(25.0, "Trail Stop %", group=grupoSalida)
+exitTrailPct = input.float(10.0, "Exit+Trail %", group=grupoSalida)
+
+grupoVisual = "Visual"
+mostrarTabla = input.bool(true, "Mostrar Tabla", group=grupoVisual)
+posTabla = input.string("Top Center", "Posición Tabla", options=["Top Center", "Top Right", "Top Left", "Middle Center", "Middle Right", "Middle Left", "Bottom Center", "Bottom Right", "Bottom Left"], group=grupoVisual)
+
+// ==================== CÁLCULOS BASE ====================
+ema50 = ta.ema(close, emaLen)
+sma200 = ta.sma(close, smaLen)
+
+condEMA = close > ema50
+condSMA = close > sma200
+obligatoriasCumplen = condEMA and condSMA
+
+rsiVal = ta.rsi(close, rsiLen)
+rsiScore = rsiVal < rsiUmbral ? 1.0 : 0.0
+
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+macdScore = macdLine > signalLine ? 2.0 : 0.0
+
+volPromedio = ta.sma(volume, volLen)
+volRatio = volume / volPromedio
+volScore = volRatio < 0.75 ? -1.0 : volRatio < 0.95 ? 0.0 : volRatio < 1.10 ? 1.0 : volRatio < 1.50 ? 1.5 : 2.0
+
+scoreBase = rsiScore + macdScore + volScore
+
+// ==================== LASTPH ====================
+pivotHigh = ta.pivothigh(high, phLen, phLen)
+var float ultimoPH = na
+if not na(pivotHigh)
+    ultimoPH := pivotHigh
+
+distanciaPH = na(ultimoPH) ? na : ((ultimoPH - close) / close) * 100
+condLastPH = na(ultimoPH) ? false : close < ultimoPH * (1 - phBuffer/100)
+scoreLastPH = scoreBase
+senalLastPH = obligatoriasCumplen and condLastPH and scoreLastPH >= scoreMinimo
+condLastPHMantiene = obligatoriasCumplen and scoreLastPH >= (scoreMinimo - 1)
+
+// ==================== BOS ====================
+var float phAnterior = na
+var bool bosReciente = false
+var int barrasBOS = 0
+
+if not na(pivotHigh)
+    phAnterior := ultimoPH[1]
+
+bosOcurre = not na(phAnterior) and close > phAnterior and close[1] <= phAnterior
+
+if bosOcurre
+    bosReciente := true
+    barrasBOS := 0
+else
+    barrasBOS := barrasBOS + 1
+    if barrasBOS > bosLookback
+        bosReciente := false
+
+bosScore = bosReciente ? 2.0 : 0.0
+scoreBOS = scoreBase + bosScore
+senalBOS = obligatoriasCumplen and scoreBOS >= scoreMinimo
+condBOSMantiene = obligatoriasCumplen and scoreBOS >= (scoreMinimo - 1)
+
+// ==================== TRACKING LASTPH ====================
+var bool enPosLastPH = false
+var float entradaLastPH = na
+var float maxLastPH = na
+var bool beLastPH = false
+var string salidaLastPH = ""
+
+pctGanLastPH = enPosLastPH and not na(entradaLastPH) ? ((close - entradaLastPH) / entradaLastPH) * 100 : 0.0
+pctRetLastPH = enPosLastPH and not na(maxLastPH) and maxLastPH > 0 ? ((maxLastPH - close) / maxLastPH) * 100 : 0.0
+
+if not enPosLastPH
+    if senalLastPH
+        enPosLastPH := true
+        entradaLastPH := close
+        maxLastPH := close
+        beLastPH := false
+        salidaLastPH := ""
+else
+    if close > maxLastPH
+        maxLastPH := close
+    if not beLastPH and pctGanLastPH >= beTrigger
+        beLastPH := true
+    
+    bool salirLastPH = false
+    if beLastPH
+        if pctRetLastPH >= trailStopPct
+            salirLastPH := true
+            salidaLastPH := "TRAIL"
+        else if not condLastPHMantiene and pctRetLastPH >= exitTrailPct
+            salirLastPH := true
+            salidaLastPH := "E+T"
+        else if close <= entradaLastPH
+            salirLastPH := true
+            salidaLastPH := "BE"
+    else
+        if not condLastPHMantiene
+            salirLastPH := true
+            salidaLastPH := "COND"
+    
+    if salirLastPH
+        enPosLastPH := false
+
+// ==================== TRACKING BOS ====================
+var bool enPosBOS = false
+var float entradaBOS = na
+var float maxBOS = na
+var bool beBOS = false
+var string salidaBOS = ""
+
+pctGanBOS = enPosBOS and not na(entradaBOS) ? ((close - entradaBOS) / entradaBOS) * 100 : 0.0
+pctRetBOS = enPosBOS and not na(maxBOS) and maxBOS > 0 ? ((maxBOS - close) / maxBOS) * 100 : 0.0
+
+if not enPosBOS
+    if senalBOS
+        enPosBOS := true
+        entradaBOS := close
+        maxBOS := close
+        beBOS := false
+        salidaBOS := ""
+else
+    if close > maxBOS
+        maxBOS := close
+    if not beBOS and pctGanBOS >= beTrigger
+        beBOS := true
+    
+    bool salirBOS = false
+    if beBOS
+        if pctRetBOS >= trailStopPct
+            salirBOS := true
+            salidaBOS := "TRAIL"
+        else if not condBOSMantiene and pctRetBOS >= exitTrailPct
+            salirBOS := true
+            salidaBOS := "E+T"
+        else if close <= entradaBOS
+            salirBOS := true
+            salidaBOS := "BE"
+    else
+        if not condBOSMantiene
+            salirBOS := true
+            salidaBOS := "COND"
+    
+    if salirBOS
+        enPosBOS := false
+
+// ==================== TABLA COMPACTA ====================
+if mostrarTabla
+    // Colores semánticos
+    cEntrar = color.new(#00C853, 10)      // Verde brillante - señal activa
+    cEsperar = color.new(#455A64, 20)     // Gris azulado - sin señal
+    cProtegido = color.new(#2E7D32, 10)   // Verde oscuro - BE activo
+    cGanancia = color.new(#1565C0, 20)    // Azul - en ganancia sin BE
+    cPerdida = color.new(#C62828, 20)     // Rojo - en pérdida
+    cFuera = color.new(#37474F, 30)       // Gris oscuro - sin posición
+    cNombrePH = color.new(#2E7D32, 40)    // Verde para LastPH
+    cNombreBOS = color.new(#1565C0, 40)   // Azul para BOS
+    
+    // Posición de tabla
+    tabPos = switch posTabla
+        "Top Center" => position.top_center
+        "Top Right" => position.top_right
+        "Top Left" => position.top_left
+        "Middle Center" => position.middle_center
+        "Middle Right" => position.middle_right
+        "Middle Left" => position.middle_left
+        "Bottom Center" => position.bottom_center
+        "Bottom Right" => position.bottom_right
+        "Bottom Left" => position.bottom_left
+        => position.top_center
+    
+    // Tabla: 3 columnas x 2 filas
+    var table tCompact = table.new(tabPos, 3, 2, bgcolor=color.new(color.black, 85), border_width=1)
+    
+    // ===== FILA 0: LastPH =====
+    // Columna 0: Nombre
+    table.cell(tCompact, 0, 0, "LastPH", text_color=color.white, text_size=size.small, bgcolor=cNombrePH)
+    
+    // Columna 1: Señal
+    senalPHColor = senalLastPH ? cEntrar : cEsperar
+    senalPHTxt = senalLastPH ? "ENTRAR" : "ESPERAR"
+    table.cell(tCompact, 1, 0, senalPHTxt, text_color=color.white, text_size=size.small, bgcolor=senalPHColor)
+    
+    // Columna 2: Estado posición
+    string estadoPHTxt = ""
+    color estadoPHColor = cFuera
+    if enPosLastPH
+        if beLastPH
+            estadoPHTxt := str.tostring(pctGanLastPH, "+#.#") + "% PROT"
+            estadoPHColor := cProtegido
+        else if pctGanLastPH >= 0
+            estadoPHTxt := str.tostring(pctGanLastPH, "+#.#") + "% GAN"
+            estadoPHColor := cGanancia
+        else
+            estadoPHTxt := str.tostring(pctGanLastPH, "#.#") + "% PERD"
+            estadoPHColor := cPerdida
+    else
+        estadoPHTxt := "FUERA"
+        estadoPHColor := cFuera
+    table.cell(tCompact, 2, 0, estadoPHTxt, text_color=color.white, text_size=size.small, bgcolor=estadoPHColor)
+    
+    // ===== FILA 1: BOS =====
+    // Columna 0: Nombre
+    table.cell(tCompact, 0, 1, "BOS", text_color=color.white, text_size=size.small, bgcolor=cNombreBOS)
+    
+    // Columna 1: Señal
+    senalBOSColor = senalBOS ? cEntrar : cEsperar
+    senalBOSTxt = senalBOS ? "ENTRAR" : "ESPERAR"
+    table.cell(tCompact, 1, 1, senalBOSTxt, text_color=color.white, text_size=size.small, bgcolor=senalBOSColor)
+    
+    // Columna 2: Estado posición
+    string estadoBOSTxt = ""
+    color estadoBOSColor = cFuera
+    if enPosBOS
+        if beBOS
+            estadoBOSTxt := str.tostring(pctGanBOS, "+#.#") + "% PROT"
+            estadoBOSColor := cProtegido
+        else if pctGanBOS >= 0
+            estadoBOSTxt := str.tostring(pctGanBOS, "+#.#") + "% GAN"
+            estadoBOSColor := cGanancia
+        else
+            estadoBOSTxt := str.tostring(pctGanBOS, "#.#") + "% PERD"
+            estadoBOSColor := cPerdida
+    else
+        estadoBOSTxt := "FUERA"
+        estadoBOSColor := cFuera
+    table.cell(tCompact, 2, 1, estadoBOSTxt, text_color=color.white, text_size=size.small, bgcolor=estadoBOSColor)
+
+// ==================== PLOTS ====================
+plot(ema50, "EMA 50", color=color.new(color.blue, 50), linewidth=1)
+plot(sma200, "SMA 200", color=color.new(color.red, 50), linewidth=1)
+plot(ultimoPH, "Último PH", color=color.new(color.orange, 30), style=plot.style_linebr, linewidth=2)
+
+// ==================== LABELS DINÁMICOS ====================
+// Detectar cambios de estado
+entradaPHocurre = enPosLastPH and not enPosLastPH[1]
+entradaBOSocurre = enPosBOS and not enPosBOS[1]
+salidaPHocurre = enPosLastPH[1] and not enPosLastPH
+salidaBOSocurre = enPosBOS[1] and not enPosBOS
+
+// Colores para labels
+cLabelPH = color.new(#2E7D32, 0)      // Verde LastPH
+cLabelBOS = color.new(#1565C0, 0)     // Azul BOS
+
+// --- Labels LastPH ---
+var label lblEntradaPH = na
+var label lblSalidaPH = na
+
+if entradaPHocurre
+    if not na(lblSalidaPH)
+        label.delete(lblSalidaPH)
+        lblSalidaPH := na
+    lblEntradaPH := label.new(bar_index, low, "▲", 
+                              color=cLabelPH, textcolor=color.white, 
+                              style=label.style_label_up, size=size.small)
+
+if salidaPHocurre
+    if not na(lblEntradaPH)
+        label.delete(lblEntradaPH)
+        lblEntradaPH := na
+    lblSalidaPH := label.new(bar_index, high, "▼", 
+                             color=cLabelPH, textcolor=color.white, 
+                             style=label.style_label_down, size=size.small)
+
+// --- Labels BOS ---
+var label lblEntradaBOS = na
+var label lblSalidaBOS = na
+
+if entradaBOSocurre
+    if not na(lblSalidaBOS)
+        label.delete(lblSalidaBOS)
+        lblSalidaBOS := na
+    lblEntradaBOS := label.new(bar_index, low * 0.995, "●", 
+                               color=cLabelBOS, textcolor=color.white, 
+                               style=label.style_label_up, size=size.small)
+
+if salidaBOSocurre
+    if not na(lblEntradaBOS)
+        label.delete(lblEntradaBOS)
+        lblEntradaBOS := na
+    lblSalidaBOS := label.new(bar_index, high * 1.005, "●", 
+                              color=cLabelBOS, textcolor=color.white, 
+                              style=label.style_label_down, size=size.small)
+
+// ==================== ALERTAS ====================
+alertcondition(entradaPHocurre, "LastPH Entrada", "LastPH: Señal de ENTRADA")
+alertcondition(entradaBOSocurre, "BOS Entrada", "BOS: Señal de ENTRADA")
+alertcondition(salidaPHocurre, "LastPH Salida", "LastPH: Señal de SALIDA")
+alertcondition(salidaBOSocurre, "BOS Salida", "BOS: Señal de SALIDA")
+alertcondition(beLastPH and not beLastPH[1], "LastPH BE", "LastPH: BE Activado")
+alertcondition(beBOS and not beBOS[1], "BOS BE", "BOS: BE Activado")

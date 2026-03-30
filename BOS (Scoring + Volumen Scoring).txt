@@ -1,0 +1,233 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © JuanDeNogoya Estrategia BOS (Scoring + Volumen Scoring)
+
+//@version=6
+strategy("BOS (Scoring + Volumen Scoring)", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, initial_capital=1000000)
+
+// ==================== INPUTS ====================
+// Medias Móviles
+emaLength = input.int(50, "EMA Length", group="Medias Móviles")
+smaLength = input.int(200, "SMA Length", group="Medias Móviles")
+
+// RSI
+rsiLength = input.int(14, "RSI Length", group="RSI")
+rsiOversold = input.int(40, "RSI Sobreventa", group="RSI")
+
+// MACD
+macdFast = input.int(12, "MACD Fast", group="MACD")
+macdSlow = input.int(26, "MACD Slow", group="MACD")
+macdSignal = input.int(9, "MACD Signal", group="MACD")
+
+// Volumen
+volLength = input.int(20, "Período Promedio Volumen", group="Volumen")
+
+// BOS Detection
+pivotLookback = input.int(5, "Pivot Lookback", group="BOS Detection")
+bosLookback = input.int(10, "BOS Lookback (barras)", group="BOS Detection")
+
+// Salida Combinada
+beTrigger = input.float(1.0, "BE Trigger %", group="Salida Combinada") / 100
+trailStopPct = input.float(25.0, "Trail Stop %", group="Salida Combinada") / 100
+exitTrailPct = input.float(10.0, "Exit+Trail %", group="Salida Combinada") / 100
+
+// Umbral de Scoring
+scoreThreshold = input.float(2.0, "Score Mínimo", group="Scoring")
+
+// ==================== CÁLCULOS ====================
+// Medias Móviles
+ema50 = ta.ema(close, emaLength)
+sma200 = ta.sma(close, smaLength)
+
+// RSI
+rsi = ta.rsi(close, rsiLength)
+
+// MACD
+[macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// Volumen
+volAvg = ta.sma(volume, volLength)
+volRatio = volume / volAvg
+
+// ==================== BOS DETECTION ====================
+// Detectar Pivot Highs
+ph = ta.pivothigh(high, pivotLookback, pivotLookback)
+var float lastPH = na
+var int lastPHBar = na
+
+if not na(ph)
+    lastPH := ph
+    lastPHBar := bar_index - pivotLookback
+
+// Detectar Break of Structure (precio rompe último PH)
+var bool bosRecent = false
+var int bosBar = na
+
+// BOS ocurre cuando el precio cierra por encima del último PH
+bosBreak = not na(lastPH) and close > lastPH and close[1] <= lastPH
+
+if bosBreak
+    bosBar := bar_index
+    bosRecent := true
+
+// BOS es "reciente" si ocurrió en las últimas N barras
+bosWithinLookback = not na(bosBar) and (bar_index - bosBar) <= bosLookback
+
+// Reset bosRecent si pasa el lookback
+if not na(bosBar) and (bar_index - bosBar) > bosLookback
+    bosRecent := false
+
+// ==================== CONDICIONES OBLIGATORIAS ====================
+priceAboveEMA = close > ema50
+priceAboveSMA = close > sma200
+
+obligatoriasMet = priceAboveEMA and priceAboveSMA
+
+// ==================== SCORING ====================
+// RSI Score
+rsiScore = rsi < rsiOversold ? 1.0 : 0.0
+
+// MACD Score
+macdScore = macdLine > signalLine ? 2.0 : 0.0
+
+// Volumen Score (gradual)
+volScore = volRatio < 0.75 ? -1.0 :
+           volRatio < 0.95 ? 0.0 :
+           volRatio < 1.10 ? 1.0 :
+           volRatio < 1.50 ? 1.5 : 2.0
+
+// BOS Score
+bosScore = bosWithinLookback ? 2.0 : 0.0
+
+// Score Total
+totalScore = rsiScore + macdScore + volScore + bosScore
+maxScore = 7.0
+
+// ==================== SEÑAL DE ENTRADA ====================
+longCondition = obligatoriasMet and (totalScore >= scoreThreshold)
+
+// ==================== LÓGICA ANTI-REPETICIÓN ====================
+var bool inPosition = false
+var float entryPrice = na
+var float maxPrice = na
+var bool beActivated = false
+
+// ==================== GESTIÓN DE POSICIÓN ====================
+if longCondition and not inPosition
+    strategy.entry("Long", strategy.long)
+    inPosition := true
+    entryPrice := close
+    maxPrice := close
+    beActivated := false
+
+// Actualizar máximo si estamos en posición
+if inPosition
+    maxPrice := math.max(maxPrice, high)
+    
+    // Verificar si se activa BE
+    if not beActivated and (maxPrice >= entryPrice * (1 + beTrigger))
+        beActivated := true
+
+// ==================== CONDICIONES DE SALIDA ====================
+// Recalcular condiciones para salida
+exitObligatorias = not obligatoriasMet
+exitScoreLow = totalScore < (scoreThreshold - 1)
+
+// Calcular retroceso desde máximo
+drawdownFromMax = inPosition and maxPrice > 0 ? (maxPrice - close) / maxPrice : 0.0
+
+// Tipos de salida
+exitCond = (exitObligatorias or exitScoreLow) and not beActivated
+beStop = beActivated and (close <= entryPrice)
+trailStop = beActivated and (drawdownFromMax >= trailStopPct)
+exitTrail = beActivated and (exitObligatorias or exitScoreLow) and (drawdownFromMax >= exitTrailPct)
+
+// Ejecutar salida
+if inPosition
+    if exitCond
+        strategy.close("Long", comment="Exit Cond")
+        inPosition := false
+    else if beStop
+        strategy.close("Long", comment="BE Stop")
+        inPosition := false
+    else if trailStop
+        strategy.close("Long", comment="Trail Stop")
+        inPosition := false
+    else if exitTrail
+        strategy.close("Long", comment="Exit+Trail")
+        inPosition := false
+
+// ==================== VISUALIZACIÓN ====================
+// Medias Móviles
+plot(ema50, "EMA 50", color=color.blue, linewidth=1)
+plot(sma200, "SMA 200", color=color.red, linewidth=1)
+
+// Último Pivot High
+plot(lastPH, "Last PH", color=color.orange, style=plot.style_circles, linewidth=2)
+
+// Señal BOS
+plotshape(bosBreak, "BOS Signal", shape.diamond, location.abovebar, color.purple, size=size.tiny)
+
+// Señales de entrada
+plotshape(longCondition and not inPosition[1], "Entry Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+
+// ==================== TABLA DE ESTADO ====================
+var table statusTable = table.new(position.top_right, 2, 13, bgcolor=color.new(color.black, 80))
+
+if barstate.islast
+    // Encabezado
+    table.cell(statusTable, 0, 0, "BOS (S+VS)", text_color=color.white, text_size=size.small)
+    table.cell(statusTable, 1, 0, "Estado", text_color=color.white, text_size=size.small)
+    
+    // Obligatorias
+    table.cell(statusTable, 0, 1, "═══ OBLIGATORIAS ═══", text_color=color.yellow, text_size=size.tiny)
+    table.cell(statusTable, 1, 1, "", text_size=size.tiny)
+    
+    table.cell(statusTable, 0, 2, "Precio > EMA50", text_color=color.white, text_size=size.tiny)
+    table.cell(statusTable, 1, 2, priceAboveEMA ? "✓" : "✗", text_color=priceAboveEMA ? color.green : color.red, text_size=size.tiny)
+    
+    table.cell(statusTable, 0, 3, "Precio > SMA200", text_color=color.white, text_size=size.tiny)
+    table.cell(statusTable, 1, 3, priceAboveSMA ? "✓" : "✗", text_color=priceAboveSMA ? color.green : color.red, text_size=size.tiny)
+    
+    // Scoring
+    table.cell(statusTable, 0, 4, "═══ SCORING ═══", text_color=color.aqua, text_size=size.tiny)
+    table.cell(statusTable, 1, 4, "", text_size=size.tiny)
+    
+    table.cell(statusTable, 0, 5, "RSI (" + str.tostring(rsi, "#.0") + ")", text_color=color.white, text_size=size.tiny)
+    rsiScoreText = rsiScore > 0 ? "+" + str.tostring(rsiScore, "#.#") : str.tostring(rsiScore, "#.#")
+    table.cell(statusTable, 1, 5, rsiScoreText, text_color=rsiScore > 0 ? color.green : color.gray, text_size=size.tiny)
+    
+    table.cell(statusTable, 0, 6, "MACD", text_color=color.white, text_size=size.tiny)
+    macdScoreText = macdScore > 0 ? "+" + str.tostring(macdScore, "#.#") : str.tostring(macdScore, "#.#")
+    table.cell(statusTable, 1, 6, macdScoreText, text_color=macdScore > 0 ? color.green : color.gray, text_size=size.tiny)
+    
+    // Volumen con nivel
+    volLevel = volRatio < 0.75 ? "Muy bajo" : volRatio < 0.95 ? "Bajo" : volRatio < 1.10 ? "Normal" : volRatio < 1.50 ? "Alto" : "Muy alto"
+    table.cell(statusTable, 0, 7, "Vol (" + volLevel + ")", text_color=color.white, text_size=size.tiny)
+    volScoreColor = volScore > 0 ? color.green : volScore < 0 ? color.red : color.gray
+    volScoreText = volScore > 0 ? "+" + str.tostring(volScore, "#.#") : str.tostring(volScore, "#.#")
+    table.cell(statusTable, 1, 7, volScoreText, text_color=volScoreColor, text_size=size.tiny)
+    
+    // BOS
+    bosText = bosWithinLookback ? "Activo" : "—"
+    table.cell(statusTable, 0, 8, "BOS (" + bosText + ")", text_color=color.white, text_size=size.tiny)
+    bosScoreText = bosScore > 0 ? "+" + str.tostring(bosScore, "#.#") : str.tostring(bosScore, "#.#")
+    table.cell(statusTable, 1, 8, bosScoreText, text_color=bosScore > 0 ? color.purple : color.gray, text_size=size.tiny)
+    
+    // Total
+    table.cell(statusTable, 0, 9, "═══════════════", text_color=color.gray, text_size=size.tiny)
+    table.cell(statusTable, 1, 9, "", text_size=size.tiny)
+    
+    table.cell(statusTable, 0, 10, "SCORE TOTAL", text_color=color.white, text_size=size.tiny)
+    scoreColor = totalScore >= scoreThreshold ? color.green : color.red
+    table.cell(statusTable, 1, 10, str.tostring(totalScore, "#.0") + " / " + str.tostring(maxScore, "#.0"), text_color=scoreColor, text_size=size.tiny)
+    
+    // Señal
+    table.cell(statusTable, 0, 11, "SEÑAL", text_color=color.white, text_size=size.tiny)
+    signalText = longCondition ? "✓ LONG" : "—"
+    signalColor = longCondition ? color.green : color.gray
+    table.cell(statusTable, 1, 11, signalText, text_color=signalColor, text_size=size.tiny)
+    
+    // Info BOS
+    barsFromBOS = not na(bosBar) ? bar_index - bosBar : 0
+    table.cell(statusTable, 0, 12, "Barras desde BOS", text_color=color.gray, text_size=size.tiny)
+    table.cell(statusTable, 1, 12, bosWithinLookback ? str.tostring(barsFromBOS) : "—", text_color=color.gray, text_size=size.tiny)

@@ -1,0 +1,44 @@
+//@version=5
+indicator("Volatilidad Multi-TF", overlay=true)
+
+// Input
+atrLength = input.int(14, "Período ATR", minval=1)
+
+// Función para calcular volatilidad normalizada (ATR como % del precio)
+volatilityPercent(atrPeriod) =>
+    atrValue = ta.atr(atrPeriod)
+    (atrValue / close) * 100
+
+// Timeframes a analizar
+tf_1h = "60"
+tf_4h = "240"
+tf_1d = "D"
+tf_1w = "W"
+tf_1m = "M"
+
+// Calcular volatilidad en diferentes timeframes
+vol_1h = request.security(syminfo.tickerid, tf_1h, volatilityPercent(atrLength))
+vol_4h = request.security(syminfo.tickerid, tf_4h, volatilityPercent(atrLength))
+vol_1d = request.security(syminfo.tickerid, tf_1d, volatilityPercent(atrLength))
+vol_1w = request.security(syminfo.tickerid, tf_1w, volatilityPercent(atrLength))
+vol_1m = request.security(syminfo.tickerid, tf_1m, volatilityPercent(atrLength))
+
+// Tabla
+var table volatilityTable = table.new(position.top_right, 6, 2, border_width=2)
+
+if barstate.islast
+    // Encabezados
+    table.cell(volatilityTable, 0, 0, "Activo", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.normal)
+    table.cell(volatilityTable, 1, 0, "1H", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.normal)
+    table.cell(volatilityTable, 2, 0, "4H", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.normal)
+    table.cell(volatilityTable, 3, 0, "D", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.normal)
+    table.cell(volatilityTable, 4, 0, "W", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.normal)
+    table.cell(volatilityTable, 5, 0, "M", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.normal)
+    
+    // Valores
+    table.cell(volatilityTable, 0, 1, syminfo.ticker, bgcolor=color.new(color.blue, 80), text_color=color.white, text_size=size.normal)
+    table.cell(volatilityTable, 1, 1, str.tostring(vol_1h, "#.##") + "%", text_size=size.normal)
+    table.cell(volatilityTable, 2, 1, str.tostring(vol_4h, "#.##") + "%", text_size=size.normal)
+    table.cell(volatilityTable, 3, 1, str.tostring(vol_1d, "#.##") + "%", text_size=size.normal)
+    table.cell(volatilityTable, 4, 1, str.tostring(vol_1w, "#.##") + "%", text_size=size.normal)
+    table.cell(volatilityTable, 5, 1, str.tostring(vol_1m, "#.##") + "%", text_size=size.normal)

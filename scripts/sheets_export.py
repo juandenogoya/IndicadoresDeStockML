@@ -725,6 +725,167 @@ def _query_bt_trades():
 # Procedimiento: agregar nuevo activo (contenido estatico)
 # ─────────────────────────────────────────────────────────────
 
+def _query_resumen_semanal(n_semanas: int = 2) -> pd.DataFrame:
+    """
+    Resumen semanal de los ultimos N semanas COMPLETAS para todos los tickers.
+
+    Siempre usa semanas cerradas: la semana en curso (incompleta) nunca aparece.
+    Ejemplo: si hoy es martes 03/Mar, solo se ven las semanas que cerraron
+    el 28/Feb y el 21/Feb (con n_semanas=2).
+
+    Con n_semanas=1: 1 fila por ticker (ultima semana completa).
+    Con n_semanas=2: 2 filas por ticker (ultimas 2 semanas completas).
+
+    Columnas de salida:
+        fecha, semana, n_dias, ticker, sector,
+        tipo_vela, retorno_semana_pct, cuerpo_vela, patron_vela, vol_spike, vol_ratio,
+        rsi, rsi_estado, macd_hist, macd_estado,
+        dist_sma50_pct, dist_sma200_pct, posicion_medias,
+        estructura_semanal, evento_ms,
+        estado_pa, nivel_ml, score_ml, ml_prob_pct, modelo
+
+    Coloreado por: tipo_vela (Alcista = verde, Bajista = rojo).
+    """
+    sql = """
+        WITH semanas_target AS (
+            SELECT fecha_semana
+            FROM (
+                SELECT DISTINCT fecha_semana
+                FROM precios_semanales
+                WHERE fecha_semana < date_trunc('week', CURRENT_DATE)
+                ORDER BY fecha_semana DESC
+                LIMIT :n_semanas
+            ) s
+        ),
+        -- Estado PA diario: replica logica del tab Analisis Tecnico
+        estado_pa_cte AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                (pa_ev1 + pa_ev2 + pa_ev3 + pa_ev4) > 0          AS hay_entrada,
+                (bear_bos10 + bear_choch10 + bear_estructura) > 0 AS hay_bear
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        ),
+        posicion_abierta AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                fecha_entrada
+            FROM operaciones_bt_pa
+            WHERE motivo_salida = 'FIN_SEGMENTO'
+            ORDER BY ticker, fecha_entrada DESC
+        ),
+        -- Ultima alerta ML por ticker (scanner diario)
+        scanner_ultimo AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                alert_nivel,
+                alert_score,
+                ROUND(ml_prob_ganancia::NUMERIC * 100, 1) AS ml_prob_pct,
+                ml_modelo_usado
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        )
+        SELECT
+            p.fecha_semana                                              AS fecha,
+            'W' || LPAD(EXTRACT(WEEK  FROM p.fecha_semana)::TEXT, 2, '0')
+                || ' ' || EXTRACT(YEAR FROM p.fecha_semana)::TEXT      AS semana,
+            p.n_dias,
+            p.ticker,
+            COALESCE(a.sector, 'Sin sector')                           AS sector,
+
+            -- ── Vela ─────────────────────────────────────────────
+            CASE WHEN COALESCE(pa.es_alcista, 0) = 1
+                 THEN 'Alcista' ELSE 'Bajista' END                     AS tipo_vela,
+            ROUND((p.close - p.open) / NULLIF(p.open, 0) * 100, 2)    AS retorno_semana_pct,
+            CASE
+                WHEN pa.body_pct > 70 THEN 'Grande'
+                WHEN pa.body_pct > 40 THEN 'Medio'
+                WHEN pa.body_pct > 20 THEN 'Pequeno'
+                ELSE                       'Doji'
+            END                                                        AS cuerpo_vela,
+            CASE
+                WHEN pa.patron_hammer         = 1 THEN 'Hammer'
+                WHEN pa.patron_engulfing_bull = 1 THEN 'Engulfing Bull'
+                WHEN pa.patron_shooting_star  = 1 THEN 'Shooting Star'
+                WHEN pa.patron_engulfing_bear = 1 THEN 'Engulfing Bear'
+                WHEN pa.patron_doji           = 1 THEN 'Doji'
+                WHEN pa.patron_marubozu       = 1 THEN 'Marubozu'
+                WHEN pa.inside_bar            = 1 THEN 'Inside Bar'
+                WHEN pa.outside_bar           = 1 THEN 'Outside Bar'
+                ELSE                               '-'
+            END                                                        AS patron_vela,
+            CASE WHEN COALESCE(pa.vol_spike, 0) = 1
+                 THEN 'Si' ELSE 'No' END                               AS vol_spike,
+            ROUND(pa.vol_ratio_5d::NUMERIC, 2)                         AS vol_ratio,
+
+            -- ── Indicadores tecnicos ─────────────────────────────
+            ROUND(i.rsi14::NUMERIC, 1)                                 AS rsi,
+            CASE
+                WHEN i.rsi14 >= 70 THEN 'Sobrecomprado'
+                WHEN i.rsi14 <= 30 THEN 'Sobrevendido'
+                ELSE                    'Normal'
+            END                                                        AS rsi_estado,
+            ROUND(i.macd_hist::NUMERIC, 4)                             AS macd_hist,
+            CASE
+                WHEN i.macd_hist >= 0 THEN 'Alcista'
+                ELSE                       'Bajista'
+            END                                                        AS macd_estado,
+            ROUND(i.dist_sma50::NUMERIC, 2)                            AS dist_sma50_pct,
+            ROUND(i.dist_sma200::NUMERIC, 2)                           AS dist_sma200_pct,
+            CASE
+                WHEN i.dist_sma50 > 0 AND i.dist_sma200 > 0 THEN 'Sobre ambas'
+                WHEN i.dist_sma50 < 0 AND i.dist_sma200 < 0 THEN 'Bajo ambas'
+                ELSE                                              'Entre medias'
+            END                                                        AS posicion_medias,
+
+            -- ── Market Structure semanal ─────────────────────────
+            CASE
+                WHEN ms.estructura_10 =  1 THEN 'Alcista'
+                WHEN ms.estructura_10 = -1 THEN 'Bajista'
+                ELSE                           'Neutral'
+            END                                                        AS estructura_semanal,
+            CASE
+                WHEN ms.bos_bull_10   = 1 THEN 'BOS+'
+                WHEN ms.bos_bear_10   = 1 THEN 'BOS-'
+                WHEN ms.choch_bull_10 = 1 THEN 'CHoCH+'
+                WHEN ms.choch_bear_10 = 1 THEN 'CHoCH-'
+                ELSE                          '-'
+            END                                                        AS evento_ms,
+
+            -- ── Estado PA (sistema diario, snapshot actual) ──────
+            CASE
+                WHEN pos.ticker IS NOT NULL AND ep.hay_bear THEN 'SALIR'
+                WHEN pos.ticker IS NOT NULL                 THEN 'EN GANANCIA'
+                WHEN ep.hay_entrada                         THEN 'ENTRAR'
+                ELSE                                             'NEUTRO'
+            END                                                        AS estado_pa,
+
+            -- ── Scanner ML (ultimo scan diario por ticker) ───────
+            COALESCE(sc.alert_nivel,     'Sin datos')                  AS nivel_ml,
+            COALESCE(ROUND(sc.alert_score::NUMERIC), 0)                AS score_ml,
+            COALESCE(sc.ml_prob_pct, 0)                                AS ml_prob_pct,
+            COALESCE(sc.ml_modelo_usado, '-')                          AS modelo
+
+        FROM precios_semanales p
+        JOIN  semanas_target               st  ON st.fecha_semana = p.fecha_semana
+        JOIN  indicadores_tecnicos_1w       i  ON  i.ticker = p.ticker
+                                               AND i.fecha   = p.fecha_semana
+        LEFT JOIN features_precio_accion_1w    pa ON pa.ticker = p.ticker
+                                                 AND pa.fecha  = p.fecha_semana
+        LEFT JOIN features_market_structure_1w ms ON ms.ticker = p.ticker
+                                                 AND ms.fecha  = p.fecha_semana
+        LEFT JOIN activos               a   ON  a.ticker = p.ticker
+        LEFT JOIN estado_pa_cte         ep  ON ep.ticker = p.ticker
+        LEFT JOIN posicion_abierta      pos ON pos.ticker = p.ticker
+        LEFT JOIN scanner_ultimo        sc  ON sc.ticker = p.ticker
+        ORDER BY
+            p.fecha_semana DESC,
+            COALESCE(a.sector, 'ZZZ'),
+            p.ticker
+    """
+    return query_df(sql, params={"n_semanas": n_semanas})
+
+
 def _datos_nuevo_activo() -> pd.DataFrame:
     """
     Tabla de referencia con los pasos para incorporar un nuevo ticker.
@@ -1005,7 +1166,7 @@ def exportar_a_sheets():
         resultados["BT Trades"] = f"ERROR: {e}"
 
     # ── Tab 8: Nuevo Activo ───────────────────────────────────
-    _separador("Tab 8/8: Nuevo Activo")
+    _separador("Tab 8/9: Nuevo Activo")
     try:
         df8 = _datos_nuevo_activo()
         _escribir_tab(spreadsheet, "Nuevo Activo", df8, col_nivel="tipo")
@@ -1016,6 +1177,34 @@ def exportar_a_sheets():
         _log(f"FALLO en tab Nuevo Activo: {e}", "ERROR")
         traceback.print_exc()
         resultados["Nuevo Activo"] = f"ERROR: {e}"
+
+    # ── Tab 9: Resumen Semanal ────────────────────────────────
+    _separador("Tab 9/9: Resumen Semanal")
+    try:
+        _log("Consultando PostgreSQL (resumen semanal 1W, 2 semanas completas)...", "STEP")
+        t = time.time()
+        df9 = _query_resumen_semanal(n_semanas=2)
+        _log(f"Query OK: {len(df9)} filas en {time.time()-t:.1f}s", "OK")
+
+        if not df9.empty:
+            semanas = sorted(df9["semana"].unique().tolist(), reverse=True)
+            _log(f"Semanas: {', '.join(semanas)}", "INFO")
+            n_alc = (df9["tipo_vela"] == "Alcista").sum()
+            n_baj = (df9["tipo_vela"] == "Bajista").sum()
+            patrones = df9[df9["patron_vela"] != "-"]["patron_vela"].value_counts().to_dict()
+            _log(f"Alcistas: {n_alc} | Bajistas: {n_baj} | Patrones: {patrones}", "INFO")
+            sobrec = (df9["rsi_estado"] == "Sobrecomprado").sum()
+            sovend = (df9["rsi_estado"] == "Sobrevendido").sum()
+            _log(f"RSI Sobrecomprado: {sobrec} | Sobrevendido: {sovend}", "INFO")
+
+        _escribir_tab(spreadsheet, "Resumen Semanal", df9, col_nivel="tipo_vela")
+        _log(f"Tab 'Resumen Semanal' actualizado: {len(df9)} filas (2 sem x ~124 tickers)", "OK")
+        resultados["Resumen Semanal"] = "OK"
+
+    except Exception as e:
+        _log(f"FALLO en tab Resumen Semanal: {e}", "ERROR")
+        traceback.print_exc()
+        resultados["Resumen Semanal"] = f"ERROR: {e}"
 
     # ── Resumen final ─────────────────────────────────────────
     _separador("Resumen")

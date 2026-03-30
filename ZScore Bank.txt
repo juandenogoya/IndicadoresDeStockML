@@ -1,0 +1,56 @@
+//@version=6
+indicator("ZScore Bank", overlay=false)
+
+
+// 1) Lista fija de tickers (Bancos)
+bancos = array.from("BAC", "AIG", "JPM", "C", "MS", "WFC", "UPST", "GS", "BRK.B", "SCHW")
+
+// 2) Función para sumar volúmenes del sector
+sumVolume(list) =>
+    total = 0.0
+    for i = 0 to array.size(list) - 1
+        sym = array.get(list, i)
+        vol = request.security(sym, timeframe.period, volume)
+        total += vol
+    total
+
+bankVol = sumVolume(bancos)
+
+// 3) Z-Score
+len = input.int(50, "Ventana Z-Score", minval=5)
+ma  = ta.sma(bankVol, len)
+std = ta.stdev(bankVol, len)
+zScore = std != 0 ? (bankVol - ma) / std : 0.0
+
+plot(zScore, color=color.new(color.green, 0), linewidth=2)
+
+// Líneas estándar
+hline(0, "Media", color=color.gray)
+hline(1, "+1σ", color=color.new(color.blue, 70))
+hline(-1, "-1σ", color=color.new(color.blue, 70))
+hline(2, "+2σ", color=color.new(color.red, 70))
+hline(-2, "-2σ", color=color.new(color.red, 70))
+
+// 4) Señales críticas usando labels (limpio y sin errores)
+var label[] highs = array.new<label>()
+var label[] lows  = array.new<label>()
+max_labels = 80  // máximo a mantener para no afectar performance
+
+// Función auxiliar: si hay demasiados labels, borra los más antiguos
+cleanupLabels(lblArray) =>
+    while array.size(lblArray) > max_labels
+        ldel = array.shift(lblArray)  // toma y elimina el primero
+        label.delete(ldel)
+
+// Generar señal superior: Z > 2
+if (zScore > 2)
+    // nota: label.new en UNA LÍNEA para evitar errores de parser
+    lblHigh = label.new(bar_index, 2, "", xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.red, 0), style = label.style_triangleup, size = size.tiny)
+    array.push(highs, lblHigh)
+    cleanupLabels(highs)
+
+// Generar señal inferior: Z < -2
+if (zScore < -2)
+    lblLow = label.new(bar_index, -2, "", xloc = xloc.bar_index, yloc = yloc.price, color = color.new(color.blue, 0), style = label.style_triangledown, size = size.tiny)
+    array.push(lows, lblLow)
+    cleanupLabels(lows)
