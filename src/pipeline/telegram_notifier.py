@@ -159,9 +159,14 @@ def formatear_mensaje1_scanner(resultados: List[Dict]) -> str:
                 prob   = r.get("ml_prob_ganancia", 0)
                 precio = r.get("precio_cierre", 0) or 0
                 scope  = (r.get("ml_modelo_usado") or "?")[:3].upper()
+                # Indicadores MTF
+                t1w = r.get("tendencia_1w", "neutral")
+                t1m = r.get("tendencia_1m", "neutral")
+                _flechas = {"alcista": "^", "bajista": "v", "neutral": "-"}
+                mtf_str = f"1W{_flechas.get(t1w,'?')} 1M{_flechas.get(t1m,'?')}"
                 lines.append(
                     f"  <b>{ticker}</b> score={score:.0f} ml={prob:.0%} "
-                    f"${precio:.2f} [{scope}]"
+                    f"${precio:.2f} [{scope}] {mtf_str}"
                 )
         else:
             # Compacto: hasta 5 tickers por linea

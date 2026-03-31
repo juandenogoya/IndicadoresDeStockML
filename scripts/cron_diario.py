@@ -341,6 +341,16 @@ def paso_scanner() -> list:
 
         resultados.append(r)
 
+    # Contexto MTF (batch, una sola query)
+    from src.indicators.mtf_context import get_contexto_mtf_batch
+    tickers_ok = [r["ticker"] for r in resultados if not r.get("error")]
+    if tickers_ok:
+        ctx_mtf = get_contexto_mtf_batch(tickers_ok)
+        for r in resultados:
+            ctx = ctx_mtf.get(r["ticker"], {})
+            r["tendencia_1w"] = ctx.get("tendencia_1w", "neutral")
+            r["tendencia_1m"] = ctx.get("tendencia_1m", "neutral")
+
     # Persistir + Telegram
     _persistir_alertas(resultados)
     enviar_resumen(resultados)

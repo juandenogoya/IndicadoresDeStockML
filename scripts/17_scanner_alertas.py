@@ -46,6 +46,7 @@ from src.pipeline.signal_engine import cargar_modelos_v3, evaluar_ticker
 from src.pipeline.alert_classifier import clasificar_alerta
 from src.pipeline.telegram_notifier import enviar_resumen
 from src.data.database import get_connection
+from src.indicators.mtf_context import get_contexto_mtf_batch
 
 
 # ─────────────────────────────────────────────────────────────
@@ -350,6 +351,15 @@ def main():
             score = r.get("alert_score", 0)
             ml    = r.get("ml_prob_ganancia", 0)
             print(f"OK -> {nivel} (score={score:.0f}, ml={ml:.0%})")
+
+    # ── Contexto MTF (batch, una sola query) ─────────────────
+    tickers_ok = [r["ticker"] for r in resultados if not r.get("error")]
+    if tickers_ok:
+        ctx_mtf = get_contexto_mtf_batch(tickers_ok)
+        for r in resultados:
+            ctx = ctx_mtf.get(r["ticker"], {})
+            r["tendencia_1w"] = ctx.get("tendencia_1w", "neutral")
+            r["tendencia_1m"] = ctx.get("tendencia_1m", "neutral")
 
     # ── Imprimir tabla ────────────────────────────────────────
     imprimir_resumen(resultados)
