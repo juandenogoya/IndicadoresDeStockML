@@ -85,9 +85,9 @@ def get_contexto_mtf_batch(tickers: list[str]) -> dict[str, dict]:
         WITH ultimas AS (
             SELECT
                 ticker,
-                fecha,
+                fecha_semana,
                 close,
-                ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+                ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha_semana DESC) AS rn
             FROM precios_semanales
             WHERE ticker IN ({placeholders})
         ),
