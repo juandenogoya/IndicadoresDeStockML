@@ -162,8 +162,9 @@ def formatear_mensaje1_scanner(resultados: List[Dict]) -> str:
                 # Indicadores MTF
                 t1w = r.get("tendencia_1w", "neutral")
                 t1m = r.get("tendencia_1m", "neutral")
-                _flechas = {"alcista": "^", "bajista": "v", "neutral": "-"}
-                mtf_str = f"1W{_flechas.get(t1w,'?')} 1M{_flechas.get(t1m,'?')}"
+                _colores = {"alcista": "\U0001f7e2", "bajista": "\U0001f534", "neutral": "\u26ab"}
+                _nd = "\u26ab"
+                mtf_str = f"{_colores.get(t1w, _nd)}1W {_colores.get(t1m, _nd)}1M"
                 lines.append(
                     f"  <b>{ticker}</b> score={score:.0f} ml={prob:.0%} "
                     f"${precio:.2f} [{scope}] {mtf_str}"
