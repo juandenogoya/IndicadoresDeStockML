@@ -304,6 +304,34 @@ def _col_letra(n: int) -> str:
 
 def _query_dashboard():
     sql = """
+        WITH latest_scanner AS (
+            SELECT DISTINCT ON (ticker) *
+            FROM alertas_scanner
+            ORDER BY ticker, scan_fecha DESC
+        ),
+        mtf AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                CASE WHEN estructura_10 >= 1 THEN 'alcista'
+                     WHEN estructura_10 <= -1 THEN 'bajista'
+                     ELSE 'neutral' END AS tendencia_1w
+            FROM features_market_structure_1w
+            ORDER BY ticker, fecha DESC
+        ),
+        semanas AS (
+            SELECT ticker, fecha_semana AS fecha, close,
+                   ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha_semana DESC) AS rn
+            FROM precios_semanales
+        ),
+        tendencia_1m AS (
+            SELECT s1.ticker,
+                CASE WHEN ((s1.close - s4.close) / NULLIF(s4.close,0) * 100) >= 2  THEN 'alcista'
+                     WHEN ((s1.close - s4.close) / NULLIF(s4.close,0) * 100) <= -2 THEN 'bajista'
+                     ELSE 'neutral' END AS tendencia_1m
+            FROM semanas s1
+            JOIN semanas s4 ON s4.ticker = s1.ticker AND s4.rn = 4
+            WHERE s1.rn = 1
+        )
         SELECT
             a.ticker,
             COALESCE(act.sector, 'Sin sector')       AS sector,
@@ -316,13 +344,13 @@ def _query_dashboard():
             a.pa_ev2,
             a.pa_ev3,
             a.pa_ev4,
+            COALESCE(m.tendencia_1w, 'neutral')      AS tendencia_1w,
+            COALESCE(t1m.tendencia_1m, 'neutral')    AS tendencia_1m,
             a.scan_fecha                             AS fecha_scan
-        FROM (
-            SELECT DISTINCT ON (ticker) *
-            FROM alertas_scanner
-            ORDER BY ticker, scan_fecha DESC
-        ) a
-        LEFT JOIN activos act ON act.ticker = a.ticker
+        FROM latest_scanner a
+        LEFT JOIN activos act    ON act.ticker = a.ticker
+        LEFT JOIN mtf m          ON m.ticker   = a.ticker
+        LEFT JOIN tendencia_1m t1m ON t1m.ticker = a.ticker
         ORDER BY
             CASE a.alert_nivel
                 WHEN 'COMPRA_FUERTE' THEN 1
@@ -620,6 +648,43 @@ def _query_conclusiones():
     except Exception:
         df_v = pd.DataFrame()
 
+    # Contexto MTF (1W y 1M)
+    sql_mtf = """
+        WITH mtf_1w AS (
+            SELECT DISTINCT ON (ticker)
+                ticker,
+                CASE WHEN estructura_10 >= 1  THEN 'alcista'
+                     WHEN estructura_10 <= -1 THEN 'bajista'
+                     ELSE 'neutral' END AS tendencia_1w
+            FROM features_market_structure_1w
+            ORDER BY ticker, fecha DESC
+        ),
+        semanas AS (
+            SELECT ticker, close,
+                   ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+            FROM precios_semanales
+        ),
+        mtf_1m AS (
+            SELECT s1.ticker,
+                CASE WHEN ((s1.close - s4.close) / NULLIF(s4.close,0) * 100) >= 2  THEN 'alcista'
+                     WHEN ((s1.close - s4.close) / NULLIF(s4.close,0) * 100) <= -2 THEN 'bajista'
+                     ELSE 'neutral' END AS tendencia_1m
+            FROM semanas s1
+            JOIN semanas s4 ON s4.ticker = s1.ticker AND s4.rn = 4
+            WHERE s1.rn = 1
+        )
+        SELECT
+            COALESCE(w.ticker, m.ticker)          AS ticker,
+            COALESCE(w.tendencia_1w, 'neutral')   AS tendencia_1w,
+            COALESCE(m.tendencia_1m, 'neutral')   AS tendencia_1m
+        FROM mtf_1w w
+        FULL OUTER JOIN mtf_1m m ON m.ticker = w.ticker
+    """
+    try:
+        df_mtf = query_df(sql_mtf)
+    except Exception:
+        df_mtf = pd.DataFrame()
+
     # Merge
     df = df_a.copy()
     if not df_ind.empty:
@@ -629,6 +694,13 @@ def _query_conclusiones():
     else:
         df["tipo_vela"]  = "-"
         df["patron_vela"] = "-"
+    if not df_mtf.empty:
+        df = df.merge(df_mtf, on="ticker", how="left")
+        df["tendencia_1w"] = df["tendencia_1w"].fillna("neutral")
+        df["tendencia_1m"] = df["tendencia_1m"].fillna("neutral")
+    else:
+        df["tendencia_1w"] = "neutral"
+        df["tendencia_1m"] = "neutral"
 
     # Accion recomendada basada en señales
     def _accion(r):
@@ -655,7 +727,7 @@ def _query_conclusiones():
 
     cols = ["ticker", "sector", "accion", "nivel", "score", "ml_pct",
             "precio", "rsi14", "adx", "dist_sma200_pct", "vol_relativo",
-            "tipo_vela", "patron_vela", "fecha_scan"]
+            "tipo_vela", "patron_vela", "tendencia_1w", "tendencia_1m", "fecha_scan"]
     return df[[c for c in cols if c in df.columns]]
 
 
