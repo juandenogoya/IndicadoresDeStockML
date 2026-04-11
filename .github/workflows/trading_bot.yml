@@ -28,17 +28,20 @@ jobs:
 
       - name: Run trading bot
         env:
-          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
-          ALPACA_API_KEY:     ${{ secrets.ALPACA_API_KEY }}
-          ALPACA_SECRET_KEY:  ${{ secrets.ALPACA_SECRET_KEY }}
-          ALPACA_PAPER:       ${{ secrets.ALPACA_PAPER }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          BOT_MAX_POSICIONES: ${{ secrets.BOT_MAX_POSICIONES }}
-          BOT_SCORE_MIN_COMPRA: ${{ secrets.BOT_SCORE_MIN_COMPRA }}
-          BOT_NIVEL_MIN_COMPRA: ${{ secrets.BOT_NIVEL_MIN_COMPRA }}
-          BOT_STOP_LOSS_PCT:  ${{ secrets.BOT_STOP_LOSS_PCT }}
-          BOT_TAKE_PROFIT_PCT: ${{ secrets.BOT_TAKE_PROFIT_PCT }}
-          BOT_MAX_EXPOSICION: ${{ secrets.BOT_MAX_EXPOSICION }}
-          BOT_MODO_DISTRIBUCION: ${{ secrets.BOT_MODO_DISTRIBUCION }}
+          # Secrets (sensibles)
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY:        ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY:     ${{ secrets.ALPACA_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Variables (configuracion)
+          ALPACA_PAPER:          ${{ vars.ALPACA_PAPER }}
+          BOT_MAX_POSICIONES:    ${{ vars.BOT_MAX_POSICIONES }}
+          BOT_RIESGO_POR_TRADE:  ${{ vars.BOT_RIESGO_POR_TRADE }}
+          BOT_MAX_EXPOSICION:    ${{ vars.BOT_MAX_EXPOSICION }}
+          BOT_MODO_DISTRIBUCION: ${{ vars.BOT_MODO_DISTRIBUCION }}
+          BOT_SCORE_MIN_COMPRA:  ${{ vars.BOT_SCORE_MIN_COMPRA }}
+          BOT_NIVEL_MIN_COMPRA:  ${{ vars.BOT_NIVEL_MIN_COMPRA }}
+          BOT_STOP_LOSS_PCT:     ${{ vars.BOT_STOP_LOSS_PCT }}
+          BOT_TAKE_PROFIT_PCT:   ${{ vars.BOT_TAKE_PROFIT_PCT }}
         run: python scripts/30_trading_bot.py
