@@ -1,0 +1,47 @@
+name: Trading Bot Alpaca
+
+# Corre L-V a las 14:30 UTC = 10:30 ET (1h despues de apertura NYSE)
+# El scanner (cron_diario.yml) ya corrio a las 13:00 UTC y tiene las senales listas.
+
+on:
+  schedule:
+    - cron: "30 14 * * 1-5"
+  workflow_dispatch:          # permite correr manualmente desde GitHub
+
+jobs:
+  trading-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run trading bot
+        env:
+          # Secrets (sensibles)
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY:        ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY:     ${{ secrets.ALPACA_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:      ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Variables (configuracion)
+          ALPACA_PAPER:          ${{ vars.ALPACA_PAPER }}
+          BOT_MAX_POSICIONES:    ${{ vars.BOT_MAX_POSICIONES }}
+          BOT_RIESGO_POR_TRADE:  ${{ vars.BOT_RIESGO_POR_TRADE }}
+          BOT_MAX_EXPOSICION:    ${{ vars.BOT_MAX_EXPOSICION }}
+          BOT_MODO_DISTRIBUCION: ${{ vars.BOT_MODO_DISTRIBUCION }}
+          BOT_SCORE_MIN_COMPRA:  ${{ vars.BOT_SCORE_MIN_COMPRA }}
+          BOT_NIVEL_MIN_COMPRA:  ${{ vars.BOT_NIVEL_MIN_COMPRA }}
+          BOT_STOP_LOSS_PCT:     ${{ vars.BOT_STOP_LOSS_PCT }}
+          BOT_TAKE_PROFIT_PCT:   ${{ vars.BOT_TAKE_PROFIT_PCT }}
+        run: python scripts/30_trading_bot.py
