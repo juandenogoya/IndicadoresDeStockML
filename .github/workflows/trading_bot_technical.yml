@@ -1,0 +1,44 @@
+name: Trading Bot Tecnico (Alpaca #2)
+
+# Corre L-V a las 14:30 UTC = 10:30 ET (1h despues de apertura NYSE)
+# Misma ventana que el bot ML — ambos corren en paralelo.
+
+on:
+  schedule:
+    - cron: "30 14 * * 1-5"
+  workflow_dispatch:          # permite correr manualmente desde GitHub
+
+jobs:
+  trading-bot-technical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run technical trading bot
+        env:
+          # Secrets (sensibles)
+          DATABASE_URL:           ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY_2:       ${{ secrets.ALPACA_API_KEY_2 }}
+          ALPACA_SECRET_KEY_2:    ${{ secrets.ALPACA_SECRET_KEY_2 }}
+          TELEGRAM_BOT_TOKEN:     ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:       ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Variables (configuracion)
+          ALPACA_PAPER:           ${{ vars.ALPACA_PAPER }}
+          BOT_MAX_POSICIONES:     ${{ vars.BOT_MAX_POSICIONES }}
+          BOT_RIESGO_POR_TRADE:   ${{ vars.BOT_RIESGO_POR_TRADE }}
+          BOT_MAX_EXPOSICION:     ${{ vars.BOT_MAX_EXPOSICION }}
+          BOT_STOP_LOSS_PCT:      ${{ vars.BOT_STOP_LOSS_PCT }}
+          BOT_TAKE_PROFIT_PCT:    ${{ vars.BOT_TAKE_PROFIT_PCT }}
+        run: python scripts/31_bot_technical.py

@@ -12,30 +12,33 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestQuoteRequest
 
 
-def get_client() -> TradingClient:
-    """Retorna cliente Alpaca (paper si ALPACA_PAPER=true)."""
-    api_key = os.getenv("ALPACA_API_KEY")
-    secret   = os.getenv("ALPACA_SECRET_KEY")
+def get_client(suffix: str = "") -> TradingClient:
+    """
+    Retorna cliente Alpaca (paper si ALPACA_PAPER=true).
+    suffix: "" para bot ML, "_2" para bot tecnico, etc.
+    """
+    api_key = os.getenv(f"ALPACA_API_KEY{suffix}")
+    secret   = os.getenv(f"ALPACA_SECRET_KEY{suffix}")
     paper    = os.getenv("ALPACA_PAPER", "true").lower() == "true"
 
     if not api_key or not secret:
         raise ValueError(
-            "Faltan ALPACA_API_KEY y/o ALPACA_SECRET_KEY. "
+            f"Faltan ALPACA_API_KEY{suffix} y/o ALPACA_SECRET_KEY{suffix}. "
             "Agregalas en .env.local"
         )
     return TradingClient(api_key, secret, paper=paper)
 
 
-def get_data_client() -> StockHistoricalDataClient:
+def get_data_client(suffix: str = "") -> StockHistoricalDataClient:
     """Retorna cliente de datos de mercado."""
-    api_key = os.getenv("ALPACA_API_KEY")
-    secret   = os.getenv("ALPACA_SECRET_KEY")
+    api_key = os.getenv(f"ALPACA_API_KEY{suffix}")
+    secret   = os.getenv(f"ALPACA_SECRET_KEY{suffix}")
     return StockHistoricalDataClient(api_key, secret)
 
 
-def get_account_info() -> dict:
+def get_account_info(suffix: str = "") -> dict:
     """Retorna informacion de la cuenta: equity, buying_power, cash."""
-    client = get_client()
+    client = get_client(suffix)
     acc = client.get_account()
     return {
         "equity":        float(acc.equity),
@@ -46,9 +49,9 @@ def get_account_info() -> dict:
     }
 
 
-def get_open_positions() -> list[dict]:
+def get_open_positions(suffix: str = "") -> list[dict]:
     """Retorna lista de posiciones abiertas."""
-    client = get_client()
+    client = get_client(suffix)
     positions = client.get_all_positions()
     result = []
     for p in positions:
@@ -64,24 +67,23 @@ def get_open_positions() -> list[dict]:
     return result
 
 
-def get_latest_price(ticker: str) -> float:
+def get_latest_price(ticker: str, suffix: str = "") -> float:
     """Retorna el ultimo precio de mercado de un ticker."""
-    data_client = get_data_client()
+    data_client = get_data_client(suffix)
     req = StockLatestQuoteRequest(symbol_or_symbols=[ticker])
     quotes = data_client.get_stock_latest_quote(req)
     q = quotes[ticker]
-    # Usar mid price (ask+bid)/2, o ask si no hay bid
     if q.bid_price and q.ask_price:
         return round((float(q.ask_price) + float(q.bid_price)) / 2, 2)
     return float(q.ask_price or q.bid_price)
 
 
-def place_market_order(ticker: str, qty: float, side: str) -> dict:
+def place_market_order(ticker: str, qty: float, side: str, suffix: str = "") -> dict:
     """
     Envia una orden de mercado.
     side: 'buy' o 'sell'
     """
-    client = get_client()
+    client = get_client(suffix)
     order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
     req = MarketOrderRequest(
         symbol=ticker,
@@ -136,9 +138,9 @@ def cancel_order(order_id: str) -> bool:
         return False
 
 
-def close_position(ticker: str) -> dict:
+def close_position(ticker: str, suffix: str = "") -> dict:
     """Cierra completamente la posicion de un ticker."""
-    client = get_client()
+    client = get_client(suffix)
     order = client.close_position(ticker)
     return {
         "order_id": str(order.id),
