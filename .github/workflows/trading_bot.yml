@@ -46,3 +46,14 @@ jobs:
           BOT_STOP_LOSS_PCT:     ${{ vars.BOT_STOP_LOSS_PCT }}
           BOT_TAKE_PROFIT_PCT:   ${{ vars.BOT_TAKE_PROFIT_PCT }}
         run: python scripts/30_trading_bot.py
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR — BOT ML (Alpaca #1)</b>%0AWorkflow fallido en GitHub Actions.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
