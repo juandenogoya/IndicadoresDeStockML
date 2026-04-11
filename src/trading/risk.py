@@ -10,13 +10,13 @@ import os
 
 # ── Parametros de riesgo (defaults conservadores) ─────────────
 MAX_POSICIONES      = int(os.getenv("BOT_MAX_POSICIONES", "5"))
-RIESGO_POR_TRADE    = float(os.getenv("BOT_RIESGO_POR_TRADE", "0.02"))   # 2% fijo (solo en modo 'fixed')
-MAX_EXPOSICION      = float(os.getenv("BOT_MAX_EXPOSICION", "0.80"))      # max 80% del equity invertido
+RIESGO_POR_TRADE    = float(os.getenv("BOT_RIESGO_POR_TRADE", "0.15"))   # 15% del equity por trade
+MAX_EXPOSICION      = float(os.getenv("BOT_MAX_EXPOSICION", "0.75"))      # max 75% (5 x 15%)
 STOP_LOSS_PCT       = float(os.getenv("BOT_STOP_LOSS_PCT", "0.05"))       # stop loss 5%
 TAKE_PROFIT_PCT     = float(os.getenv("BOT_TAKE_PROFIT_PCT", "0.10"))     # take profit 10%
 SCORE_MIN_COMPRA    = int(os.getenv("BOT_SCORE_MIN_COMPRA", "65"))        # score ML minimo para entrar
 NIVEL_MIN_COMPRA    = os.getenv("BOT_NIVEL_MIN_COMPRA", "COMPRA_FUERTE")  # nivel minimo de alerta
-MODO_DISTRIBUCION   = os.getenv("BOT_MODO_DISTRIBUCION", "score_weight")  # equal_weight | score_weight | fixed
+MODO_DISTRIBUCION   = os.getenv("BOT_MODO_DISTRIBUCION", "fixed")         # fixed | equal_weight | score_weight
 
 
 def calcular_qty(equity: float, precio: float, capital_asignado: float = None) -> int:
