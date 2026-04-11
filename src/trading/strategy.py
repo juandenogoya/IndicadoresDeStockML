@@ -107,58 +107,63 @@ def evaluar_entradas(
 ) -> list[dict]:
     """
     Evalua senales del dia y selecciona candidatos para abrir posicion.
+    Distribuye el capital segun BOT_MODO_DISTRIBUCION.
     Retorna lista de dicts con datos de entrada.
     """
-    tickers_abiertos  = {p["ticker"] for p in posiciones_actuales}
-    capital_invertido = sum(
-        float(p["qty"]) * alpaca_client.get_latest_price(p["ticker"])
-        for p in posiciones_actuales
-    ) if posiciones_actuales else 0.0
+    tickers_abiertos = {p["ticker"] for p in posiciones_actuales}
+    senales_todas    = obtener_senales_hoy()
 
-    senales = obtener_senales_hoy()
-    a_abrir = []
-
-    for senal in senales:
+    # ── 1. Filtrar candidatos validos ──────────────────────────
+    candidatos = []
+    for senal in senales_todas:
         ticker = senal["ticker"]
-
-        # Ya tiene posicion abierta
         if ticker in tickers_abiertos:
             continue
 
-        # Filtros de entrada
-        cumple, motivo = risk.cumple_filtros_entrada(
-            alert_nivel  = senal["alert_nivel"],
-            score        = float(senal["score"]),
-            usar_filtro_mtf = False,  # MTF no persiste en DB aun
+        cumple, _ = risk.cumple_filtros_entrada(
+            alert_nivel     = senal["alert_nivel"],
+            score           = float(senal["score"]),
+            usar_filtro_mtf = False,
         )
         if not cumple:
             continue
 
-        # Precio actual de mercado (o precio de cierre si mercado cerrado)
+        # Respetar limite de posiciones simultaneas
+        if len(posiciones_actuales) + len(candidatos) >= risk.MAX_POSICIONES:
+            break
+
+        candidatos.append(senal)
+
+    if not candidatos:
+        return []
+
+    # ── 2. Distribuir capital entre candidatos ─────────────────
+    distribucion = risk.distribuir_capital(equity, candidatos, risk.MODO_DISTRIBUCION)
+
+    # ── 3. Construir lista de entradas con precios reales ──────
+    a_abrir = []
+    for senal in candidatos:
+        ticker = senal["ticker"]
+        capital_asignado = distribucion[ticker]
+
         try:
             precio = alpaca_client.get_latest_price(ticker)
         except Exception:
             precio = float(senal["precio_cierre"]) if senal.get("precio_cierre") else None
             if not precio:
-                print(f"  WARN: no se pudo obtener precio de {ticker}")
+                print(f"  WARN: sin precio para {ticker}, se omite.")
                 continue
 
-        # Verificar limites de portafolio
-        puede, motivo_riesgo = risk.puede_abrir_posicion(
-            n_posiciones_actuales = len(posiciones_actuales) + len(a_abrir),
-            equity                = equity,
-            capital_invertido     = capital_invertido,
-            precio                = precio,
-        )
-        if not puede:
-            print(f"  SKIP {ticker}: {motivo_riesgo}")
-            break  # Si llego al limite, no evaluo mas
+        qty = risk.calcular_qty(equity, precio, capital_asignado)
+        if qty < 1:
+            continue
 
-        qty = risk.calcular_qty(equity, precio)
         a_abrir.append({
             "ticker":       ticker,
             "precio":       precio,
             "qty":          qty,
+            "capital":      round(precio * qty, 2),
+            "pct_equity":   round(precio * qty / equity * 100, 1),
             "stop_loss":    risk.calcular_stop_loss(precio),
             "take_profit":  risk.calcular_take_profit(precio),
             "score":        float(senal["score"]),
@@ -166,6 +171,5 @@ def evaluar_entradas(
             "tendencia_1w": None,
             "tendencia_1m": None,
         })
-        capital_invertido += precio * qty
 
     return a_abrir

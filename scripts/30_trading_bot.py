@@ -95,6 +95,8 @@ def cmd_run(dry_run: bool = False, solo_cierres: bool = False, usar_filtro_mtf: 
     log(f"  Score min  : {risk.SCORE_MIN_COMPRA}")
     log(f"  Nivel min  : {risk.NIVEL_MIN_COMPRA}")
     log(f"  Max posic. : {risk.MAX_POSICIONES}")
+    log(f"  Distribucion: {risk.MODO_DISTRIBUCION}")
+    log(f"  Exposicion : {risk.MAX_EXPOSICION*100:.0f}% max")
     log(f"  Stop Loss  : {risk.STOP_LOSS_PCT*100:.0f}%")
     log(f"  Take Profit: {risk.TAKE_PROFIT_PCT*100:.0f}%")
     log(separador)
@@ -155,9 +157,10 @@ def cmd_run(dry_run: bool = False, solo_cierres: bool = False, usar_filtro_mtf: 
             t1w    = entrada.get("tendencia_1w", "-")
             t1m    = entrada.get("tendencia_1m", "-")
 
-            log(f"  COMPRAR {ticker}  qty={qty}  "
-                f"precio=${precio:.2f}  score={score:.0f}  "
-                f"nivel={nivel}  1W={t1w}  1M={t1m}")
+            capital = entrada.get("capital", precio * qty)
+            pct     = entrada.get("pct_equity", capital / equity * 100)
+            log(f"  COMPRAR {ticker}  qty={qty}  precio=${precio:.2f}  "
+                f"capital=${capital:,.0f} ({pct:.1f}%)  score={score:.0f}  nivel={nivel}")
             log(f"    SL=${entrada['stop_loss']:.2f}  TP=${entrada['take_profit']:.2f}")
 
             if not dry_run:
@@ -181,8 +184,51 @@ def cmd_run(dry_run: bool = False, solo_cierres: bool = False, usar_filtro_mtf: 
             else:
                 log("    [DRY RUN] orden no enviada.")
 
+    # ── 5. Notificacion Telegram ───────────────────────────────
+    if not dry_run:
+        _enviar_resumen_telegram(a_cerrar, a_abrir, equity)
+
     log("\n  Bot finalizado.")
     log(separador)
+
+
+def _enviar_resumen_telegram(cierres: list, entradas: list, equity: float):
+    """Envia resumen de operaciones del dia por Telegram."""
+    try:
+        import os, requests
+        token   = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            return
+
+        lineas = ["<b>BOT ALPACA — Resumen del dia</b>"]
+
+        if entradas:
+            lineas.append(f"\n<b>COMPRAS ({len(entradas)})</b>")
+            for e in entradas:
+                capital = e.get("capital", e["precio"] * e["qty"])
+                pct     = e.get("pct_equity", capital / equity * 100)
+                lineas.append(
+                    f"  BUY {e['ticker']}  x{e['qty']}  ${e['precio']:.2f}"
+                    f"  (${capital:,.0f} / {pct:.1f}%)"
+                    f"  score={e['score']:.0f}"
+                )
+        else:
+            lineas.append("\nSin compras hoy.")
+
+        if cierres:
+            lineas.append(f"\n<b>CIERRES ({len(cierres)})</b>")
+            for c in cierres:
+                lineas.append(f"  SELL {c['ticker']}  {c['motivo']}  @ ${c['precio_cierre']:.2f}")
+
+        msg = "\n".join(lineas)
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"  [WARN] Telegram no enviado: {e}")
 
 
 def main():

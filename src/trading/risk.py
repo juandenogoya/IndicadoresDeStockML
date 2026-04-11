@@ -10,25 +10,63 @@ import os
 
 # ── Parametros de riesgo (defaults conservadores) ─────────────
 MAX_POSICIONES      = int(os.getenv("BOT_MAX_POSICIONES", "5"))
-RIESGO_POR_TRADE    = float(os.getenv("BOT_RIESGO_POR_TRADE", "0.02"))   # 2% del equity por trade
+RIESGO_POR_TRADE    = float(os.getenv("BOT_RIESGO_POR_TRADE", "0.02"))   # 2% fijo (solo en modo 'fixed')
 MAX_EXPOSICION      = float(os.getenv("BOT_MAX_EXPOSICION", "0.80"))      # max 80% del equity invertido
 STOP_LOSS_PCT       = float(os.getenv("BOT_STOP_LOSS_PCT", "0.05"))       # stop loss 5%
 TAKE_PROFIT_PCT     = float(os.getenv("BOT_TAKE_PROFIT_PCT", "0.10"))     # take profit 10%
 SCORE_MIN_COMPRA    = int(os.getenv("BOT_SCORE_MIN_COMPRA", "65"))        # score ML minimo para entrar
 NIVEL_MIN_COMPRA    = os.getenv("BOT_NIVEL_MIN_COMPRA", "COMPRA_FUERTE")  # nivel minimo de alerta
+MODO_DISTRIBUCION   = os.getenv("BOT_MODO_DISTRIBUCION", "score_weight")  # equal_weight | score_weight | fixed
 
 
-def calcular_qty(equity: float, precio: float) -> int:
+def calcular_qty(equity: float, precio: float, capital_asignado: float = None) -> int:
     """
-    Calcula la cantidad de acciones a comprar segun riesgo por trade.
+    Calcula la cantidad de acciones a comprar.
+    Si se provee capital_asignado (equal weight / score weight), lo usa.
+    Sino usa RIESGO_POR_TRADE (2% fijo).
     Retorna entero (acciones enteras, no fracciones).
-
-    equity: capital total de la cuenta
-    precio: precio actual del ticker
     """
-    capital_a_invertir = equity * RIESGO_POR_TRADE
-    qty = int(capital_a_invertir / precio)
-    return max(qty, 1)  # minimo 1 accion
+    capital = capital_asignado if capital_asignado else equity * RIESGO_POR_TRADE
+    qty = int(capital / precio)
+    return max(qty, 1)
+
+
+def distribuir_capital(
+    equity: float,
+    senales: list[dict],
+    modo: str = "equal_weight",
+) -> dict[str, float]:
+    """
+    Distribuye el capital disponible entre las senales aprobadas.
+    Retorna dict {ticker: capital_asignado}.
+
+    modos:
+      'equal_weight'  — capital igual para todas las senales
+      'score_weight'  — ponderado por score ML (mas score = mas capital)
+      'fixed'         — 2% fijo por trade (RIESGO_POR_TRADE)
+    """
+    if not senales:
+        return {}
+
+    capital_total = equity * MAX_EXPOSICION
+    n = len(senales)
+
+    if modo == "fixed":
+        return {s["ticker"]: equity * RIESGO_POR_TRADE for s in senales}
+
+    if modo == "equal_weight":
+        capital_por_trade = capital_total / n
+        return {s["ticker"]: capital_por_trade for s in senales}
+
+    if modo == "score_weight":
+        scores = [float(s["score"]) for s in senales]
+        total_scores = sum(scores)
+        return {
+            s["ticker"]: capital_total * (float(s["score"]) / total_scores)
+            for s in senales
+        }
+
+    return {s["ticker"]: equity * RIESGO_POR_TRADE for s in senales}
 
 
 def puede_abrir_posicion(
