@@ -32,5 +32,8 @@ streamlit==1.41.1
 gspread==6.1.4
 google-auth==2.37.0
 
+# ── Trading / Alpaca ─────────────────────────────────────────
+alpaca-py==0.43.2
+
 # ── Notebooks (VS Code maneja Jupyter nativamente) ───────────
 ipykernel==6.29.5
