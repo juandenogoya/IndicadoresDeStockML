@@ -18,6 +18,7 @@ def get_engine():
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         # Usar DATABASE_URL directamente (Railway, Streamlit Cloud, GitHub Actions)
+        db_url = db_url.strip()  # elimina espacios/newlines del Secret
         db_url = db_url.replace("postgres://", "postgresql://", 1)
         if "postgresql+psycopg2" not in db_url:
             db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
