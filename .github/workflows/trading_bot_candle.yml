@@ -1,7 +1,8 @@
-name: Trading Bot Velas / Price Action (Alpaca #3)
+name: Trading Bot SMC Estructura (Alpaca #3)
 
 # Corre L-V a las 13:45 UTC = 9:45 ET (15 min despues de apertura NYSE)
 # Los 3 bots corren en la misma ventana horaria, en paralelo.
+# Estrategia: CHoCH/BOS alcista + estructura sostenida + trailing SL
 
 on:
   schedule:
@@ -26,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run candle trading bot
+      - name: Run SMC estructura trading bot
         env:
           # Secrets
           DATABASE_URL:           ${{ secrets.DATABASE_URL }}
@@ -52,4 +53,4 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             -d parse_mode="HTML" \
-            -d text="<b>ERROR — BOT VELAS (Alpaca #3)</b>%0AWorkflow fallido en GitHub Actions.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            -d text="<b>ERROR — BOT SMC ESTRUCTURA (Alpaca #3)</b>%0AWorkflow fallido en GitHub Actions.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

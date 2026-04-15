@@ -1,26 +1,22 @@
 """
 32_bot_candle.py
-Bot de trading — Estrategia Reversión de Velas (cuenta Alpaca #3).
+Bot de trading — Estrategia SMC Estructura (cuenta Alpaca #3).
 
-Estrategia:
-    Scoring (0-4 pts, minimo 3):
-        +1  Contexto bajista : tendencia_velas <= -1 OR pos_rango_20d < 0.35
-        +1  Patron reversión : Engulfing Bull o Hammer
-        +1  Volumen confirma : vol_spike o up_vol_5d >= 60%
-        +1  RSI bajo        : rsi14 < 52
-    Filtro: vela del dia es alcista (close > open)
-    Salida:
-        SL   = entrada - 1.5 x ATR14
-        TP   = entrada + 3.0 x ATR14
-        D+1  = si al dia siguiente precio < entrada → salir
-        PAT  = patron contrario detectado → salir
-        TIME = 5 dias habiles maximos
+Estrategia: Smart Money Concepts (CHoCH / BOS)
+    Entrada : CHoCH o BOS alcista en ultimos ~10 dias habiles
+              + estructura sostenida (estructura_10 >= 0)
+              + vela alcista de confirmacion hoy
+              + SL estructural <= 8% del precio
+    Salida  : Trailing SL estructural (Filosofia B — sin TP fijo)
+              + invalidacion CHoCH bajista o estructura_10=-1
+              + Time stop 20 dias
 
 Uso:
-    python scripts/32_bot_candle.py            # ejecucion real
-    python scripts/32_bot_candle.py --dry-run  # simula sin enviar ordenes
-    python scripts/32_bot_candle.py --status   # estado cuenta
-    python scripts/32_bot_candle.py --init     # inicializa tablas DB
+    python scripts/32_bot_candle.py             # ejecucion real
+    python scripts/32_bot_candle.py --dry-run   # simula sin enviar ordenes
+    python scripts/32_bot_candle.py --status    # estado cuenta
+    python scripts/32_bot_candle.py --init      # inicializa tablas DB
+    python scripts/32_bot_candle.py --liquidar  # cierra todas las posiciones abiertas (cambio estrategia)
 """
 
 import sys
@@ -39,13 +35,13 @@ except ImportError:
     pass
 
 from src.trading import alpaca_client, risk
-from src.trading.strategy_candle import (
-    evaluar_entradas_candle,
-    evaluar_cierres_candle,
+from src.trading.strategy_structure import (
+    evaluar_entradas_estructura,
+    evaluar_cierres_estructura,
+    calcular_actualizaciones_sl,
     SCORE_ENTRADA,
     SCORE_MAXIMO,
-    ATR_MULT_SL,
-    ATR_MULT_TP,
+    MAX_SL_DISTANCE_PCT,
     DIAS_MAX_POS,
 )
 
@@ -66,7 +62,7 @@ def log(msg: str):
 def cmd_init():
     from src.data.database import get_engine
     from sqlalchemy import text
-    log("Inicializando tablas bot candle...")
+    log("Inicializando tablas bot estructura (SMC)...")
     engine = get_engine()
     with engine.connect() as conn:
         conn.execute(text(f"""
@@ -117,7 +113,7 @@ def cmd_init():
 # Helpers DB
 # ─────────────────────────────────────────────────────────────
 
-def get_posiciones_candle() -> list[dict]:
+def get_posiciones_abiertas() -> list[dict]:
     from src.data.database import get_engine
     from sqlalchemy import text
     engine = get_engine()
@@ -133,7 +129,7 @@ def get_posiciones_candle() -> list[dict]:
     return [dict(r._mapping) for r in rows]
 
 
-def registrar_entrada_candle(ticker, precio, qty, sl, tp, atr, score, nivel, order_id) -> int:
+def registrar_entrada(ticker, precio, qty, sl, tp, atr, score, nivel, order_id) -> int:
     from src.data.database import get_engine
     from sqlalchemy import text
     engine = get_engine()
@@ -159,7 +155,24 @@ def registrar_entrada_candle(ticker, precio, qty, sl, tp, atr, score, nivel, ord
         return r.scalar()
 
 
-def registrar_cierre_candle(pos_id, precio_cierre, motivo) -> dict:
+def actualizar_trailing_sl_db(updates: list[dict]):
+    """Sube el stop_loss en DB para posiciones con nuevo SL trailing mayor."""
+    if not updates:
+        return
+    from src.data.database import get_engine
+    from sqlalchemy import text
+    engine = get_engine()
+    with engine.connect() as conn:
+        for u in updates:
+            conn.execute(text(f"""
+                UPDATE {TABLA_POSICIONES}
+                SET stop_loss = :nuevo_sl
+                WHERE id = :id AND estado = 'ABIERTA'
+            """), {"nuevo_sl": u["nuevo_sl"], "id": u["id"]})
+        conn.commit()
+
+
+def registrar_cierre(pos_id, precio_cierre, motivo) -> dict:
     from src.data.database import get_engine
     from sqlalchemy import text
     engine = get_engine()
@@ -172,9 +185,9 @@ def registrar_cierre_candle(pos_id, precio_cierre, motivo) -> dict:
         if not pos:
             raise ValueError(f"Posicion {pos_id} no encontrada.")
 
-        pnl      = round((precio_cierre - float(pos.precio_entrada)) * pos.qty, 4)
-        pnl_pct  = round((precio_cierre - float(pos.precio_entrada)) / float(pos.precio_entrada), 4)
-        dias_ab  = (date.today() - pos.fecha_entrada).days
+        pnl     = round((precio_cierre - float(pos.precio_entrada)) * pos.qty, 4)
+        pnl_pct = round((precio_cierre - float(pos.precio_entrada)) / float(pos.precio_entrada), 4)
+        dias_ab = (date.today() - pos.fecha_entrada).days
 
         conn.execute(text(f"""
             UPDATE {TABLA_POSICIONES} SET
@@ -195,7 +208,7 @@ def registrar_cierre_candle(pos_id, precio_cierre, motivo) -> dict:
                 (:ticker, :f_entrada, :f_cierre, :p_entrada, :p_cierre,
                  :qty, :pnl, :pnl_pct, :motivo, :score, :nivel, :dias)
         """), {
-            "ticker": pos.ticker,
+            "ticker":    pos.ticker,
             "f_entrada": pos.fecha_entrada, "f_cierre": date.today(),
             "p_entrada": pos.precio_entrada, "p_cierre": precio_cierre,
             "qty": pos.qty, "pnl": pnl, "pnl_pct": pnl_pct,
@@ -211,12 +224,12 @@ def registrar_cierre_candle(pos_id, precio_cierre, motivo) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def cmd_status():
-    log("Consultando cuenta Alpaca #3 (Velas)...")
+    log("Consultando cuenta Alpaca #3 (SMC Estructura)...")
     cuenta = alpaca_client.get_account_info(SUFFIX)
     modo   = "PAPER" if cuenta["paper"] else "LIVE"
     print(f"""
   ================================================
-    CUENTA ALPACA #3 — {modo} (Estrategia Velas)
+    CUENTA ALPACA #3 — {modo} (Estrategia SMC)
   ================================================
     Equity          : ${cuenta['equity']:,.2f}
     Buying Power    : ${cuenta['buying_power']:,.2f}
@@ -224,16 +237,18 @@ def cmd_status():
     Portfolio Value : ${cuenta['portfolio_value']:,.2f}
   ================================================
 """)
-    posiciones = get_posiciones_candle()
+    posiciones = get_posiciones_abiertas()
     if not posiciones:
         print("  Sin posiciones abiertas.")
     else:
         print(f"  {len(posiciones)} posicion(es) abierta(s):\n")
         for p in posiciones:
-            entrada = float(p["precio_entrada"])
-            dias    = (date.today() - p["fecha_entrada"]).days
+            entrada  = float(p["precio_entrada"])
+            sl       = float(p["stop_loss"]) if p.get("stop_loss") else 0
+            dias     = (date.today() - p["fecha_entrada"]).days
+            dist_sl  = round((entrada - sl) / entrada * 100, 1) if sl and entrada else 0
             print(f"    {p['ticker']:6s}  qty={p['qty']}  "
-                  f"entrada=${entrada:.2f}  "
+                  f"entrada=${entrada:.2f}  SL=${sl:.2f}({dist_sl:.1f}%)  "
                   f"score={p['score_entrada']}  "
                   f"dias={dias}/{DIAS_MAX_POS}  "
                   f"nivel={p['nivel_entrada']}")
@@ -246,9 +261,9 @@ def cmd_status():
 def cmd_run(dry_run: bool = False):
     separador = "=" * 60
     log(separador)
-    log(f"  BOT VELAS (Price Action) — {'DRY RUN' if dry_run else 'EJECUCION REAL'}")
-    log(f"  Entrada    : score >= {SCORE_ENTRADA} / {SCORE_MAXIMO}")
-    log(f"  SL / TP    : {ATR_MULT_SL}x ATR / {ATR_MULT_TP}x ATR")
+    log(f"  BOT SMC ESTRUCTURA — {'DRY RUN' if dry_run else 'EJECUCION REAL'}")
+    log(f"  Entrada    : score >= {SCORE_ENTRADA} / {SCORE_MAXIMO}  SL_max={MAX_SL_DISTANCE_PCT}%")
+    log(f"  Salida     : Trailing SL estructural + CHoCH bear / estructura=-1")
     log(f"  Time stop  : {DIAS_MAX_POS} dias")
     log(f"  Max posic. : {risk.MAX_POSICIONES}")
     log(f"  Por trade  : {risk.RIESGO_POR_TRADE*100:.0f}% del equity")
@@ -258,12 +273,32 @@ def cmd_run(dry_run: bool = False):
     equity = cuenta["equity"]
     log(f"  Equity: ${equity:,.2f} | Buying Power: ${cuenta['buying_power']:,.2f}")
 
-    posiciones = get_posiciones_candle()
+    posiciones = get_posiciones_abiertas()
     log(f"  Posiciones abiertas: {len(posiciones)}")
 
-    # ── Cierres ───────────────────────────────────────────────
+    # ── Paso 1: Actualizar Trailing SL ───────────────────────
+    log("\n  [TRAILING SL]")
+    sl_updates = calcular_actualizaciones_sl(posiciones)
+
+    if not sl_updates:
+        log("  SL sin cambios hoy.")
+    else:
+        for u in sl_updates:
+            log(f"  SL {u['ticker']}:  ${u['sl_anterior']:.2f} -> ${u['nuevo_sl']:.2f} "
+                f"(+{u['delta_pct']:.2f}%)")
+        if not dry_run:
+            actualizar_trailing_sl_db(sl_updates)
+            # Actualizar en memoria para evaluar cierres con SL ya actualizado
+            sl_map = {u["id"]: u["nuevo_sl"] for u in sl_updates}
+            for p in posiciones:
+                if p["id"] in sl_map:
+                    p["stop_loss"] = sl_map[p["id"]]
+        else:
+            log("    [DRY RUN] DB no actualizada.")
+
+    # ── Paso 2: Cierres ───────────────────────────────────────
     log("\n  [CIERRES]")
-    a_cerrar = evaluar_cierres_candle(posiciones)
+    a_cerrar = evaluar_cierres_estructura(posiciones)
 
     if not a_cerrar:
         log("  Sin posiciones para cerrar.")
@@ -276,7 +311,7 @@ def cmd_run(dry_run: bool = False):
             if not dry_run:
                 try:
                     alpaca_client.close_position(ticker, SUFFIX)
-                    resultado = registrar_cierre_candle(c["id"], precio, motivo)
+                    resultado = registrar_cierre(c["id"], precio, motivo)
                     signo = "+" if resultado["pnl"] >= 0 else ""
                     log(f"    -> PnL: {signo}${resultado['pnl']:.2f} "
                         f"({signo}{resultado['pnl_pct']*100:.1f}%)")
@@ -286,40 +321,42 @@ def cmd_run(dry_run: bool = False):
                 log("    [DRY RUN] orden no enviada.")
 
     # Actualizar posiciones post-cierres
-    posiciones = get_posiciones_candle()
+    posiciones = get_posiciones_abiertas()
 
-    # ── Entradas ──────────────────────────────────────────────
+    # ── Paso 3: Entradas ──────────────────────────────────────
     log("\n  [ENTRADAS]")
-    a_abrir = evaluar_entradas_candle(posiciones, equity)
+    a_abrir = evaluar_entradas_estructura(posiciones, equity)
 
     if not a_abrir:
-        log("  Sin patrones de reversión validos hoy.")
+        log("  Sin setups estructurales validos hoy.")
     else:
         for entrada in a_abrir:
-            ticker  = entrada["ticker"]
-            qty     = entrada["qty"]
-            precio  = entrada["precio"]
-            score   = entrada["score"]
-            capital = entrada["capital"]
-            pct     = entrada["pct_equity"]
+            ticker   = entrada["ticker"]
+            qty      = entrada["qty"]
+            precio   = entrada["precio"]
+            score    = entrada["score"]
+            capital  = entrada["capital"]
+            pct      = entrada["pct_equity"]
+            sl       = entrada["stop_loss"]
+            dist_sl  = entrada["dist_sl_pct"]
+            dist_sh  = entrada["dist_sh_pct"]
             log(f"  COMPRAR {ticker}  qty={qty}  precio=${precio:.2f}  "
                 f"capital=${capital:,.0f} ({pct:.1f}%)  score={score:.1f}/{SCORE_MAXIMO}")
-            log(f"    Patron={entrada['patron']}  "
-                f"Tendencia={entrada['tendencia_velas']:.0f}  "
-                f"PosRango={entrada['pos_rango_20d']:.2f}  "
-                f"RSI={entrada['rsi']:.0f}  "
-                f"ATR=${entrada['atr']:.2f}  "
-                f"SL=${entrada['stop_loss']:.2f}  TP=${entrada['take_profit']:.2f}")
+            log(f"    Evento={entrada['evento']}  "
+                f"estruc={entrada['estructura_10']}  "
+                f"SL=${sl:.2f} (-{dist_sl:.1f}%)  "
+                f"dist_SH={dist_sh:+.1f}%  "
+                f"vol={entrada['vol_spike']}  eng={entrada['eng_bull']}")
 
             if not dry_run:
                 try:
                     orden  = alpaca_client.place_market_order(ticker, qty, "buy", SUFFIX)
-                    pos_id = registrar_entrada_candle(
+                    pos_id = registrar_entrada(
                         ticker   = ticker,
                         precio   = precio,
                         qty      = qty,
-                        sl       = entrada["stop_loss"],
-                        tp       = entrada["take_profit"],
+                        sl       = sl,
+                        tp       = entrada["take_profit"],   # None (sin TP fijo)
                         atr      = entrada["atr"],
                         score    = score,
                         nivel    = entrada["nivel"],
@@ -333,35 +370,47 @@ def cmd_run(dry_run: bool = False):
 
     # ── Telegram ──────────────────────────────────────────────
     if not dry_run:
-        _telegram(a_cerrar, a_abrir, equity)
+        _telegram(sl_updates, a_cerrar, a_abrir, equity)
 
-    log("\n  Bot velas finalizado.")
+    log("\n  Bot SMC Estructura finalizado.")
     log(separador)
 
 
-def _telegram(cierres, entradas, equity):
+def _telegram(sl_updates, cierres, entradas, equity):
     try:
         import requests
         token   = os.getenv("TELEGRAM_BOT_TOKEN")
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
         if not token or not chat_id:
             return
-        lineas = ["<b>BOT VELAS (Price Action) — Resumen</b>"]
+
+        lineas = ["<b>BOT SMC ESTRUCTURA — Resumen</b>"]
+
         if entradas:
             lineas.append(f"\n<b>COMPRAS ({len(entradas)})</b>")
             for e in entradas:
                 lineas.append(
                     f"  BUY {e['ticker']}  x{e['qty']}  ${e['precio']:.2f}"
-                    f"  {e['patron']}  score={e['score']:.1f}/{SCORE_MAXIMO}"
+                    f"  {e['evento']}  SL=${e['stop_loss']:.2f}(-{e['dist_sl_pct']:.1f}%)"
+                    f"  score={e['score']:.1f}/{SCORE_MAXIMO}"
                 )
         else:
             lineas.append("\nSin compras hoy.")
+
         if cierres:
             lineas.append(f"\n<b>CIERRES ({len(cierres)})</b>")
             for c in cierres:
                 lineas.append(
                     f"  SELL {c['ticker']}  {c['motivo']}  @ ${c['precio_cierre']:.2f}"
                 )
+
+        if sl_updates:
+            lineas.append(f"\n<b>TRAILING SL ({len(sl_updates)} actualizados)</b>")
+            for u in sl_updates:
+                lineas.append(
+                    f"  {u['ticker']}  SL: ${u['sl_anterior']:.2f} -> ${u['nuevo_sl']:.2f} (+{u['delta_pct']:.2f}%)"
+                )
+
         requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={"chat_id": chat_id, "text": "\n".join(lineas), "parse_mode": "HTML"},
@@ -371,17 +420,58 @@ def _telegram(cierres, entradas, equity):
         log(f"  [WARN] Telegram: {e}")
 
 
+def cmd_liquidar():
+    """
+    Cierra TODAS las posiciones abiertas en Alpaca #3 y las marca como
+    CERRADA en DB con motivo ESTRATEGIA_NUEVA.
+    Usar una sola vez al migrar de la estrategia vieja a la nueva.
+    """
+    log("=" * 60)
+    log("  LIQUIDACION TOTAL — cambio de estrategia (Alpaca #3)")
+    log("=" * 60)
+
+    posiciones = get_posiciones_abiertas()
+    if not posiciones:
+        log("  Sin posiciones abiertas. Nada que liquidar.")
+        return
+
+    log(f"  {len(posiciones)} posicion(es) a cerrar:\n")
+    for pos in posiciones:
+        ticker = pos["ticker"]
+        log(f"  Cerrando {ticker} (id={pos['id']}, entrada=${float(pos['precio_entrada']):.2f})...")
+        try:
+            alpaca_client.close_position(ticker, SUFFIX)
+            precio_actual = alpaca_client.get_latest_price(ticker, suffix=SUFFIX)
+        except Exception as e:
+            log(f"    [WARN] Alpaca: {e} — registrando cierre igual con precio estimado")
+            precio_actual = float(pos["precio_entrada"])
+
+        try:
+            resultado = registrar_cierre(pos["id"], precio_actual, "ESTRATEGIA_NUEVA")
+            signo = "+" if resultado["pnl"] >= 0 else ""
+            log(f"    -> PnL: {signo}${resultado['pnl']:.2f} "
+                f"({signo}{resultado['pnl_pct']*100:.1f}%)")
+        except Exception as e:
+            log(f"    ERROR DB: {e}")
+
+    log("\n  Liquidacion completa. Ahora corre --dry-run para verificar la nueva estrategia.")
+    log("=" * 60)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Bot Velas (Price Action) — Alpaca #3")
-    parser.add_argument("--dry-run", action="store_true", help="Simula sin enviar ordenes")
-    parser.add_argument("--status",  action="store_true", help="Estado cuenta y posiciones")
-    parser.add_argument("--init",    action="store_true", help="Inicializa tablas en DB")
+    parser = argparse.ArgumentParser(description="Bot SMC Estructura — Alpaca #3")
+    parser.add_argument("--dry-run",  action="store_true", help="Simula sin enviar ordenes")
+    parser.add_argument("--status",   action="store_true", help="Estado cuenta y posiciones")
+    parser.add_argument("--init",     action="store_true", help="Inicializa tablas en DB")
+    parser.add_argument("--liquidar", action="store_true", help="Cierra todas las posiciones (cambio estrategia)")
     args = parser.parse_args()
 
     if args.init:
         cmd_init()
     elif args.status:
         cmd_status()
+    elif args.liquidar:
+        cmd_liquidar()
     else:
         cmd_run(dry_run=args.dry_run)
 
