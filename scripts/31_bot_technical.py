@@ -37,7 +37,10 @@ from src.trading.strategy_technical import (
     evaluar_entradas_tech,
     evaluar_cierres_tech,
     SCORE_ENTRADA,
+    SCORE_SALIDA,
     SCORE_MAXIMO,
+    ATR_MULT_SL,
+    ATR_MULT_TP,
     RSI_MIN, RSI_MAX,
 )
 from src.trading.portfolio import (
@@ -239,11 +242,10 @@ def cmd_run(dry_run: bool = False):
     log(separador)
     log(f"  BOT TECNICO 3 CAPAS — {'DRY RUN' if dry_run else 'EJECUCION REAL'}")
     log(f"  Entrada    : score >= {SCORE_ENTRADA} / {SCORE_MAXIMO}")
+    log(f"  Salida     : score <= {SCORE_SALIDA} (primario)  |  SL={ATR_MULT_SL}xATR / TP={ATR_MULT_TP}xATR (emergencia)")
     log(f"  RSI rango  : {RSI_MIN} - {RSI_MAX}")
     log(f"  Max posic. : {risk.MAX_POSICIONES}")
     log(f"  Por trade  : {risk.RIESGO_POR_TRADE*100:.0f}% del equity")
-    log(f"  Stop Loss  : {risk.STOP_LOSS_PCT*100:.0f}%")
-    log(f"  Take Profit: {risk.TAKE_PROFIT_PCT*100:.0f}%")
     log(separador)
 
     cuenta = alpaca_client.get_account_info(SUFFIX)
@@ -257,6 +259,8 @@ def cmd_run(dry_run: bool = False):
     log("\n  [CIERRES]")
     a_cerrar = evaluar_cierres_tech(posiciones)
 
+    tickers_cerrados_hoy = set()   # excluir de entradas en esta misma corrida
+
     if not a_cerrar:
         log("  Sin posiciones para cerrar.")
     else:
@@ -264,7 +268,9 @@ def cmd_run(dry_run: bool = False):
             ticker = c["ticker"]
             motivo = c["motivo"]
             precio = c["precio_cierre"]
-            log(f"  CERRAR {ticker} @ ${precio:.2f} — {motivo}")
+            score_c = c.get("score_cierre", "?")
+            log(f"  CERRAR {ticker} @ ${precio:.2f} — {motivo}  (score={score_c})")
+            tickers_cerrados_hoy.add(ticker)
             if not dry_run:
                 try:
                     alpaca_client.close_position(ticker, SUFFIX)
@@ -277,12 +283,14 @@ def cmd_run(dry_run: bool = False):
             else:
                 log("    [DRY RUN] orden no enviada.")
 
-    # Actualizar posiciones
+    # Actualizar posiciones post-cierres
     posiciones = get_posiciones_tech()
 
     # ── Entradas ──────────────────────────────────────────────
     log("\n  [ENTRADAS]")
-    a_abrir = evaluar_entradas_tech(posiciones, equity)
+    if tickers_cerrados_hoy:
+        log(f"  Excluidos (cerrados esta corrida): {', '.join(sorted(tickers_cerrados_hoy))}")
+    a_abrir = evaluar_entradas_tech(posiciones, equity, tickers_excluidos=tickers_cerrados_hoy)
 
     if not a_abrir:
         log("  Sin senales tecnicas validas hoy.")
@@ -300,7 +308,9 @@ def cmd_run(dry_run: bool = False):
                 f"SMA21={'OK' if entrada['cond_sma21'] else 'NO'}  "
                 f"MACD={'OK' if entrada['cond_macd'] else 'NO'}  "
                 f"RSI={entrada['rsi']:.0f}  "
-                f"SL=${entrada['stop_loss']:.2f}  TP=${entrada['take_profit']:.2f}")
+                f"ATR=${entrada['atr']:.2f}  "
+                f"SL=${entrada['stop_loss']:.2f}(-{ATR_MULT_SL:.0f}xATR)  "
+                f"TP=${entrada['take_profit']:.2f}(+{ATR_MULT_TP:.0f}xATR)")
 
             if not dry_run:
                 try:

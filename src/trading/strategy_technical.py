@@ -13,14 +13,19 @@ Capa 3 — Momentum (timing):
     MACD > Signal Y histograma positivo  →  1.5 pts
     RSI entre 45 y 68                   →  1.0 pt   (no sobrecomprado)
 
-Entrada : score >= 4.0 sobre 5.5
-Salida  : precio < SMA50
-          precio < SMA200
-          MACD histograma negativo 2 dias seguidos
-          RSI < 40
-          SL 5% / TP 10%
+Entrada : score >= SCORE_ENTRADA (4.0 sobre 5.5)
+
+Salida  : EXIT PRIMARIO — score <= SCORE_SALIDA (indicadores se desalinean)
+          EXIT EMERGENCIA — precio <= SL (ATR-based) o precio >= TP (ATR-based)
+
+Principio: entradas y salidas usan el mismo sistema de scoring.
+           Si score <= SCORE_SALIDA → imposible que score >= SCORE_ENTRADA
+           → contradiccion exit/entry eliminada por diseno matematico.
+           Adicionalmente: ticker cerrado en la misma corrida queda excluido
+           de entradas (misma data no puede dar decisiones opuestas).
 """
 
+import os
 from datetime import date
 from sqlalchemy import text
 from src.data.database import get_engine
@@ -32,13 +37,16 @@ PTS_SMA21      = 1.0
 PTS_MACD       = 1.5
 PTS_RSI        = 1.0
 SCORE_MAXIMO   = PTS_SMA50 + PTS_SMA21 + PTS_MACD + PTS_RSI   # 5.5
-SCORE_ENTRADA  = float(4.0)
-SCORE_SALIDA   = float(2.5)   # si cae a <= 2.5 salimos
 
-RSI_MIN        = 45.0    # no entrar si momentum es debil
-RSI_MAX        = 68.0    # no entrar si esta sobrecomprado
-RSI_SALIDA     = 40.0    # salir si RSI cae bajo este valor
-MACD_DIAS_NEG  = 2       # dias consecutivos de histograma negativo para salir
+SCORE_ENTRADA  = float(os.getenv("BOT_SCORE_ENTRADA_TECH", "4.0"))
+SCORE_SALIDA   = float(os.getenv("BOT_SCORE_SALIDA_TECH",  "3.5"))
+
+RSI_MIN        = float(os.getenv("BOT_RSI_MIN", "45.0"))   # no entrar si momentum debil
+RSI_MAX        = float(os.getenv("BOT_RSI_MAX", "68.0"))   # no entrar si sobrecomprado
+
+# ── Parametros de SL/TP de emergencia (ATR-based) ─────────────
+ATR_MULT_SL    = float(os.getenv("BOT_ATR_MULT_SL", "2.0"))   # SL = entrada - 2x ATR14
+ATR_MULT_TP    = float(os.getenv("BOT_ATR_MULT_TP", "4.0"))   # TP = entrada + 4x ATR14
 
 
 # ─────────────────────────────────────────────────────────────
@@ -94,6 +102,7 @@ def obtener_indicadores_hoy() -> list[dict]:
     """
     Lee los ultimos indicadores disponibles para todos los tickers.
     Une precios_diarios con indicadores_tecnicos en la ultima fecha.
+    Incluye atr14 para calcular SL/TP de emergencia al entrar.
     """
     engine = get_engine()
     with engine.connect() as conn:
@@ -106,6 +115,7 @@ def obtener_indicadores_hoy() -> list[dict]:
                 i.sma50,
                 i.sma200,
                 i.rsi14,
+                i.atr14,
                 i.macd,
                 i.macd_signal,
                 (i.macd - i.macd_signal) AS macd_hist
@@ -117,23 +127,6 @@ def obtener_indicadores_hoy() -> list[dict]:
     return [dict(r._mapping) for r in rows]
 
 
-def obtener_historial_macd(ticker: str, dias: int = 3) -> list[float]:
-    """
-    Retorna los ultimos N valores del histograma MACD para un ticker.
-    Orden: mas reciente primero.
-    """
-    engine = get_engine()
-    with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT (macd - macd_signal) AS hist
-            FROM indicadores_tecnicos
-            WHERE ticker = :ticker
-            ORDER BY fecha DESC
-            LIMIT :dias
-        """), {"ticker": ticker, "dias": dias}).fetchall()
-    return [float(r.hist) for r in rows]
-
-
 # ─────────────────────────────────────────────────────────────
 # Logica de entradas
 # ─────────────────────────────────────────────────────────────
@@ -141,18 +134,23 @@ def obtener_historial_macd(ticker: str, dias: int = 3) -> list[float]:
 def evaluar_entradas_tech(
     posiciones_actuales: list[dict],
     equity: float,
+    tickers_excluidos: set = None,
 ) -> list[dict]:
     """
     Evalua todos los tickers y retorna candidatos para abrir posicion.
     Aplica las 3 capas de scoring.
+
+    tickers_excluidos: set de tickers cerrados en la misma corrida.
+    Garantiza que la misma data no genere decision de cierre Y apertura.
     """
-    tickers_abiertos = {p["ticker"] for p in posiciones_actuales}
-    indicadores      = obtener_indicadores_hoy()
-    candidatos       = []
+    tickers_abiertos  = {p["ticker"] for p in posiciones_actuales}
+    tickers_bloqueados = (tickers_excluidos or set()) | tickers_abiertos
+    indicadores        = obtener_indicadores_hoy()
+    candidatos         = []
 
     for row in indicadores:
         ticker = row["ticker"]
-        if ticker in tickers_abiertos:
+        if ticker in tickers_bloqueados:
             continue
 
         score, detalle = calcular_score_tecnico(row)
@@ -164,46 +162,55 @@ def evaluar_entradas_tech(
             break
 
         candidatos.append({
-            "ticker":         ticker,
-            "score_tecnico":  score,
-            "score_maximo":   SCORE_MAXIMO,
-            "detalle":        detalle,
+            "ticker":  ticker,
+            "score":   score,
+            "detalle": detalle,
+            "row":     row,
         })
 
     if not candidatos:
         return []
 
-    # Distribucion de capital — fixed 15% por trade
+    candidatos.sort(key=lambda x: x["score"], reverse=True)
+
     a_abrir = []
     for c in candidatos:
         ticker = c["ticker"]
+        det    = c["detalle"]
+        row    = c["row"]
+
         try:
             precio = alpaca_client.get_latest_price(ticker, suffix="_2")
         except Exception:
-            precio = float(c["detalle"]["close"]) if c["detalle"]["close"] else None
+            precio = float(det["close"]) if det["close"] else None
             if not precio:
                 continue
+
+        atr = float(row.get("atr14") or 0)
+        if not atr:
+            continue
 
         qty = risk.calcular_qty(equity, precio, equity * risk.RIESGO_POR_TRADE)
         if qty < 1:
             continue
 
-        det = c["detalle"]
+        score = c["score"]
         a_abrir.append({
-            "ticker":        ticker,
-            "precio":        precio,
-            "qty":           qty,
-            "capital":       round(precio * qty, 2),
-            "pct_equity":    round(precio * qty / equity * 100, 1),
-            "stop_loss":     risk.calcular_stop_loss(precio),
-            "take_profit":   risk.calcular_take_profit(precio),
-            "score":         c["score_tecnico"],
-            "nivel":         f"TECH_{score:.1f}/{SCORE_MAXIMO}",
-            "cond_sma50":    det["cond_sma50"],
-            "cond_sma21":    det["cond_sma21"],
-            "cond_macd":     det["cond_macd"],
-            "cond_rsi":      det["cond_rsi"],
-            "rsi":           det["rsi"],
+            "ticker":      ticker,
+            "precio":      precio,
+            "qty":         qty,
+            "capital":     round(precio * qty, 2),
+            "pct_equity":  round(precio * qty / equity * 100, 1),
+            "stop_loss":   round(precio - ATR_MULT_SL * atr, 4),
+            "take_profit": round(precio + ATR_MULT_TP * atr, 4),
+            "atr":         round(atr, 4),
+            "score":       score,
+            "nivel":       f"TECH_{score:.1f}/{SCORE_MAXIMO}",
+            "cond_sma50":  det["cond_sma50"],
+            "cond_sma21":  det["cond_sma21"],
+            "cond_macd":   det["cond_macd"],
+            "cond_rsi":    det["cond_rsi"],
+            "rsi":         det["rsi"],
         })
 
     return a_abrir
@@ -215,17 +222,20 @@ def evaluar_entradas_tech(
 
 def evaluar_cierres_tech(posiciones: list[dict]) -> list[dict]:
     """
-    Evalua posiciones abiertas y detecta condiciones de salida:
-    1. Precio rompe SMA200 (critico)
-    2. Precio rompe SMA50
-    3. MACD histograma negativo 2 dias consecutivos
-    4. RSI < 40
-    5. SL / TP
+    Evalua posiciones abiertas y detecta condiciones de salida.
+
+    Prioridades:
+        1. EXIT PRIMARIO  — score <= SCORE_SALIDA (indicadores se desalinean)
+           El mismo sistema de scoring que decide la entrada decide la salida.
+           Garantia matematica: score <= SCORE_SALIDA < SCORE_ENTRADA
+           → imposible que la misma data genere exit + entry simultaneamente.
+
+        2. EXIT EMERGENCIA — precio <= stop_loss  (SL ATR-based)
+        3. EXIT EMERGENCIA — precio >= take_profit (TP ATR-based)
     """
     if not posiciones:
         return []
 
-    # Indicadores actuales
     indicadores_map = {
         row["ticker"]: row
         for row in obtener_indicadores_hoy()
@@ -246,46 +256,31 @@ def evaluar_cierres_tech(posiciones: list[dict]) -> list[dict]:
             if not precio_actual:
                 continue
 
-        close  = float(ind.get("close",  precio_actual))
-        sma50  = float(ind.get("sma50",  0) or 0)
-        sma200 = float(ind.get("sma200", 0) or 0)
-        rsi    = float(ind.get("rsi14",  50) or 50)
-        hist   = float(ind.get("macd_hist", 0) or 0)
-
         stop_loss   = float(pos["stop_loss"])   if pos.get("stop_loss")   else None
         take_profit = float(pos["take_profit"]) if pos.get("take_profit") else None
 
+        score_actual, _ = calcular_score_tecnico(ind)
+
         motivo = None
 
-        # ── Prioridad 1: SL / TP ──────────────────────────────
-        if stop_loss and precio_actual <= stop_loss:
-            motivo = "STOP_LOSS"
+        # ── P1: Score degradado (exit primario) ───────────────
+        if score_actual <= SCORE_SALIDA:
+            motivo = f"SCORE_DEGRADADO_{score_actual:.1f}"
+
+        # ── P2: SL de emergencia (ATR-based) ──────────────────
+        elif stop_loss and precio_actual <= stop_loss:
+            motivo = "STOP_LOSS_EMERGENCIA"
+
+        # ── P3: TP de emergencia (ATR-based) ──────────────────
         elif take_profit and precio_actual >= take_profit:
             motivo = "TAKE_PROFIT"
-
-        # ── Prioridad 2: Precio bajo SMA200 (critico) ─────────
-        elif sma200 and close < sma200:
-            motivo = "ROMPE_SMA200"
-
-        # ── Prioridad 3: Precio bajo SMA50 ────────────────────
-        elif sma50 and close < sma50:
-            motivo = "ROMPE_SMA50"
-
-        # ── Prioridad 4: RSI debil ────────────────────────────
-        elif rsi < RSI_SALIDA:
-            motivo = f"RSI_DEBIL_{rsi:.0f}"
-
-        # ── Prioridad 5: MACD histograma negativo consecutivo ─
-        else:
-            historial = obtener_historial_macd(ticker, MACD_DIAS_NEG)
-            if len(historial) >= MACD_DIAS_NEG and all(h < 0 for h in historial):
-                motivo = f"MACD_NEG_{MACD_DIAS_NEG}D"
 
         if motivo:
             a_cerrar.append({
                 **pos,
                 "precio_cierre": precio_actual,
                 "motivo":        motivo,
+                "score_cierre":  score_actual,
             })
 
     return a_cerrar
