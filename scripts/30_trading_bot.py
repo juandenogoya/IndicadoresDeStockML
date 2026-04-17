@@ -41,6 +41,7 @@ except ImportError:
     pass
 
 from src.trading import alpaca_client, portfolio, strategy, risk
+from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 
 
 def log(msg: str):
@@ -110,9 +111,41 @@ def cmd_run(dry_run: bool = False, solo_cierres: bool = False, usar_filtro_mtf: 
     posiciones_db = portfolio.get_posiciones_abiertas()
     log(f"  Posiciones abiertas en DB: {len(posiciones_db)}")
 
-    # ── 3. Evaluar cierres ─────────────────────────────────────
+    # ── 3. Cierres por earnings (prioridad absoluta) ───────────
+    log("\n  [EARNINGS EXIT]")
+    tickers_open    = [p["ticker"] for p in posiciones_db]
+    earnings_closes = tickers_a_cerrar_hoy(tickers_open)
+
+    if not earnings_closes:
+        log("  Sin posiciones con earnings proximos.")
+    else:
+        for ticker, earnings_date in earnings_closes.items():
+            pos = next((p for p in posiciones_db if p["ticker"] == ticker), None)
+            if not pos:
+                continue
+            try:
+                precio = alpaca_client.get_latest_price(ticker)
+            except Exception:
+                precio = float(pos["precio_entrada"])
+            motivo = f"EARNINGS_EXIT_{earnings_date}"
+            log(f"  CERRAR {ticker} @ ${precio:.2f} — {motivo}")
+            if not dry_run:
+                try:
+                    alpaca_client.close_position(ticker)
+                    resultado = portfolio.registrar_cierre(pos["id"], precio, motivo)
+                    signo = "+" if resultado["pnl"] >= 0 else ""
+                    log(f"    -> PnL: {signo}${resultado['pnl']:.2f} ({signo}{resultado['pnl_pct']*100:.1f}%)")
+                except Exception as e:
+                    log(f"    ERROR: {e}")
+            else:
+                log("    [DRY RUN] orden no enviada.")
+
+    # ── 4. Evaluar cierres por estrategia ──────────────────────
     log("\n  [CIERRES]")
+    posiciones_db = portfolio.get_posiciones_abiertas()
     a_cerrar = strategy.evaluar_cierres(posiciones_db, usar_filtro_mtf)
+    # Excluir tickers ya cerrados por earnings
+    a_cerrar = [c for c in a_cerrar if c["ticker"] not in earnings_closes]
 
     if not a_cerrar:
         log("  Sin posiciones para cerrar.")
@@ -141,9 +174,17 @@ def cmd_run(dry_run: bool = False, solo_cierres: bool = False, usar_filtro_mtf: 
     # Actualizar posiciones tras cierres
     posiciones_db = portfolio.get_posiciones_abiertas()
 
-    # ── 4. Evaluar entradas ────────────────────────────────────
+    # ── 5. Evaluar entradas con filtro earnings ────────────────
     log("\n  [ENTRADAS]")
     a_abrir = strategy.evaluar_entradas(posiciones_db, equity, usar_filtro_mtf)
+
+    # Bloquear candidatos con earnings proximos
+    tickers_candidatos = [e["ticker"] for e in a_abrir]
+    bloqueados_earnings = tickers_a_bloquear_entrada(tickers_candidatos)
+    if bloqueados_earnings:
+        for ticker, fecha in bloqueados_earnings.items():
+            log(f"  BLOQUEADO {ticker} — earnings {fecha}")
+    a_abrir = [e for e in a_abrir if e["ticker"] not in bloqueados_earnings]
 
     if not a_abrir:
         log("  Sin senales validas para abrir posicion hoy.")

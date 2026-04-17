@@ -35,6 +35,7 @@ except ImportError:
     pass
 
 from src.trading import alpaca_client, risk
+from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 from src.trading.strategy_structure import (
     evaluar_entradas_estructura,
     evaluar_cierres_estructura,
@@ -276,6 +277,38 @@ def cmd_run(dry_run: bool = False):
     posiciones = get_posiciones_abiertas()
     log(f"  Posiciones abiertas: {len(posiciones)}")
 
+    # ── Paso 0: Earnings exit (prioridad absoluta) ───────────
+    log("\n  [EARNINGS EXIT]")
+    tickers_open    = [p["ticker"] for p in posiciones]
+    earnings_closes = tickers_a_cerrar_hoy(tickers_open)
+
+    if not earnings_closes:
+        log("  Sin posiciones con earnings proximos.")
+    else:
+        for ticker, earnings_date in earnings_closes.items():
+            pos = next((p for p in posiciones if p["ticker"] == ticker), None)
+            if not pos:
+                continue
+            try:
+                precio = alpaca_client.get_latest_price(ticker, suffix=SUFFIX)
+            except Exception:
+                precio = float(pos["precio_entrada"])
+            motivo = f"EARNINGS_EXIT_{earnings_date}"
+            log(f"  CERRAR {ticker} @ ${precio:.2f} — {motivo}")
+            if not dry_run:
+                try:
+                    alpaca_client.close_position(ticker, SUFFIX)
+                    resultado = registrar_cierre(pos["id"], precio, motivo)
+                    signo = "+" if resultado["pnl"] >= 0 else ""
+                    log(f"    -> PnL: {signo}${resultado['pnl']:.2f} ({signo}{resultado['pnl_pct']*100:.1f}%)")
+                except Exception as e:
+                    log(f"    ERROR: {e}")
+            else:
+                log("    [DRY RUN] orden no enviada.")
+
+    # Actualizar posiciones post-earnings
+    posiciones = get_posiciones_abiertas()
+
     # ── Paso 1: Actualizar Trailing SL ───────────────────────
     log("\n  [TRAILING SL]")
     sl_updates = calcular_actualizaciones_sl(posiciones)
@@ -326,6 +359,14 @@ def cmd_run(dry_run: bool = False):
     # ── Paso 3: Entradas ──────────────────────────────────────
     log("\n  [ENTRADAS]")
     a_abrir = evaluar_entradas_estructura(posiciones, equity)
+
+    # Bloquear candidatos con earnings proximos
+    tickers_candidatos  = [e["ticker"] for e in a_abrir]
+    bloqueados_earnings = tickers_a_bloquear_entrada(tickers_candidatos)
+    if bloqueados_earnings:
+        for ticker, fecha in bloqueados_earnings.items():
+            log(f"  BLOQUEADO {ticker} — earnings {fecha}")
+    a_abrir = [e for e in a_abrir if e["ticker"] not in bloqueados_earnings]
 
     if not a_abrir:
         log("  Sin setups estructurales validos hoy.")

@@ -33,6 +33,7 @@ except ImportError:
     pass
 
 from src.trading import alpaca_client, risk
+from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 from src.trading.strategy_technical import (
     evaluar_entradas_tech,
     evaluar_cierres_tech,
@@ -255,9 +256,42 @@ def cmd_run(dry_run: bool = False):
     posiciones = get_posiciones_tech()
     log(f"  Posiciones abiertas: {len(posiciones)}")
 
+    # ── Earnings exit (prioridad absoluta) ───────────────────
+    log("\n  [EARNINGS EXIT]")
+    tickers_open    = [p["ticker"] for p in posiciones]
+    earnings_closes = tickers_a_cerrar_hoy(tickers_open)
+
+    if not earnings_closes:
+        log("  Sin posiciones con earnings proximos.")
+    else:
+        for ticker, earnings_date in earnings_closes.items():
+            pos = next((p for p in posiciones if p["ticker"] == ticker), None)
+            if not pos:
+                continue
+            try:
+                precio = alpaca_client.get_latest_price(ticker, suffix=SUFFIX)
+            except Exception:
+                precio = float(pos["precio_entrada"])
+            motivo = f"EARNINGS_EXIT_{earnings_date}"
+            log(f"  CERRAR {ticker} @ ${precio:.2f} — {motivo}")
+            if not dry_run:
+                try:
+                    alpaca_client.close_position(ticker, SUFFIX)
+                    resultado = registrar_cierre_tech(pos["id"], precio, motivo)
+                    signo = "+" if resultado["pnl"] >= 0 else ""
+                    log(f"    -> PnL: {signo}${resultado['pnl']:.2f} ({signo}{resultado['pnl_pct']*100:.1f}%)")
+                except Exception as e:
+                    log(f"    ERROR: {e}")
+            else:
+                log("    [DRY RUN] orden no enviada.")
+
+    # Actualizar posiciones post-earnings
+    posiciones = get_posiciones_tech()
+
     # ── Cierres ───────────────────────────────────────────────
     log("\n  [CIERRES]")
     a_cerrar = evaluar_cierres_tech(posiciones)
+    a_cerrar = [c for c in a_cerrar if c["ticker"] not in earnings_closes]
 
     tickers_cerrados_hoy = set()   # excluir de entradas en esta misma corrida
 
@@ -288,9 +322,18 @@ def cmd_run(dry_run: bool = False):
 
     # ── Entradas ──────────────────────────────────────────────
     log("\n  [ENTRADAS]")
+    tickers_cerrados_hoy |= set(earnings_closes.keys())  # incluir earnings en exclusion
     if tickers_cerrados_hoy:
         log(f"  Excluidos (cerrados esta corrida): {', '.join(sorted(tickers_cerrados_hoy))}")
     a_abrir = evaluar_entradas_tech(posiciones, equity, tickers_excluidos=tickers_cerrados_hoy)
+
+    # Bloquear candidatos con earnings proximos
+    tickers_candidatos  = [e["ticker"] for e in a_abrir]
+    bloqueados_earnings = tickers_a_bloquear_entrada(tickers_candidatos)
+    if bloqueados_earnings:
+        for ticker, fecha in bloqueados_earnings.items():
+            log(f"  BLOQUEADO {ticker} — earnings {fecha}")
+    a_abrir = [e for e in a_abrir if e["ticker"] not in bloqueados_earnings]
 
     if not a_abrir:
         log("  Sin senales tecnicas validas hoy.")
