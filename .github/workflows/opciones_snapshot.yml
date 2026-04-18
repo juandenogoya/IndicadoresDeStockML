@@ -2,10 +2,10 @@ name: Opciones Snapshot Diario
 
 on:
   schedule:
-    # L-V a las 21:00 UTC (5:00 PM ET / 6:00 PM Argentina)
+    # L-V a las 22:00 UTC (6:00 PM ET / 7:00 PM Argentina)
     # Corre despues del cierre de NYSE (4:00 PM ET) y del mercado de opciones (4:15 PM ET).
-    # Garantiza que el snapshot refleja el EOD definitivo del dia, no datos intraday.
-    - cron: '0 21 * * 1-5'
+    # 1 hora de margen extra por si en el futuro se extienden horarios de cotizacion.
+    - cron: '0 22 * * 1-5'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:
