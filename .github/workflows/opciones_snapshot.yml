@@ -1,0 +1,33 @@
+name: Opciones Snapshot Diario
+
+on:
+  schedule:
+    # L-V a las 21:00 UTC (5:00 PM ET / 6:00 PM Argentina)
+    # Corre despues del cierre de NYSE (4:00 PM ET) y del mercado de opciones (4:15 PM ET).
+    # Garantiza que el snapshot refleja el EOD definitivo del dia, no datos intraday.
+    - cron: '0 21 * * 1-5'
+  workflow_dispatch:  # Permite ejecucion manual desde GitHub
+
+jobs:
+  opciones:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Snapshot opciones (calls/puts EOD)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python scripts/33_opciones_snapshot.py
