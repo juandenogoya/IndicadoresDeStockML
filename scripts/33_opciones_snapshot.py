@@ -213,6 +213,9 @@ def recolectar_ticker(
         except Exception:
             continue
 
+        # Pausa entre expirations para no saturar la API de Yahoo Finance
+        time.sleep(0.5)
+
         for tipo, df in [("call", chain.calls), ("put", chain.puts)]:
             if df is None or df.empty:
                 continue
