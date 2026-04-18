@@ -3,15 +3,21 @@
 Recolector diario de opciones sobre acciones (yfinance).
 
 Graba un snapshot de la chain de opciones para los 124 tickers activos:
-    - Todos los vencimientos disponibles
+    - Vencimientos dentro de los proximos MAX_DTE dias (default: 90)
     - Strikes con volumen > 0 o open_interest > 0  (sin actividad = ignorados)
     - Calls y puts por separado
+
+Filtro de vencimientos (MAX_DTE):
+    Contratos con vencimiento > 90 dias tienen escasa actividad diaria y son
+    menos relevantes para el analisis de sentimiento de corto/medio plazo.
+    Limitar el horizonte reduce el numero de HTTP calls a yfinance y el
+    volumen de datos almacenados sin perder informacion util.
+    Configurable via .env: OPCIONES_MAX_DTE=90
 
 La fecha del snapshot es HOY; los datos reflejan el mercado del dia anterior
 (mismo principio que precios_diarios y el resto del pipeline).
 
-Precio subyacente y HV_20d se obtienen directamente de precios_diarios,
-sin necesidad de calls adicionales a yfinance.
+Precio subyacente y HV_20d se obtienen directamente de precios_diarios.
 
 Uso:
     python scripts/33_opciones_snapshot.py            # todos los tickers
@@ -42,9 +48,16 @@ except ImportError:
     pass
 
 import yfinance as yf
+import psycopg2.extras
 from sqlalchemy import text
-from src.data.database import get_engine
+from src.data.database import get_engine, get_connection
 from src.utils.config import ALL_TICKERS
+
+# ── Parametros configurables ──────────────────────────────────────────────────
+
+# Solo vencimientos dentro de los proximos N dias calendario.
+# 90 dias captura weeklies + monthlies del trimestre — suficiente para sentimiento.
+MAX_DTE = int(os.getenv("OPCIONES_MAX_DTE", "90"))
 
 
 # ── DDL ──────────────────────────────────────────────────────────────────────
@@ -168,18 +181,27 @@ def recolectar_ticker(
     fecha_snapshot: date,
     precio_subyacente: Optional[float],
     hv_20d: Optional[float],
+    max_dte: int = None,
 ) -> list[dict]:
     """
-    Descarga la chain completa de opciones para un ticker.
-    Retorna lista de dicts listos para insertar.
+    Descarga la chain de opciones para un ticker, limitada a vencimientos
+    dentro de los proximos max_dte dias (default: MAX_DTE del env).
     Solo incluye strikes con volumen > 0 o open_interest > 0.
     """
+    from datetime import timedelta
+    limite_vencimiento = fecha_snapshot + timedelta(days=(max_dte or MAX_DTE))
+
     try:
         yft  = yf.Ticker(ticker)
         exps = yft.options          # tuple de strings "YYYY-MM-DD"
         if not exps:
             return []
     except Exception:
+        return []
+
+    # Filtrar expirations fuera del horizonte — evita HTTP calls innecesarios
+    exps = [e for e in exps if date.fromisoformat(e) <= limite_vencimiento]
+    if not exps:
         return []
 
     filas = []
@@ -224,28 +246,35 @@ def recolectar_ticker(
 # ── Persistencia ──────────────────────────────────────────────────────────────
 
 def persistir_filas(filas: list[dict]) -> int:
-    """Inserta en batch. ON CONFLICT DO NOTHING -> idempotente."""
+    """
+    Inserta todas las filas en una sola query usando execute_values.
+    Dramaticamente mas rapido que executemany sobre conexiones remotas (Railway).
+    ON CONFLICT DO NOTHING -> idempotente.
+    """
     if not filas:
         return 0
 
-    engine = get_engine()
-    sql = text("""
+    SQL = """
         INSERT INTO opciones_snapshot (
             fecha_snapshot, ticker, vencimiento, tipo, strike,
             volumen, open_interest, iv, bid, ask,
             precio_subyacente, hv_20d
-        ) VALUES (
-            :fecha_snapshot, :ticker, :vencimiento, :tipo, :strike,
-            :volumen, :open_interest, :iv, :bid, :ask,
-            :precio_subyacente, :hv_20d
-        )
+        ) VALUES %s
         ON CONFLICT (fecha_snapshot, ticker, vencimiento, tipo, strike)
         DO NOTHING
-    """)
+    """
+    valores = [
+        (
+            f["fecha_snapshot"], f["ticker"],  f["vencimiento"], f["tipo"],  f["strike"],
+            f["volumen"],        f["open_interest"], f["iv"],   f["bid"],    f["ask"],
+            f["precio_subyacente"], f["hv_20d"],
+        )
+        for f in filas
+    ]
 
-    with engine.connect() as conn:
-        conn.execute(sql, filas)
-        conn.commit()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, SQL, valores, page_size=500)
 
     return len(filas)
 
