@@ -9,6 +9,7 @@ es un pre-carga OPCIONAL que mejora la latencia pero no es requerido.
 Pasos:
     PRE. Watchdog: alerta Telegram si precios tienen >3 dias de atraso
     0.   Actualizar precios e indicadores tecnicos (yfinance batch, 124 tickers)
+    0b.  Actualizar futuros de indices (YM=F, ES=F, NQ=F, RTY=F)
     1.   Upsert features_precio_accion y features_market_structure
     2.   Scanner de alertas ML para todos los tickers del universo
     3.   Backtesting PA incremental (cierra/abre posiciones)
@@ -357,6 +358,22 @@ def paso_scanner() -> list:
     return resultados
 
 
+def paso_futuros() -> int:
+    """
+    Paso 0b: Actualiza los ultimos dias de futuros de indices (YM=F, ES=F, NQ=F, RTY=F).
+    Retorna el numero de filas insertadas/actualizadas.
+    No critico: si falla el pipeline continua sin contexto macro.
+    """
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "futuros_indices",
+        pathlib.Path(__file__).parent / "34_futuros_indices.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.cmd_update()
+
+
 def paso_verificacion() -> int:
     """
     Rellena retornos post-facto para alertas pendientes.
@@ -423,7 +440,7 @@ def main():
     errores = []
 
     # ── Paso 0: Actualizar precios e indicadores ───────────────
-    log("\n[0/4] Actualizacion diaria de precios e indicadores...")
+    log("\n[0/5] Actualizacion diaria de precios e indicadores...")
     try:
         stats = paso_actualizar_datos()
         log(f"  Actualizar OK: {stats['ok']} tickers actualizados, "
@@ -431,10 +448,17 @@ def main():
     except Exception:
         msg = traceback.format_exc()
         log(f"  ERROR en actualizacion (no critico, continua):\n{msg[:300]}")
-        # No se agrega a errores criticos — el scanner puede seguir con datos existentes
+
+    # ── Paso 0b: Futuros de indices ────────────────────────────
+    log("\n[0b/5] Futuros de indices (YM=F, ES=F, NQ=F, RTY=F)...")
+    try:
+        paso_futuros()
+    except Exception:
+        msg = traceback.format_exc()
+        log(f"  ERROR en futuros (no critico):\n{msg[:300]}")
 
     # ── Paso 1: Features PA + Market Structure ─────────────────
-    log("\n[1/4] Upsert features_precio_accion y features_market_structure...")
+    log("\n[1/5] Upsert features_precio_accion y features_market_structure...")
     try:
         stats_feat = paso_actualizar_features_db()
         log(f"  Features OK: PA={stats_feat['pa']:,} filas, MS={stats_feat['ms']:,} filas.")
@@ -444,7 +468,7 @@ def main():
         # No critico: el scanner calcula features en memoria de todas formas
 
     # ── Paso 2: Scanner ───────────────────────────────────────
-    log("\n[2/4] Scanner de alertas...")
+    log("\n[2/5] Scanner de alertas...")
     try:
         resultados = paso_scanner()
         n_ok  = sum(1 for r in resultados if not r.get("error"))
@@ -456,7 +480,7 @@ def main():
         errores.append(f"Scanner:\n{msg}")
 
     # ── Paso 3: Backtesting PA ────────────────────────────────
-    log("\n[3/4] Backtesting PA (TRUNCATE + re-run para estado_pa)...")
+    log("\n[3/5] Backtesting PA (TRUNCATE + re-run para estado_pa)...")
     try:
         n_ops = paso_backtesting_pa()
         log(f"  Backtesting PA OK: {n_ops:,} operaciones.")
@@ -466,7 +490,7 @@ def main():
         # No critico: estado_pa quedara con datos del dia anterior
 
     # ── Paso 4: Verificacion post-facto ───────────────────────
-    log("\n[4/4] Verificacion post-facto...")
+    log("\n[4/5] Verificacion post-facto...")
     try:
         n = paso_verificacion()
         log(f"  Verificacion OK: {n} alertas actualizadas.")
