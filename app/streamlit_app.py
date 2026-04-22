@@ -1326,7 +1326,12 @@ with tab5:
 
 with tab6:
     try:
-        from app.opciones_tab import render_opciones_tab
-    except ImportError:
-        from opciones_tab import render_opciones_tab
-    render_opciones_tab(query)
+        try:
+            from app.opciones_tab import render_opciones_tab
+        except ImportError:
+            from opciones_tab import render_opciones_tab
+        render_opciones_tab(query)
+    except Exception as _e:
+        import traceback as _tb
+        st.error(f"Error cargando tab Opciones: {_e}")
+        st.code(_tb.format_exc())
