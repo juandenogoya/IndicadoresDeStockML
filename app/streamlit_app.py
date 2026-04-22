@@ -1300,12 +1300,13 @@ try:
 except Exception:
     pass
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Dashboard",
     "➕ Agregar Ticker",
     "📋 Historial",
     "📈 Analisis Tecnico",
     "🕯️ Velas",
+    "🎯 Opciones",
 ])
 
 with tab1:
@@ -1322,3 +1323,10 @@ with tab4:
 
 with tab5:
     tab_velas()
+
+with tab6:
+    try:
+        from app.opciones_tab import render_opciones_tab
+    except ImportError:
+        from opciones_tab import render_opciones_tab
+    render_opciones_tab(query)
