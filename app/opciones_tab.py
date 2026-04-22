@@ -335,9 +335,9 @@ def _build_grid(df_snap, atm_pct, fecha):
             continue
         mon     = _moneyness(float(row["strike"]), float(row["precio_subyacente"]),
                              tipo, atm_pct)
-        vol     = int(row["volumen"] or 0)
-        oi      = int(row["open_interest"] or 0)
-        iv_raw  = float(row["iv"]) if row["iv"] is not None else None
+        vol     = int(row["volumen"]) if pd.notna(row["volumen"]) else 0
+        oi      = int(row["open_interest"]) if pd.notna(row["open_interest"]) else 0
+        iv_raw  = float(row["iv"]) if pd.notna(row["iv"]) else None
         iv      = iv_raw if (iv_raw is not None and IV_MIN <= iv_raw <= IV_MAX) else None
 
         c = grid[tipo][bucket][mon]
@@ -570,12 +570,13 @@ def _render_drill(df_snap, tipo, dte_max, top_n, atm_pct, fecha):
         axis=1,
     )
     df_t["iv_filt"] = df_t["iv"].apply(
-        lambda x: float(x) if (x is not None and IV_MIN <= float(x) <= IV_MAX) else None
+        lambda x: float(x) if (pd.notna(x) and IV_MIN <= float(x) <= IV_MAX) else None
     )
     df_t["prima"] = ((df_t["bid"].fillna(0) + df_t["ask"].fillna(0)) / 2)
     df_t["voi"]   = df_t.apply(
-        lambda r: round(r["volumen"] / r["open_interest"], 2)
-        if (r["open_interest"] and r["open_interest"] > 0) else None,
+        lambda r: round(float(r["volumen"]) / float(r["open_interest"]), 2)
+        if (pd.notna(r["open_interest"]) and r["open_interest"] > 0
+            and pd.notna(r["volumen"])) else None,
         axis=1,
     )
     df_t["dist_pct"] = ((df_t["strike"] - df_t["precio_subyacente"]) / df_t["precio_subyacente"] * 100).round(1)
@@ -610,8 +611,8 @@ def _render_drill(df_snap, tipo, dte_max, top_n, atm_pct, fecha):
                 "Dist%":   f"{r['dist_pct']:+.1f}%",
                 "Prima":   f"${r['prima']:.2f}",
                 "IV":      iv_str,
-                "Vol":     int(r["volumen"]),
-                "OI":      int(r["open_interest"]),
+                "Vol":     int(r["volumen"]) if pd.notna(r["volumen"]) else 0,
+                "OI":      int(r["open_interest"]) if pd.notna(r["open_interest"]) else 0,
                 "IV/HV":   ivhv,
                 "V/OI":    voi_str,
                 "_sep_label": f"{venc}  DTE={dte_v}  Vol={vol_v:,}  OI={oi_v:,}",
