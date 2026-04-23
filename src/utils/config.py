@@ -62,29 +62,59 @@ BT_EXTRA_TICKERS = [
     "NVDA", "AAPL", "GOOG", "MSFT", "AMZN", "META", "TSM", "AVGO",
     "ASML", "MU", "AMD", "INTC", "IBM", "QCOM", "CRM", "DELL", "MSI",
     "SNOW", "ACN", "AI", "GLOB", "ERIC",
+    # Technology (expansion TV 2026-04-21)
+    "ORCL", "CSCO", "TXN", "KLAC", "ARM", "ADBE", "CRWD", "NOW", "FTNT",
+    "ON", "SHOP", "PLTR", "ZM", "RBLX", "PATH", "FISV",
     # Automotive / EV
     "TSLA", "HMC", "XPEV", "NIO", "NIU",
+    # Automotive / EV (expansion TV 2026-04-21)
+    "RIVN",
     # Healthcare
     "LLY", "JNJ", "UNH", "PFE", "MRNA", "GSK", "CVS",
+    # Healthcare (expansion TV 2026-04-21)
+    "MRK", "ABBV", "ABT", "AMGN", "TMO", "TEVA",
     # Energy
     "XOM", "CVX", "BP", "SHEL", "TTE", "OXY", "HAL", "FSLR", "VIST",
+    # Energy (expansion TV 2026-04-21)
+    "COP", "EOG", "VLO", "BKR", "VST", "PSX",
     # Financials (additional)
     "V", "MA", "C", "AIG", "PYPL", "UPST",
+    # Financials (expansion TV 2026-04-21)
+    "SCHW", "CB", "BLK", "SPGI", "PGR", "MCO", "EFX", "LNC",
     # Consumer Discretionary (additional)
     "MCD", "NKE", "MELI", "ABNB", "EBAY", "ETSY", "TRIP", "SNAP",
     "LYFT", "UBER", "NFLX", "DIS", "AAP",
+    # Consumer Discretionary (expansion TV 2026-04-21)
+    "MAR", "HLT", "RACE", "CAR", "LEVI", "HOG", "PINS", "TWLO", "ASAN",
+    "WBD", "MBLY",
     # Consumer Staples (additional)
     "UL", "HSY",
+    # Consumer Staples (expansion TV 2026-04-21)
+    "MDLZ", "BG", "BUD",
     # Industrials
     "CAT", "RTX", "HON", "LMT", "DE", "UPS", "MMM", "BA", "RKLB",
+    # Industrials (expansion TV 2026-04-21)
+    "ETN", "UNP", "CSX", "CARR", "GD", "AVAV", "JOBY", "KTOS",
     # Materials / Mining
     "NEM", "PAAS", "CDE", "HL", "HMY", "AU", "MP", "LAC", "B",
+    # Materials / Mining (expansion TV 2026-04-21)
+    "FCX", "AA", "MOS", "SCCO", "SQM", "RIO",
     # Real Estate
     "PLD",
+    # Real Estate (expansion TV 2026-04-21)
+    "EQIX", "AMT",
     # Airlines
     "DAL", "UAL", "AAL",
     # Telecom (additional)
     "T", "VOD",
+    # Telecom (expansion TV 2026-04-21)
+    "TMUS",
+    # Healthcare services / Insurance (expansion TV 2026-04-21)
+    "MCK",
+    # Technology ADRs (expansion TV 2026-04-21)
+    "SAP", "NVO", "AZN", "LITE",
+    # Energy ADRs (expansion TV 2026-04-21)
+    "AMX", "E",
     # Brazil
     "PBR", "ITUB", "VALE", "NU", "BBD", "BSBR", "XP", "STNE", "PAGS", "SID",
     # China / Southeast Asia

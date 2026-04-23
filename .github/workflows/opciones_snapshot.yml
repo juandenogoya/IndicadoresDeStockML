@@ -2,10 +2,12 @@ name: Opciones Snapshot Diario
 
 on:
   schedule:
-    # L-V a las 22:00 UTC (6:00 PM ET / 7:00 PM Argentina)
-    # Corre despues del cierre de NYSE (4:00 PM ET) y del mercado de opciones (4:15 PM ET).
-    # 1 hora de margen extra por si en el futuro se extienden horarios de cotizacion.
-    - cron: '0 22 * * 1-5'
+    # Ma-Sa a la 01:00 UTC (10:00 PM ET / 11:00 PM Argentina)
+    # Captura el cierre del dia anterior (L-V).
+    # Corre 5 horas despues del cierre de opciones (4:15 PM ET = 20:15 UTC),
+    # asegurando que yfinance haya publicado los datos de fin de dia.
+    # El script recibe --fecha ayer para etiquetar correctamente el trading day.
+    - cron: '0 1 * * 2-6'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:
@@ -30,4 +32,4 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PYTHONPATH: ${{ github.workspace }}
-        run: python scripts/33_opciones_snapshot.py
+        run: python scripts/33_opciones_snapshot.py --fecha $(date -d 'yesterday' +%Y-%m-%d)

@@ -2,28 +2,32 @@
 33_opciones_snapshot.py
 Recolector diario de opciones sobre acciones (yfinance).
 
-Graba un snapshot de la chain de opciones para los 124 tickers activos:
-    - Vencimientos dentro de los proximos MAX_DTE dias (default: 90)
-    - Strikes con volumen > 0 o open_interest > 0  (sin actividad = ignorados)
-    - Calls y puts por separado
+Graba dos tablas por cada ejecucion:
+    1. opciones_snapshot   — nivel contrato (~52k filas/dia)
+       Vencimientos <= MAX_DTE dias, vol > 0 o OI >= MIN_OI.
+       Uso: ML training, analisis de strikes, concentracion de OI.
+       Retencion: 2 anos (contratos vencidos = labeled training data).
 
-Filtro de vencimientos (MAX_DTE):
-    Contratos con vencimiento > 90 dias tienen escasa actividad diaria y son
-    menos relevantes para el analisis de sentimiento de corto/medio plazo.
-    Limitar el horizonte reduce el numero de HTTP calls a yfinance y el
-    volumen de datos almacenados sin perder informacion util.
-    Configurable via .env: OPCIONES_MAX_DTE=90
+    2. opciones_resumen_diario — nivel ticker (124 filas/dia)
+       Agregados: PCR_vol, PCR_oi, IV promedio ponderado por OI,
+       strike con max OI combinado, n contratos activos.
+       Uso: dashboards, queries PCR rapidas, series de tiempo de sentimiento.
+       Retencion: indefinida (datos ya comprimidos, tamano trivial).
 
-La fecha del snapshot es HOY; los datos reflejan el mercado del dia anterior
-(mismo principio que precios_diarios y el resto del pipeline).
+Ambas tablas se construyen de los mismos datos descargados de yfinance;
+opciones_resumen_diario no genera ninguna llamada HTTP adicional.
 
-Precio subyacente y HV_20d se obtienen directamente de precios_diarios.
+Parametros configurables via .env:
+    OPCIONES_MAX_DTE=90    vencimientos <= N dias desde hoy
+    OPCIONES_MIN_OI=5      OI minimo para incluir contrato sin volumen del dia
 
 Uso:
     python scripts/33_opciones_snapshot.py            # todos los tickers
-    python scripts/33_opciones_snapshot.py --init     # crea la tabla en DB
+    python scripts/33_opciones_snapshot.py --init     # crea las 2 tablas en DB
     python scripts/33_opciones_snapshot.py --ticker AAPL MSFT
-    python scripts/33_opciones_snapshot.py --dry-run  # muestra sin guardar
+    python scripts/33_opciones_snapshot.py --dry-run           # muestra sin guardar
+    python scripts/33_opciones_snapshot.py --status            # muestra resumen de DB
+    python scripts/33_opciones_snapshot.py --backfill-resumen  # recalcula resumen de fechas ya en snapshot
 """
 
 import sys
@@ -53,16 +57,23 @@ from sqlalchemy import text
 from src.data.database import get_engine, get_connection
 from src.utils.config import ALL_TICKERS
 
+
 # ── Parametros configurables ──────────────────────────────────────────────────
 
-# Solo vencimientos dentro de los proximos N dias calendario.
-# 90 dias captura weeklies + monthlies del trimestre — suficiente para sentimiento.
+# Vencimientos dentro de los proximos N dias calendario.
+# 90 dias captura weeklies + monthlies del trimestre.
 MAX_DTE = int(os.getenv("OPCIONES_MAX_DTE", "90"))
 
+# OI minimo para incluir un contrato que NO opero hoy (vol=0).
+# Contratos con OI=1..4 son posiciones abandonadas / noise: no aportan
+# informacion de sentimiento y saturan la tabla.
+# vol > 0  siempre se incluye (se opero hoy, independiente del OI).
+MIN_OI = int(os.getenv("OPCIONES_MIN_OI", "5"))
 
-# ── DDL ──────────────────────────────────────────────────────────────────────
 
-DDL = """
+# ── DDL ───────────────────────────────────────────────────────────────────────
+
+DDL_SNAPSHOT = """
 CREATE TABLE IF NOT EXISTS opciones_snapshot (
     id                SERIAL        PRIMARY KEY,
     fecha_snapshot    DATE          NOT NULL,
@@ -75,8 +86,8 @@ CREATE TABLE IF NOT EXISTS opciones_snapshot (
     iv                NUMERIC(10,6),              -- volatilidad implicita (decimal: 0.25 = 25%)
     bid               NUMERIC(12,4),
     ask               NUMERIC(12,4),
-    precio_subyacente NUMERIC(12,4),              -- ultimo close en precios_diarios
-    hv_20d            NUMERIC(10,6),              -- volatilidad historica 20d anualizada (decimal)
+    precio_subyacente NUMERIC(12,4),
+    hv_20d            NUMERIC(10,6),
     created_at        TIMESTAMP     DEFAULT NOW(),
     UNIQUE (fecha_snapshot, ticker, vencimiento, tipo, strike)
 );
@@ -85,6 +96,42 @@ CREATE INDEX IF NOT EXISTS idx_opciones_fecha       ON opciones_snapshot (fecha_
 CREATE INDEX IF NOT EXISTS idx_opciones_ticker      ON opciones_snapshot (ticker);
 CREATE INDEX IF NOT EXISTS idx_opciones_vencimiento ON opciones_snapshot (vencimiento);
 CREATE INDEX IF NOT EXISTS idx_opciones_tipo        ON opciones_snapshot (tipo);
+"""
+
+DDL_RESUMEN = """
+CREATE TABLE IF NOT EXISTS opciones_resumen_diario (
+    id            SERIAL        PRIMARY KEY,
+    fecha         DATE          NOT NULL,
+    ticker        VARCHAR(20)   NOT NULL,
+
+    -- Volumen del dia (resets diario)
+    call_vol      BIGINT,
+    put_vol       BIGINT,
+    pcr_vol       NUMERIC(8,4),   -- put_vol / call_vol  (NULL si call_vol = 0)
+
+    -- Open Interest acumulado
+    call_oi       BIGINT,
+    put_oi        BIGINT,
+    pcr_oi        NUMERIC(8,4),   -- put_oi / call_oi   (NULL si call_oi = 0)
+
+    -- IV promedio ponderado por OI
+    iv_call_avg   NUMERIC(8,6),
+    iv_put_avg    NUMERIC(8,6),
+
+    -- Concentracion
+    n_contratos   INTEGER,        -- total contratos activos en el snapshot
+    max_oi_strike NUMERIC(12,4),  -- strike con mayor OI combinado call+put
+    max_oi_venc   DATE,           -- vencimiento del strike con mayor OI
+
+    -- Contexto
+    precio_sub    NUMERIC(12,4),  -- ultimo close en precios_diarios
+
+    created_at    TIMESTAMP     DEFAULT NOW(),
+    UNIQUE (fecha, ticker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resumen_fecha  ON opciones_resumen_diario (fecha);
+CREATE INDEX IF NOT EXISTS idx_resumen_ticker ON opciones_resumen_diario (ticker);
 """
 
 
@@ -98,11 +145,13 @@ def log(msg: str):
 # ── Init ──────────────────────────────────────────────────────────────────────
 
 def init_tabla():
+    """Crea opciones_snapshot y opciones_resumen_diario si no existen."""
     engine = get_engine()
     with engine.connect() as conn:
-        conn.execute(text(DDL))
+        conn.execute(text(DDL_SNAPSHOT))
+        conn.execute(text(DDL_RESUMEN))
         conn.commit()
-    log("Tabla opciones_snapshot lista.")
+    log("Tablas opciones_snapshot y opciones_resumen_diario listas.")
 
 
 # ── Precios y HV desde DB ─────────────────────────────────────────────────────
@@ -147,7 +196,7 @@ def _get_hv_20d(tickers: list[str]) -> dict[str, float]:
     for ticker, closes in closes_by_ticker.items():
         if len(closes) < 5:
             continue
-        c = closes[-21:]                       # hasta 20 retornos
+        c = closes[-21:]
         log_ret = [math.log(c[i] / c[i - 1]) for i in range(1, len(c))]
         n    = len(log_ret)
         mean = sum(log_ret) / n
@@ -157,10 +206,9 @@ def _get_hv_20d(tickers: list[str]) -> dict[str, float]:
     return hv_map
 
 
-# ── Colector por ticker ───────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _safe_float(val) -> Optional[float]:
-    """Convierte un valor pandas a float o None (maneja NaN / None)."""
     if val is None:
         return None
     try:
@@ -171,10 +219,11 @@ def _safe_float(val) -> Optional[float]:
 
 
 def _safe_int(val) -> Optional[int]:
-    """Convierte un valor pandas a int o None."""
     f = _safe_float(val)
     return None if f is None else int(f)
 
+
+# ── Colector por ticker ───────────────────────────────────────────────────────
 
 def recolectar_ticker(
     ticker: str,
@@ -182,24 +231,30 @@ def recolectar_ticker(
     precio_subyacente: Optional[float],
     hv_20d: Optional[float],
     max_dte: int = None,
+    min_oi: int = None,
 ) -> list[dict]:
     """
-    Descarga la chain de opciones para un ticker, limitada a vencimientos
-    dentro de los proximos max_dte dias (default: MAX_DTE del env).
-    Solo incluye strikes con volumen > 0 o open_interest > 0.
+    Descarga la chain de opciones para un ticker.
+
+    Filtros aplicados:
+        - Vencimientos <= max_dte dias desde fecha_snapshot (default MAX_DTE)
+        - Se incluye el contrato si:  vol > 0   (se opero hoy)
+                                  OR  OI >= min_oi  (posicion relevante abierta)
+          Contratos con vol=0 y OI < MIN_OI son noise (posiciones fantasma).
     """
     from datetime import timedelta
-    limite_vencimiento = fecha_snapshot + timedelta(days=(max_dte or MAX_DTE))
+    _max_dte = max_dte or MAX_DTE
+    _min_oi  = min_oi  if min_oi is not None else MIN_OI
+    limite_vencimiento = fecha_snapshot + timedelta(days=_max_dte)
 
     try:
         yft  = yf.Ticker(ticker)
-        exps = yft.options          # tuple de strings "YYYY-MM-DD"
+        exps = yft.options
         if not exps:
             return []
     except Exception:
         return []
 
-    # Filtrar expirations fuera del horizonte — evita HTTP calls innecesarios
     exps = [e for e in exps if date.fromisoformat(e) <= limite_vencimiento]
     if not exps:
         return []
@@ -213,7 +268,6 @@ def recolectar_ticker(
         except Exception:
             continue
 
-        # Pausa entre expirations para no saturar la API de Yahoo Finance
         time.sleep(0.5)
 
         for tipo, df in [("call", chain.calls), ("put", chain.puts)]:
@@ -224,8 +278,10 @@ def recolectar_ticker(
                 vol = _safe_int(opt.get("volume"))
                 oi  = _safe_int(opt.get("openInterest"))
 
-                # Sin actividad -> ignorar
-                if not vol and not oi:
+                # Incluir si: opero hoy  O  posicion >= MIN_OI
+                active_today   = vol is not None and vol > 0
+                relevant_oi    = oi  is not None and oi  >= _min_oi
+                if not active_today and not relevant_oi:
                     continue
 
                 filas.append({
@@ -246,13 +302,80 @@ def recolectar_ticker(
     return filas
 
 
+# ── Resumen diario (agrega en memoria, sin calls adicionales) ─────────────────
+
+def _computar_resumen(
+    ticker: str,
+    fecha: date,
+    filas: list[dict],
+    precio_subyacente: Optional[float],
+) -> dict:
+    """
+    Agrega las filas de un ticker en un unico registro de resumen.
+    Se llama con los datos ya descargados — cero llamadas HTTP extra.
+    """
+    calls = [f for f in filas if f["tipo"] == "call"]
+    puts  = [f for f in filas if f["tipo"] == "put"]
+
+    call_vol = sum(f["volumen"]        or 0 for f in calls)
+    put_vol  = sum(f["volumen"]        or 0 for f in puts)
+    call_oi  = sum(f["open_interest"]  or 0 for f in calls)
+    put_oi   = sum(f["open_interest"]  or 0 for f in puts)
+
+    pcr_vol = round(put_vol / call_vol, 4) if call_vol > 0 else None
+    pcr_oi  = round(put_oi  / call_oi,  4) if call_oi  > 0 else None
+
+    def _iv_avg(subset: list[dict]) -> Optional[float]:
+        """IV promedio ponderado por OI."""
+        total_oi = sum(
+            (f["open_interest"] or 0)
+            for f in subset if f["iv"] is not None
+        )
+        if total_oi == 0:
+            return None
+        weighted = sum(
+            (f["iv"] or 0.0) * (f["open_interest"] or 0)
+            for f in subset if f["iv"] is not None
+        )
+        return round(weighted / total_oi, 6)
+
+    # Strike con mayor OI combinado (call + put) por (strike, vencimiento)
+    oi_by_key: dict[tuple, int] = defaultdict(int)
+    for f in filas:
+        oi_by_key[(f["strike"], f["vencimiento"])] += (f["open_interest"] or 0)
+
+    if oi_by_key:
+        top_key = max(oi_by_key, key=lambda k: oi_by_key[k])
+        max_oi_strike = top_key[0]
+        max_oi_venc   = top_key[1]
+    else:
+        max_oi_strike = None
+        max_oi_venc   = None
+
+    return {
+        "fecha":        fecha,
+        "ticker":       ticker,
+        "call_vol":     call_vol,
+        "put_vol":      put_vol,
+        "pcr_vol":      pcr_vol,
+        "call_oi":      call_oi,
+        "put_oi":       put_oi,
+        "pcr_oi":       pcr_oi,
+        "iv_call_avg":  _iv_avg(calls),
+        "iv_put_avg":   _iv_avg(puts),
+        "n_contratos":  len(filas),
+        "max_oi_strike": max_oi_strike,
+        "max_oi_venc":  max_oi_venc,
+        "precio_sub":   precio_subyacente,
+    }
+
+
 # ── Persistencia ──────────────────────────────────────────────────────────────
 
 def persistir_filas(filas: list[dict]) -> int:
     """
-    Inserta todas las filas en una sola query usando execute_values.
-    Dramaticamente mas rapido que executemany sobre conexiones remotas (Railway).
-    ON CONFLICT DO NOTHING -> idempotente.
+    Upsert bulk de opciones_snapshot.
+    ON CONFLICT DO NOTHING -> idempotente (rerun seguro).
     """
     if not filas:
         return 0
@@ -282,14 +405,69 @@ def persistir_filas(filas: list[dict]) -> int:
     return len(filas)
 
 
+def persistir_resumenes(resumenes: list[dict]) -> int:
+    """
+    Upsert bulk de opciones_resumen_diario.
+    ON CONFLICT actualiza todos los campos (los agregados pueden variar en rerun
+    si el ticker se proceso parcialmente en una corrida anterior).
+    """
+    if not resumenes:
+        return 0
+
+    SQL = """
+        INSERT INTO opciones_resumen_diario (
+            fecha, ticker,
+            call_vol, put_vol, pcr_vol,
+            call_oi,  put_oi,  pcr_oi,
+            iv_call_avg, iv_put_avg,
+            n_contratos, max_oi_strike, max_oi_venc,
+            precio_sub
+        ) VALUES %s
+        ON CONFLICT (fecha, ticker) DO UPDATE SET
+            call_vol      = EXCLUDED.call_vol,
+            put_vol       = EXCLUDED.put_vol,
+            pcr_vol       = EXCLUDED.pcr_vol,
+            call_oi       = EXCLUDED.call_oi,
+            put_oi        = EXCLUDED.put_oi,
+            pcr_oi        = EXCLUDED.pcr_oi,
+            iv_call_avg   = EXCLUDED.iv_call_avg,
+            iv_put_avg    = EXCLUDED.iv_put_avg,
+            n_contratos   = EXCLUDED.n_contratos,
+            max_oi_strike = EXCLUDED.max_oi_strike,
+            max_oi_venc   = EXCLUDED.max_oi_venc,
+            precio_sub    = EXCLUDED.precio_sub
+    """
+    valores = [
+        (
+            r["fecha"],      r["ticker"],
+            r["call_vol"],   r["put_vol"],  r["pcr_vol"],
+            r["call_oi"],    r["put_oi"],   r["pcr_oi"],
+            r["iv_call_avg"], r["iv_put_avg"],
+            r["n_contratos"], r["max_oi_strike"], r["max_oi_venc"],
+            r["precio_sub"],
+        )
+        for r in resumenes
+    ]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, SQL, valores, page_size=200)
+
+    return len(resumenes)
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
-def cmd_run(tickers: list[str], dry_run: bool = False):
-    fecha_hoy = date.today()
+def cmd_run(tickers: list[str], dry_run: bool = False, fecha_override: Optional[date] = None):
+    fecha_hoy = fecha_override or date.today()
 
     log("=" * 60)
     log(f"  OPCIONES SNAPSHOT  |  {fecha_hoy}")
+    if fecha_override:
+        log(f"  FECHA OVERRIDE    : {fecha_override} (backfill manual)")
     log(f"  Tickers   : {len(tickers)}")
+    log(f"  MAX_DTE   : {MAX_DTE} dias")
+    log(f"  MIN_OI    : {MIN_OI} (umbral sin volumen)")
     log(f"  Modo      : {'DRY RUN' if dry_run else 'REAL'}")
     log("=" * 60)
 
@@ -299,9 +477,10 @@ def cmd_run(tickers: list[str], dry_run: bool = False):
     log(f"  Precios  : {len(precios)} tickers")
     log(f"  HV_20d   : {len(hvs)} tickers")
 
-    total_filas = 0
+    total_filas  = 0
     sin_opciones = 0
     errores      = 0
+    resumenes    = []
 
     for i, ticker in enumerate(tickers, 1):
         precio = precios.get(ticker)
@@ -316,25 +495,222 @@ def cmd_run(tickers: list[str], dry_run: bool = False):
                 time.sleep(0.2)
                 continue
 
+            # Agregar resumen en memoria (sin calls adicionales)
+            resumen = _computar_resumen(ticker, fecha_hoy, filas, precio)
+            resumenes.append(resumen)
+
             if dry_run:
-                log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  {len(filas):5d} filas  [DRY RUN]")
+                pcr_v = f"{resumen['pcr_vol']:.2f}" if resumen["pcr_vol"] else "N/A"
+                log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  "
+                    f"{len(filas):5d} filas  PCR_vol={pcr_v}  [DRY RUN]")
             else:
                 n = persistir_filas(filas)
-                log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  {n:5d} filas insertadas")
+                pcr_v = f"{resumen['pcr_vol']:.2f}" if resumen["pcr_vol"] else "N/A"
+                log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  "
+                    f"{n:5d} filas  PCR_vol={pcr_v}")
                 total_filas += n
 
-            # Pausa para no saturar la API de yfinance
             time.sleep(0.3)
 
         except Exception as e:
             log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  ERROR: {e}")
             errores += 1
 
+    # Persistir resumenes de todos los tickers en un solo bulk
+    if not dry_run and resumenes:
+        n_res = persistir_resumenes(resumenes)
+        log(f"")
+        log(f"  Resumenes diarios: {n_res} tickers -> opciones_resumen_diario")
+
     log("")
-    log(f"  Filas insertadas : {total_filas:,}")
+    log(f"  Filas snapshot   : {total_filas:,}")
     log(f"  Sin opciones     : {sin_opciones}")
     log(f"  Errores          : {errores}")
     log("  Completado.")
+
+
+def cmd_backfill_resumen():
+    """
+    Recalcula opciones_resumen_diario para todas las fechas presentes en
+    opciones_snapshot que aun no tienen entrada en resumen.
+    Util para: (1) primera vez despues de --init, (2) recuperar dias que
+    fallaron, (3) repoblar tras cambio de logica de calculo.
+
+    No hace llamadas a yfinance: lee exclusivamente desde opciones_snapshot.
+    """
+    engine = get_engine()
+
+    # Fechas en snapshot que no tienen resumen todavia
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT DISTINCT fecha_snapshot
+            FROM   opciones_snapshot
+            WHERE  fecha_snapshot NOT IN (
+                SELECT DISTINCT fecha FROM opciones_resumen_diario
+            )
+            ORDER  BY fecha_snapshot
+        """)).fetchall()
+
+    fechas_pendientes = [r[0] for r in rows]
+
+    if not fechas_pendientes:
+        log("  opciones_resumen_diario ya esta al dia. Sin fechas pendientes.")
+        return
+
+    log(f"  Fechas pendientes: {[str(f) for f in fechas_pendientes]}")
+
+    # Para cada fecha pendiente calculamos el resumen via SQL agregado
+    # (evita traer 52k filas a Python — todo en la DB)
+    SQL_BACKFILL = """
+        WITH oi_per_key AS (
+            SELECT fecha_snapshot, ticker, strike, vencimiento,
+                   SUM(COALESCE(open_interest, 0)) AS total_oi
+            FROM   opciones_snapshot
+            WHERE  fecha_snapshot = :fecha
+            GROUP  BY fecha_snapshot, ticker, strike, vencimiento
+        ),
+        top_strike AS (
+            SELECT DISTINCT ON (ticker)
+                   ticker,
+                   strike      AS max_oi_strike,
+                   vencimiento AS max_oi_venc
+            FROM   oi_per_key
+            ORDER  BY ticker, total_oi DESC
+        ),
+        agg AS (
+            SELECT
+                fecha_snapshot AS fecha,
+                ticker,
+                SUM(CASE WHEN tipo='call' THEN COALESCE(volumen,0) ELSE 0 END)        AS call_vol,
+                SUM(CASE WHEN tipo='put'  THEN COALESCE(volumen,0) ELSE 0 END)        AS put_vol,
+                SUM(CASE WHEN tipo='call' THEN COALESCE(open_interest,0) ELSE 0 END)  AS call_oi,
+                SUM(CASE WHEN tipo='put'  THEN COALESCE(open_interest,0) ELSE 0 END)  AS put_oi,
+                -- IV call ponderada por OI
+                CASE
+                    WHEN SUM(CASE WHEN tipo='call' AND iv IS NOT NULL
+                             THEN COALESCE(open_interest,0) ELSE 0 END) > 0
+                    THEN ROUND(
+                        SUM(CASE WHEN tipo='call' AND iv IS NOT NULL
+                            THEN iv * COALESCE(open_interest,0) ELSE 0 END)
+                        / SUM(CASE WHEN tipo='call' AND iv IS NOT NULL
+                              THEN COALESCE(open_interest,0) ELSE 0 END)::NUMERIC, 6)
+                    ELSE NULL
+                END AS iv_call_avg,
+                -- IV put ponderada por OI
+                CASE
+                    WHEN SUM(CASE WHEN tipo='put' AND iv IS NOT NULL
+                             THEN COALESCE(open_interest,0) ELSE 0 END) > 0
+                    THEN ROUND(
+                        SUM(CASE WHEN tipo='put' AND iv IS NOT NULL
+                            THEN iv * COALESCE(open_interest,0) ELSE 0 END)
+                        / SUM(CASE WHEN tipo='put' AND iv IS NOT NULL
+                              THEN COALESCE(open_interest,0) ELSE 0 END)::NUMERIC, 6)
+                    ELSE NULL
+                END AS iv_put_avg,
+                COUNT(*)                                                               AS n_contratos,
+                MAX(precio_subyacente)                                                 AS precio_sub
+            FROM opciones_snapshot
+            WHERE fecha_snapshot = :fecha
+            GROUP BY fecha_snapshot, ticker
+        )
+        INSERT INTO opciones_resumen_diario (
+            fecha, ticker,
+            call_vol, put_vol, pcr_vol,
+            call_oi,  put_oi,  pcr_oi,
+            iv_call_avg, iv_put_avg,
+            n_contratos, max_oi_strike, max_oi_venc,
+            precio_sub
+        )
+        SELECT
+            a.fecha,
+            a.ticker,
+            a.call_vol,
+            a.put_vol,
+            CASE WHEN a.call_vol > 0
+                 THEN ROUND(a.put_vol::NUMERIC / a.call_vol, 4) ELSE NULL END,
+            a.call_oi,
+            a.put_oi,
+            CASE WHEN a.call_oi > 0
+                 THEN ROUND(a.put_oi::NUMERIC / a.call_oi, 4) ELSE NULL END,
+            a.iv_call_avg,
+            a.iv_put_avg,
+            a.n_contratos,
+            t.max_oi_strike,
+            t.max_oi_venc,
+            a.precio_sub
+        FROM       agg     a
+        LEFT JOIN  top_strike t USING (ticker)
+        ON CONFLICT (fecha, ticker) DO UPDATE SET
+            call_vol      = EXCLUDED.call_vol,
+            put_vol       = EXCLUDED.put_vol,
+            pcr_vol       = EXCLUDED.pcr_vol,
+            call_oi       = EXCLUDED.call_oi,
+            put_oi        = EXCLUDED.put_oi,
+            pcr_oi        = EXCLUDED.pcr_oi,
+            iv_call_avg   = EXCLUDED.iv_call_avg,
+            iv_put_avg    = EXCLUDED.iv_put_avg,
+            n_contratos   = EXCLUDED.n_contratos,
+            max_oi_strike = EXCLUDED.max_oi_strike,
+            max_oi_venc   = EXCLUDED.max_oi_venc,
+            precio_sub    = EXCLUDED.precio_sub
+    """
+
+    total = 0
+    for fecha in fechas_pendientes:
+        with engine.connect() as conn:
+            result = conn.execute(text(SQL_BACKFILL), {"fecha": fecha})
+            conn.commit()
+            n = result.rowcount
+        log(f"  {fecha}  ->  {n} tickers insertados")
+        total += n
+
+    log(f"  Backfill completado: {total} filas en opciones_resumen_diario")
+
+
+def cmd_status():
+    """Muestra metricas rapidas de ambas tablas."""
+    engine = get_engine()
+
+    with engine.connect() as conn:
+        # opciones_snapshot
+        snap = conn.execute(text("""
+            SELECT MIN(fecha_snapshot) AS desde,
+                   MAX(fecha_snapshot) AS hasta,
+                   COUNT(*)            AS total_filas,
+                   COUNT(DISTINCT fecha_snapshot) AS dias
+            FROM opciones_snapshot
+        """)).fetchone()
+
+        # opciones_resumen_diario — ultimos 5 dias, top PCR_oi
+        resumen_rows = conn.execute(text("""
+            SELECT fecha, ticker, pcr_vol, pcr_oi, call_oi, put_oi, n_contratos
+            FROM   opciones_resumen_diario
+            WHERE  fecha = (SELECT MAX(fecha) FROM opciones_resumen_diario)
+            ORDER  BY pcr_oi DESC NULLS LAST
+            LIMIT  10
+        """)).fetchall()
+
+    if snap and snap[2]:
+        print()
+        print(f"  opciones_snapshot:")
+        print(f"    Rango   : {snap[0]} -> {snap[1]}")
+        print(f"    Dias    : {snap[3]}")
+        print(f"    Total   : {snap[2]:,} filas")
+        print()
+
+    if resumen_rows:
+        fecha_res = resumen_rows[0][0]
+        print(f"  opciones_resumen_diario | {fecha_res}  (top 10 por PCR_oi):")
+        print(f"  {'TICKER':<8s}  {'PCR_vol':>7s}  {'PCR_oi':>7s}  "
+              f"{'CALL_OI':>10s}  {'PUT_OI':>10s}  {'N':>6s}")
+        print("  " + "-" * 58)
+        for r in resumen_rows:
+            pcr_v = f"{float(r[2]):.2f}" if r[2] else " N/A "
+            pcr_o = f"{float(r[3]):.2f}" if r[3] else " N/A "
+            print(f"  {r[1]:<8s}  {pcr_v:>7s}  {pcr_o:>7s}  "
+                  f"{(r[4] or 0):>10,d}  {(r[5] or 0):>10,d}  {(r[6] or 0):>6d}")
+    else:
+        print("  Sin datos en opciones_resumen_diario.")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -342,19 +718,36 @@ def cmd_run(tickers: list[str], dry_run: bool = False):
 def main():
     parser = argparse.ArgumentParser(description="Snapshot diario de opciones (yfinance)")
     parser.add_argument("--init",    action="store_true",
-                        help="Crea la tabla opciones_snapshot en DB")
+                        help="Crea las tablas opciones_snapshot y opciones_resumen_diario")
     parser.add_argument("--dry-run", action="store_true",
                         help="Descarga datos pero no escribe en DB")
     parser.add_argument("--ticker",  nargs="+",
                         help="Tickers especificos (default: los 124 del pipeline)")
+    parser.add_argument("--status",           action="store_true",
+                        help="Muestra estadisticas de ambas tablas")
+    parser.add_argument("--backfill-resumen", action="store_true",
+                        help="Recalcula resumen para fechas en snapshot sin resumen aun")
+    parser.add_argument("--fecha",
+                        help="Fecha del snapshot YYYY-MM-DD (default: hoy). "
+                             "Usar para backfill de dias perdidos.",
+                        default=None)
     args = parser.parse_args()
 
     if args.init:
         init_tabla()
         return
 
+    if args.status:
+        cmd_status()
+        return
+
+    if args.backfill_resumen:
+        cmd_backfill_resumen()
+        return
+
+    fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
     tickers = args.ticker if args.ticker else list(ALL_TICKERS)
-    cmd_run(tickers, dry_run=args.dry_run)
+    cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override)
 
 
 if __name__ == "__main__":
