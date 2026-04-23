@@ -529,6 +529,95 @@ def cmd_run(tickers: list[str], dry_run: bool = False, fecha_override: Optional[
     log(f"  Errores          : {errores}")
     log("  Completado.")
 
+    if not dry_run:
+        _post_run_check(fecha_hoy, total_filas, len(tickers), errores, sin_opciones)
+
+
+# ── Chequeo post-escritura EOD ────────────────────────────────────────────────
+
+# Umbrales
+_MIN_FILAS       = 10_000   # con 199 tickers esperamos ~85k; < 10k es critico
+_MAX_ERRORES     = 30       # > 30 tickers con error = problema sistemico (~15%)
+_MAX_SIN_OPC     = 60       # > 60 tickers sin contratos = sospechoso (~30%)
+
+
+def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
+    """
+    Verifica la calidad del snapshot recien escrito en DB.
+    - Envia Telegram siempre (OK o ISSUES).
+    - Si hay issues criticos: exit(1) -> GH Actions marca FAILED -> email automatico.
+    """
+    import sys as _sys
+
+    issues    = []   # criticos  -> exit(1) + Telegram rojo
+    warnings  = []   # menores   -> solo Telegram amarillo
+
+    # ── Checks ───────────────────────────────────────────────────────────────
+    if total_filas == 0:
+        issues.append("0 filas escritas en opciones_snapshot (posible fallo yfinance o DB)")
+    elif total_filas < _MIN_FILAS:
+        issues.append(
+            f"Solo {total_filas:,} filas insertadas "
+            f"(minimo esperado {_MIN_FILAS:,} con {n_tickers} tickers)"
+        )
+
+    if errores > _MAX_ERRORES:
+        issues.append(
+            f"{errores}/{n_tickers} tickers con error al recolectar "
+            f"({errores/n_tickers*100:.0f}%)"
+        )
+    elif errores > 10:
+        warnings.append(f"{errores}/{n_tickers} tickers con error")
+
+    if sin_opciones > _MAX_SIN_OPC:
+        warnings.append(
+            f"{sin_opciones}/{n_tickers} tickers sin contratos activos "
+            f"({sin_opciones/n_tickers*100:.0f}%)"
+        )
+
+    # ── Telegram ─────────────────────────────────────────────────────────────
+    try:
+        from src.pipeline.telegram_notifier import _send as _tg_send
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+
+        if issues:
+            iss_str  = "\n".join(f"  - {x}" for x in issues)
+            warn_str = ("\n<b>Advertencias:</b>\n" + "\n".join(f"  - {x}" for x in warnings)) if warnings else ""
+            tg_text  = (
+                "\U0001f6a8 <b>Snapshot EOD FALLIDO</b>\n"
+                f"<i>{fecha} | {ts}</i>\n\n"
+                f"<b>Issues criticos:</b>\n{iss_str}"
+                f"{warn_str}\n\n"
+                "Revisar GH Actions y yfinance."
+            )
+        elif warnings:
+            warn_str = "\n".join(f"  - {x}" for x in warnings)
+            tg_text  = (
+                "\u26a0\ufe0f <b>Snapshot EOD con advertencias</b>\n"
+                f"<i>{fecha} | {ts}</i>\n\n"
+                f"{total_filas:,} filas | {n_tickers} tickers\n\n"
+                f"<b>Advertencias:</b>\n{warn_str}"
+            )
+        else:
+            tg_text  = (
+                "\u2705 <b>Snapshot EOD OK</b>\n"
+                f"<i>{fecha} | {ts}</i>\n"
+                f"{total_filas:,} filas | {n_tickers} tickers | {errores} errores"
+            )
+
+        _tg_send(tg_text)
+    except Exception as tg_err:
+        log(f"  [WARN] Telegram no disponible: {tg_err}")
+
+    # ── Exit ─────────────────────────────────────────────────────────────────
+    if issues:
+        log("")
+        log("  [POST-CHECK] ISSUES CRITICOS:")
+        for x in issues:
+            log(f"    - {x}")
+        import sys as _sys2
+        _sys2.exit(1)
+
 
 def cmd_backfill_resumen():
     """
