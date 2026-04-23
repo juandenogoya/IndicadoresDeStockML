@@ -1,0 +1,33 @@
+name: Opciones Validacion Intraday
+
+on:
+  schedule:
+    # L-V a las 17:00 UTC (1 PM ET / mitad de jornada)
+    # Verifica calidad de datos yfinance antes del cierre de mercado.
+    # Si detecta problemas criticos, el job falla y GH envia notificacion.
+    - cron: '0 17 * * 1-5'
+  workflow_dispatch:  # Permite ejecucion manual desde GitHub
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Validacion intraday opciones
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python scripts/33_opciones_snapshot.py --validate

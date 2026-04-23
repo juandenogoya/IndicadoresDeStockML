@@ -713,6 +713,117 @@ def cmd_status():
         print("  Sin datos en opciones_resumen_diario.")
 
 
+# ── Validacion intraday ──────────────────────────────────────────────────────
+
+# Tickers representativos para validacion: mega cap + diversidad sectorial
+VALIDATE_TICKERS = ["NVDA", "AAPL", "TSLA", "MSFT", "SPY", "BAC", "XOM", "TSM"]
+
+def cmd_validate():
+    """
+    Valida calidad de datos de yfinance a mitad de jornada.
+
+    Checks:
+      1. Precio actual yfinance vs ultimo close en DB (detecta precios stale)
+      2. Contratos activos por ticker (detecta si yfinance no devuelve datos)
+      3. Cobertura IV (% contratos con IV plausible 5%-200%)
+      4. PCR vol en rango razonable
+
+    Exit code 0: todos los checks OK o solo warnings
+    Exit code 1: uno o mas checks CRITICOS fallaron  -> GH Actions marca FAILED
+    """
+    import sys as _sys
+
+    fecha_hoy = date.today()
+    ts = datetime.now().strftime("%H:%M UTC")
+    tickers = VALIDATE_TICKERS
+
+    log("=" * 60)
+    log(f"  VALIDACION INTRADAY  |  {fecha_hoy}  |  {ts}")
+    log(f"  Tickers: {', '.join(tickers)}")
+    log("=" * 60)
+
+    precios_db = _get_precios_subyacentes(tickers)
+    hvs        = _get_hv_20d(tickers)
+
+    # ── Check 1: precio yfinance vs DB ────────────────────────────────────────
+    log("\n  [CHECK 1] Precio actual yfinance vs ultimo close en DB")
+    precio_errors = []
+    for ticker in tickers:
+        try:
+            fi = yf.Ticker(ticker).fast_info
+            precio_yf = getattr(fi, "last_price", None) or getattr(fi, "lastPrice", None)
+            precio_db = precios_db.get(ticker)
+            if precio_yf and precio_db and precio_db > 0:
+                diff = abs(float(precio_yf) - precio_db) / precio_db * 100
+                if diff > 15:
+                    estado = "ERROR (posible stale)"
+                    precio_errors.append(ticker)
+                elif diff > 5:
+                    estado = "WARN"
+                else:
+                    estado = "OK"
+                log(f"    {ticker:<6s}  yf=${float(precio_yf):8.2f}  "
+                    f"db=${precio_db:8.2f}  diff={diff:5.1f}%  [{estado}]")
+            else:
+                log(f"    {ticker:<6s}  sin precio disponible [SKIP]")
+        except Exception as e:
+            log(f"    {ticker:<6s}  ERROR: {e}")
+
+    # ── Check 2+3+4: opciones dry-run ────────────────────────────────────────
+    log("\n  [CHECK 2-4] Contratos / IV coverage / PCR  (DRY RUN)")
+    option_errors = []
+
+    for ticker in tickers:
+        precio = precios_db.get(ticker)
+        hv     = hvs.get(ticker)
+        try:
+            filas = recolectar_ticker(ticker, fecha_hoy, precio, hv)
+        except Exception as e:
+            log(f"    {ticker:<6s}  ERROR recolectando: {e}")
+            option_errors.append(f"{ticker}:error")
+            continue
+
+        if not filas:
+            log(f"    {ticker:<6s}  0 contratos  [ERROR]")
+            option_errors.append(f"{ticker}:0contratos")
+            continue
+
+        n = len(filas)
+        iv_ok  = sum(1 for f in filas
+                     if f.get("iv") and 0.05 <= f["iv"] <= 2.0)
+        iv_cov = iv_ok / n * 100
+
+        cvol = sum((f.get("volumen") or 0) for f in filas if f["tipo"] == "call")
+        pvol = sum((f.get("volumen") or 0) for f in filas if f["tipo"] == "put")
+        pcr  = pvol / cvol if cvol > 0 else None
+
+        n_tag   = "OK"   if n >= 100   else ("WARN" if n >= 20   else "ERROR")
+        iv_tag  = "OK"   if iv_cov >= 70 else ("WARN" if iv_cov >= 30 else "ERROR")
+        pcr_tag = "OK"   if pcr and 0.1 <= pcr <= 5.0 else "WARN"
+        pcr_str = f"{pcr:.2f}" if pcr else "N/A"
+
+        if n_tag == "ERROR":
+            option_errors.append(f"{ticker}:n={n}")
+        if iv_tag == "ERROR":
+            option_errors.append(f"{ticker}:iv_cov={iv_cov:.0f}%")
+
+        log(f"    {ticker:<6s}  n={n:5d}[{n_tag}]  "
+            f"IV_cov={iv_cov:4.0f}%[{iv_tag}]  PCR={pcr_str}[{pcr_tag}]")
+
+    # ── Resumen ───────────────────────────────────────────────────────────────
+    log("\n" + "=" * 60)
+    critical = precio_errors + option_errors
+    if not critical:
+        log("  RESULTADO: OK — datos intraday validos para EOD snapshot")
+        _sys.exit(0)
+    else:
+        log("  RESULTADO: ISSUES CRITICOS DETECTADOS:")
+        for iss in critical:
+            log(f"    - {iss}")
+        log("  Verificar yfinance y DB antes del cierre de mercado.")
+        _sys.exit(1)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -722,11 +833,13 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Descarga datos pero no escribe en DB")
     parser.add_argument("--ticker",  nargs="+",
-                        help="Tickers especificos (default: los 124 del pipeline)")
+                        help="Tickers especificos (default: todos del pipeline)")
     parser.add_argument("--status",           action="store_true",
                         help="Muestra estadisticas de ambas tablas")
     parser.add_argument("--backfill-resumen", action="store_true",
                         help="Recalcula resumen para fechas en snapshot sin resumen aun")
+    parser.add_argument("--validate", action="store_true",
+                        help="Validacion intraday: check calidad datos yfinance (exit 1 si hay errores)")
     parser.add_argument("--fecha",
                         help="Fecha del snapshot YYYY-MM-DD (default: hoy). "
                              "Usar para backfill de dias perdidos.",
@@ -743,6 +856,10 @@ def main():
 
     if args.backfill_resumen:
         cmd_backfill_resumen()
+        return
+
+    if args.validate:
+        cmd_validate()
         return
 
     fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
