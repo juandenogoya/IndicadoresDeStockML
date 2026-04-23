@@ -8,13 +8,17 @@ es un pre-carga OPCIONAL que mejora la latencia pero no es requerido.
 
 Pasos:
     PRE. Watchdog: alerta Telegram si precios tienen >3 dias de atraso
-    0.   Actualizar precios e indicadores tecnicos (yfinance batch, 124 tickers)
+    0.   Actualizar precios e indicadores tecnicos (yfinance batch, todos los tickers activos)
     0b.  Actualizar futuros de indices (YM=F, ES=F, NQ=F, RTY=F)
     1.   Upsert features_precio_accion y features_market_structure
     2.   Scanner de alertas ML para todos los tickers del universo
-    3.   Backtesting PA incremental (cierra/abre posiciones)
-    4.   Verificacion post-facto de alertas pendientes (retorno_1d/5d/20d_real)
-    5.   Notificacion Telegram con resumen + errores criticos
+    3.   Verificacion post-facto de alertas pendientes (retorno_1d/5d/20d_real)
+    4.   Notificacion Telegram con resumen + errores criticos
+
+Nota: Backtesting PA removido del cron diario (23/4/2026).
+    Se ejecuta manualmente con: python scripts/34_bt_pa_manual.py
+    Motivo: costo alto (incremental sobre historial completo), no es requerido
+    por bots ni scanner, y estaba causando timeout en GH Actions (90 min).
 
 Nota de disponibilidad GitHub Actions: para que el cron scheduled siga activo,
 el repo necesita al menos un push a main cada 60 dias. Sin actividad,
@@ -229,8 +233,11 @@ def paso_actualizar_features_db() -> dict:
     return {"pa": len(df_pa), "ms": len(df_ms)}
 
 
-def paso_backtesting_pa() -> int:
+def _paso_backtesting_pa_REMOVIDO() -> int:
     """
+    REMOVIDO DEL CRON DIARIO el 23/4/2026.
+    Ejecutar manualmente con: python scripts/34_bt_pa_manual.py
+
     Paso 3: Actualiza el backtesting PA de forma incremental (solo el dia actual).
 
     Procesa la ultima barra disponible para cada ticker:
@@ -429,7 +436,7 @@ def watchdog_datos():
 
 def main():
     log("=" * 55)
-    log("  CRON DIARIO  |  Actualizar + Scanner + BT-PA + Verificacion")
+    log("  CRON DIARIO  |  Actualizar + Scanner + Verificacion")
     log(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC")
     log("=" * 55)
 
@@ -440,7 +447,7 @@ def main():
     errores = []
 
     # ── Paso 0: Actualizar precios e indicadores ───────────────
-    log("\n[0/5] Actualizacion diaria de precios e indicadores...")
+    log("\n[0/4] Actualizacion diaria de precios e indicadores...")
     try:
         stats = paso_actualizar_datos()
         log(f"  Actualizar OK: {stats['ok']} tickers actualizados, "
@@ -450,7 +457,7 @@ def main():
         log(f"  ERROR en actualizacion (no critico, continua):\n{msg[:300]}")
 
     # ── Paso 0b: Futuros de indices ────────────────────────────
-    log("\n[0b/5] Futuros de indices (YM=F, ES=F, NQ=F, RTY=F)...")
+    log("\n[0b/4] Futuros de indices (YM=F, ES=F, NQ=F, RTY=F)...")
     try:
         paso_futuros()
     except Exception:
@@ -458,7 +465,7 @@ def main():
         log(f"  ERROR en futuros (no critico):\n{msg[:300]}")
 
     # ── Paso 1: Features PA + Market Structure ─────────────────
-    log("\n[1/5] Upsert features_precio_accion y features_market_structure...")
+    log("\n[1/4] Upsert features_precio_accion y features_market_structure...")
     try:
         stats_feat = paso_actualizar_features_db()
         log(f"  Features OK: PA={stats_feat['pa']:,} filas, MS={stats_feat['ms']:,} filas.")
@@ -468,7 +475,7 @@ def main():
         # No critico: el scanner calcula features en memoria de todas formas
 
     # ── Paso 2: Scanner ───────────────────────────────────────
-    log("\n[2/5] Scanner de alertas...")
+    log("\n[2/4] Scanner de alertas...")
     try:
         resultados = paso_scanner()
         n_ok  = sum(1 for r in resultados if not r.get("error"))
@@ -479,18 +486,8 @@ def main():
         log(f"  ERROR CRITICO en scanner:\n{msg}")
         errores.append(f"Scanner:\n{msg}")
 
-    # ── Paso 3: Backtesting PA ────────────────────────────────
-    log("\n[3/5] Backtesting PA (TRUNCATE + re-run para estado_pa)...")
-    try:
-        n_ops = paso_backtesting_pa()
-        log(f"  Backtesting PA OK: {n_ops:,} operaciones.")
-    except Exception:
-        msg = traceback.format_exc()
-        log(f"  ERROR en backtesting PA (no critico):\n{msg[:300]}")
-        # No critico: estado_pa quedara con datos del dia anterior
-
-    # ── Paso 4: Verificacion post-facto ───────────────────────
-    log("\n[4/5] Verificacion post-facto...")
+    # ── Paso 3: Verificacion post-facto ───────────────────────
+    log("\n[3/4] Verificacion post-facto...")
     try:
         n = paso_verificacion()
         log(f"  Verificacion OK: {n} alertas actualizadas.")

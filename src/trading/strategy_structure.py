@@ -212,52 +212,6 @@ def obtener_estructura_tickers(tickers: list[str]) -> dict[str, dict]:
     return {r.ticker: dict(r._mapping) for r in rows}
 
 
-# ── Trailing SL ─────────────────────────────────────────────
-
-def calcular_actualizaciones_sl(posiciones: list[dict]) -> list[dict]:
-    """
-    Recalcula el SL estructural para posiciones abiertas.
-    Retorna SOLO las posiciones donde el nuevo SL es mas alto (trail up).
-    Nunca baja el SL.
-
-    Retorna lista de dicts: {id, ticker, nuevo_sl, sl_anterior, delta_pct}
-    """
-    if not posiciones:
-        return []
-
-    tickers   = [p["ticker"] for p in posiciones]
-    datos_map = obtener_estructura_tickers(tickers)
-    updates   = []
-
-    for pos in posiciones:
-        ticker    = pos["ticker"]
-        datos_hoy = datos_map.get(ticker)
-        if not datos_hoy:
-            continue
-
-        close_hoy   = float(datos_hoy.get("close", 0) or 0)
-        dist_sl_hoy = float(datos_hoy.get("dist_sl_10_pct", 0) or 0)
-        sl_actual   = float(pos.get("stop_loss", 0) or 0)
-
-        if not close_hoy or dist_sl_hoy <= 0:
-            continue
-
-        nuevo_sl = _swing_low_precio(close_hoy, dist_sl_hoy)
-
-        # Solo actualizar si el SL sube (trailing up, nunca down)
-        if nuevo_sl > sl_actual:
-            delta_pct = round((nuevo_sl - sl_actual) / sl_actual * 100, 2) if sl_actual > 0 else 0
-            updates.append({
-                "id":          pos["id"],
-                "ticker":      ticker,
-                "nuevo_sl":    nuevo_sl,
-                "sl_anterior": sl_actual,
-                "delta_pct":   delta_pct,
-            })
-
-    return updates
-
-
 # ── Entradas ─────────────────────────────────────────────────
 
 def evaluar_entradas_estructura(
@@ -356,18 +310,15 @@ def evaluar_entradas_estructura(
 
 def evaluar_cierres_estructura(posiciones: list[dict]) -> list[dict]:
     """
-    Evalua posiciones abiertas y detecta condiciones de salida.
+    Evalua posiciones abiertas y detecta condiciones de salida estructurales.
 
-    Flujo esperado del runner:
-        1. Actualizar trailing SL (calcular_actualizaciones_sl + DB update)
-        2. Llamar esta funcion con posiciones ya actualizadas en memoria
-        3. Cerrar las posiciones retornadas
+    Filosofia: entradas y salidas se rigen exclusivamente por estructura de mercado.
+    No se usa SL price-based — la estructura misma define cuando la tesis es invalida.
 
     Prioridades de salida:
-        1. SL trailing roto  : precio_actual <= stop_loss
-        2. CHoCH bajista hoy : choch_bear_10 = 1
-        3. Estructura rota   : estructura_10 = -1
-        4. Time stop         : >= DIAS_MAX_POS dias calendario
+        1. CHoCH bajista hoy : choch_bear_10 = 1  (cambio de caracter — señal mas fuerte)
+        2. Estructura rota   : estructura_10 = -1  (patron LH/LL confirmado)
+        3. Time stop         : >= DIAS_MAX_POS dias calendario
     """
     if not posiciones:
         return []
@@ -389,7 +340,6 @@ def evaluar_cierres_estructura(posiciones: list[dict]) -> list[dict]:
             if not precio_actual:
                 continue
 
-        stop_loss     = float(pos.get("stop_loss", 0) or 0)
         fecha_entrada = pos["fecha_entrada"]
         dias_abierta  = (date.today() - fecha_entrada).days if fecha_entrada else 0
 
@@ -398,19 +348,15 @@ def evaluar_cierres_estructura(posiciones: list[dict]) -> list[dict]:
 
         motivo = None
 
-        # ── P1: SL trailing roto ─────────────────────────────
-        if stop_loss and precio_actual <= stop_loss:
-            motivo = "TRAILING_SL"
-
-        # ── P2: CHoCH bajista (cambio de caracter negativo) ───
-        elif choch_bear_10 == 1:
+        # ── P1: CHoCH bajista (cambio de caracter negativo) ───
+        if choch_bear_10 == 1:
             motivo = "CHOCH_BEAR"
 
-        # ── P3: Estructura rota (LH/LL confirmados) ───────────
+        # ── P2: Estructura rota (LH/LL confirmados) ───────────
         elif estructura_10 == -1:
             motivo = "ESTRUCTURA_ROTA"
 
-        # ── P4: Time stop ─────────────────────────────────────
+        # ── P3: Time stop ─────────────────────────────────────
         elif dias_abierta >= DIAS_MAX_POS:
             motivo = f"TIME_STOP_{dias_abierta}D"
 

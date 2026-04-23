@@ -863,42 +863,69 @@ def cmd_validate():
     log("\n  [CHECK 2-4] Contratos / IV coverage / PCR  (DRY RUN)")
     option_errors = []
 
-    for ticker in tickers:
-        precio = precios_db.get(ticker)
-        hv     = hvs.get(ticker)
-        try:
-            filas = recolectar_ticker(ticker, fecha_hoy, precio, hv)
-        except Exception as e:
-            log(f"    {ticker:<6s}  ERROR recolectando: {e}")
-            option_errors.append(f"{ticker}:error")
-            continue
+    # Pre-check: verificar que yfinance sea accesible antes de iterar.
+    # Rate limiting de GH Actions IPs es transitorio y no indica problema
+    # de calidad de datos — el snapshot EOD corre a 01:00 UTC con mucho
+    # menos trafico. Si hay rate-limit aqui, saltamos Check 2-4 con WARN.
+    # Nota: yfinance puede retornar [] sin lanzar excepcion ante rate-limit;
+    # por eso tambien verificamos que el ticker de referencia (NVDA) tenga
+    # al menos un vencimiento disponible — si no, es señal de bloqueo.
+    _yf_accessible = True
+    _yf_error_msg  = ""
+    try:
+        _test_exps = yf.Ticker(tickers[0]).options
+        if not _test_exps:
+            _yf_accessible = False
+            _yf_error_msg  = f"{tickers[0]} sin vencimientos (posible rate limit)"
+    except Exception as _conn_err:
+        _yf_accessible = False
+        _yf_error_msg  = str(_conn_err)
 
-        if not filas:
-            log(f"    {ticker:<6s}  0 contratos  [ERROR]")
-            option_errors.append(f"{ticker}:0contratos")
-            continue
+    if not _yf_accessible:
+        log(f"  yfinance no accesible: {_yf_error_msg}")
+        log("  Check 2-4 omitido [WARN] — conectividad transitoria, no es problema de datos")
 
-        n = len(filas)
-        iv_ok  = sum(1 for f in filas
-                     if f.get("iv") and 0.05 <= f["iv"] <= 2.0)
-        iv_cov = iv_ok / n * 100
+    if _yf_accessible:
+        for ticker in tickers:
+            precio = precios_db.get(ticker)
+            hv     = hvs.get(ticker)
+            try:
+                filas = recolectar_ticker(ticker, fecha_hoy, precio, hv)
+            except Exception as e:
+                log(f"    {ticker:<6s}  ERROR recolectando: {e}")
+                option_errors.append(f"{ticker}:error")
+                time.sleep(3)
+                continue
 
-        cvol = sum((f.get("volumen") or 0) for f in filas if f["tipo"] == "call")
-        pvol = sum((f.get("volumen") or 0) for f in filas if f["tipo"] == "put")
-        pcr  = pvol / cvol if cvol > 0 else None
+            if not filas:
+                log(f"    {ticker:<6s}  0 contratos  [ERROR]")
+                option_errors.append(f"{ticker}:0contratos")
+                time.sleep(3)
+                continue
 
-        n_tag   = "OK"   if n >= 100   else ("WARN" if n >= 20   else "ERROR")
-        iv_tag  = "OK"   if iv_cov >= 70 else ("WARN" if iv_cov >= 30 else "ERROR")
-        pcr_tag = "OK"   if pcr and 0.1 <= pcr <= 5.0 else "WARN"
-        pcr_str = f"{pcr:.2f}" if pcr else "N/A"
+            n = len(filas)
+            iv_ok  = sum(1 for f in filas
+                         if f.get("iv") and 0.05 <= f["iv"] <= 2.0)
+            iv_cov = iv_ok / n * 100
 
-        if n_tag == "ERROR":
-            option_errors.append(f"{ticker}:n={n}")
-        if iv_tag == "ERROR":
-            option_errors.append(f"{ticker}:iv_cov={iv_cov:.0f}%")
+            cvol = sum((f.get("volumen") or 0) for f in filas if f["tipo"] == "call")
+            pvol = sum((f.get("volumen") or 0) for f in filas if f["tipo"] == "put")
+            pcr  = pvol / cvol if cvol > 0 else None
 
-        log(f"    {ticker:<6s}  n={n:5d}[{n_tag}]  "
-            f"IV_cov={iv_cov:4.0f}%[{iv_tag}]  PCR={pcr_str}[{pcr_tag}]")
+            n_tag   = "OK"   if n >= 100   else ("WARN" if n >= 20   else "ERROR")
+            iv_tag  = "OK"   if iv_cov >= 70 else ("WARN" if iv_cov >= 30 else "ERROR")
+            pcr_tag = "OK"   if pcr and 0.1 <= pcr <= 5.0 else "WARN"
+            pcr_str = f"{pcr:.2f}" if pcr else "N/A"
+
+            if n_tag == "ERROR":
+                option_errors.append(f"{ticker}:n={n}")
+            if iv_tag == "ERROR":
+                option_errors.append(f"{ticker}:iv_cov={iv_cov:.0f}%")
+
+            log(f"    {ticker:<6s}  n={n:5d}[{n_tag}]  "
+                f"IV_cov={iv_cov:4.0f}%[{iv_tag}]  PCR={pcr_str}[{pcr_tag}]")
+
+            time.sleep(2)  # anti-rate-limit entre tickers
 
     # ── Resumen ───────────────────────────────────────────────────────────────
     log("\n" + "=" * 60)
@@ -908,11 +935,21 @@ def cmd_validate():
     try:
         from src.pipeline.telegram_notifier import _send as _tg_send
         ts_msg = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
-        if not critical:
+        n_tickers = len(tickers)
+        if not _yf_accessible:
+            tg_text = (
+                "\u26a0\ufe0f <b>Opciones Validacion — yfinance no accesible</b>\n"
+                f"<i>{ts_msg}</i>\n\n"
+                f"Motivo: {_yf_error_msg}\n"
+                "Rate limit transitorio en GH Actions (1 PM ET = horario pico).\n"
+                "Check 2-4 omitido. No indica problema de calidad de datos.\n"
+                "El snapshot EOD (01:00 UTC) deberia correr sin inconvenientes."
+            )
+        elif not critical:
             tg_text = (
                 "\u2705 <b>Opciones Validacion OK</b>\n"
                 f"<i>{ts_msg}</i>\n"
-                f"8/8 tickers sin issues criticos. EOD snapshot OK."
+                f"{n_tickers}/{n_tickers} tickers sin issues criticos. EOD snapshot OK."
             )
         else:
             issues_str = "\n".join(f"  - {iss}" for iss in critical)
@@ -928,7 +965,10 @@ def cmd_validate():
         log(f"  [WARN] Telegram no disponible: {tg_err}")
 
     if not critical:
-        log("  RESULTADO: OK — datos intraday validos para EOD snapshot")
+        if not _yf_accessible:
+            log("  RESULTADO: WARN — yfinance rate-limited, Check 2-4 no ejecutado")
+        else:
+            log("  RESULTADO: OK — datos intraday validos para EOD snapshot")
         _sys.exit(0)
     else:
         log("  RESULTADO: ISSUES CRITICOS DETECTADOS:")

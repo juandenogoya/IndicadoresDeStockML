@@ -7,9 +7,8 @@ Estrategia: Smart Money Concepts (CHoCH / BOS)
               + estructura sostenida (estructura_10 >= 0)
               + vela alcista de confirmacion hoy
               + SL estructural <= 8% del precio
-    Salida  : Trailing SL estructural (Filosofia B — sin TP fijo)
-              + invalidacion CHoCH bajista o estructura_10=-1
-              + Time stop 20 dias
+    Salida  : Estructura pura (Filosofia B — sin TP fijo, sin SL price-based)
+              CHoCH bajista | estructura_10=-1 | Time stop 20 dias
 
 Uso:
     python scripts/32_bot_candle.py             # ejecucion real
@@ -39,7 +38,6 @@ from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloqu
 from src.trading.strategy_structure import (
     evaluar_entradas_estructura,
     evaluar_cierres_estructura,
-    calcular_actualizaciones_sl,
     SCORE_ENTRADA,
     SCORE_MAXIMO,
     MAX_SL_DISTANCE_PCT,
@@ -156,23 +154,6 @@ def registrar_entrada(ticker, precio, qty, sl, tp, atr, score, nivel, order_id) 
         return r.scalar()
 
 
-def actualizar_trailing_sl_db(updates: list[dict]):
-    """Sube el stop_loss en DB para posiciones con nuevo SL trailing mayor."""
-    if not updates:
-        return
-    from src.data.database import get_engine
-    from sqlalchemy import text
-    engine = get_engine()
-    with engine.connect() as conn:
-        for u in updates:
-            conn.execute(text(f"""
-                UPDATE {TABLA_POSICIONES}
-                SET stop_loss = :nuevo_sl
-                WHERE id = :id AND estado = 'ABIERTA'
-            """), {"nuevo_sl": u["nuevo_sl"], "id": u["id"]})
-        conn.commit()
-
-
 def registrar_cierre(pos_id, precio_cierre, motivo) -> dict:
     from src.data.database import get_engine
     from sqlalchemy import text
@@ -264,7 +245,7 @@ def cmd_run(dry_run: bool = False):
     log(separador)
     log(f"  BOT SMC ESTRUCTURA — {'DRY RUN' if dry_run else 'EJECUCION REAL'}")
     log(f"  Entrada    : score >= {SCORE_ENTRADA} / {SCORE_MAXIMO}  SL_max={MAX_SL_DISTANCE_PCT}%")
-    log(f"  Salida     : Trailing SL estructural + CHoCH bear / estructura=-1")
+    log(f"  Salida     : Estructura pura — CHoCH bear | estructura=-1 | Time stop")
     log(f"  Time stop  : {DIAS_MAX_POS} dias")
     log(f"  Max posic. : {risk.MAX_POSICIONES}")
     log(f"  Por trade  : {risk.RIESGO_POR_TRADE*100:.0f}% del equity")
@@ -309,27 +290,7 @@ def cmd_run(dry_run: bool = False):
     # Actualizar posiciones post-earnings
     posiciones = get_posiciones_abiertas()
 
-    # ── Paso 1: Actualizar Trailing SL ───────────────────────
-    log("\n  [TRAILING SL]")
-    sl_updates = calcular_actualizaciones_sl(posiciones)
-
-    if not sl_updates:
-        log("  SL sin cambios hoy.")
-    else:
-        for u in sl_updates:
-            log(f"  SL {u['ticker']}:  ${u['sl_anterior']:.2f} -> ${u['nuevo_sl']:.2f} "
-                f"(+{u['delta_pct']:.2f}%)")
-        if not dry_run:
-            actualizar_trailing_sl_db(sl_updates)
-            # Actualizar en memoria para evaluar cierres con SL ya actualizado
-            sl_map = {u["id"]: u["nuevo_sl"] for u in sl_updates}
-            for p in posiciones:
-                if p["id"] in sl_map:
-                    p["stop_loss"] = sl_map[p["id"]]
-        else:
-            log("    [DRY RUN] DB no actualizada.")
-
-    # ── Paso 2: Cierres ───────────────────────────────────────
+    # ── Paso 1: Cierres ───────────────────────────────────────
     log("\n  [CIERRES]")
     a_cerrar = evaluar_cierres_estructura(posiciones)
 
@@ -356,7 +317,7 @@ def cmd_run(dry_run: bool = False):
     # Actualizar posiciones post-cierres
     posiciones = get_posiciones_abiertas()
 
-    # ── Paso 3: Entradas ──────────────────────────────────────
+    # ── Paso 2: Entradas ──────────────────────────────────────
     log("\n  [ENTRADAS]")
     a_abrir = evaluar_entradas_estructura(posiciones, equity)
 
@@ -411,13 +372,13 @@ def cmd_run(dry_run: bool = False):
 
     # ── Telegram ──────────────────────────────────────────────
     if not dry_run:
-        _telegram(sl_updates, a_cerrar, a_abrir, equity)
+        _telegram(a_cerrar, a_abrir, equity)
 
     log("\n  Bot SMC Estructura finalizado.")
     log(separador)
 
 
-def _telegram(sl_updates, cierres, entradas, equity):
+def _telegram(cierres, entradas, equity):
     try:
         import requests
         token   = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -432,7 +393,7 @@ def _telegram(sl_updates, cierres, entradas, equity):
             for e in entradas:
                 lineas.append(
                     f"  BUY {e['ticker']}  x{e['qty']}  ${e['precio']:.2f}"
-                    f"  {e['evento']}  SL=${e['stop_loss']:.2f}(-{e['dist_sl_pct']:.1f}%)"
+                    f"  {e['evento']}  dist_SL={e['dist_sl_pct']:.1f}%"
                     f"  score={e['score']:.1f}/{SCORE_MAXIMO}"
                 )
         else:
@@ -443,13 +404,6 @@ def _telegram(sl_updates, cierres, entradas, equity):
             for c in cierres:
                 lineas.append(
                     f"  SELL {c['ticker']}  {c['motivo']}  @ ${c['precio_cierre']:.2f}"
-                )
-
-        if sl_updates:
-            lineas.append(f"\n<b>TRAILING SL ({len(sl_updates)} actualizados)</b>")
-            for u in sl_updates:
-                lineas.append(
-                    f"  {u['ticker']}  SL: ${u['sl_anterior']:.2f} -> ${u['nuevo_sl']:.2f} (+{u['delta_pct']:.2f}%)"
                 )
 
         requests.post(
