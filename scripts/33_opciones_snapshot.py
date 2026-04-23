@@ -28,6 +28,7 @@ Uso:
     python scripts/33_opciones_snapshot.py --dry-run           # muestra sin guardar
     python scripts/33_opciones_snapshot.py --status            # muestra resumen de DB
     python scripts/33_opciones_snapshot.py --backfill-resumen  # recalcula resumen de fechas ya en snapshot
+    python scripts/33_opciones_snapshot.py --validate          # check intraday calidad + Telegram
 """
 
 import sys
@@ -813,6 +814,30 @@ def cmd_validate():
     # ── Resumen ───────────────────────────────────────────────────────────────
     log("\n" + "=" * 60)
     critical = precio_errors + option_errors
+
+    # ── Telegram ──────────────────────────────────────────────────────────────
+    try:
+        from src.pipeline.telegram_notifier import _send as _tg_send
+        ts_msg = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        if not critical:
+            tg_text = (
+                "\u2705 <b>Opciones Validacion OK</b>\n"
+                f"<i>{ts_msg}</i>\n"
+                f"8/8 tickers sin issues criticos. EOD snapshot OK."
+            )
+        else:
+            issues_str = "\n".join(f"  - {iss}" for iss in critical)
+            tg_text = (
+                "\u26a0\ufe0f <b>Opciones Validacion ISSUES</b>\n"
+                f"<i>{ts_msg}</i>\n\n"
+                f"<b>Issues criticos ({len(critical)}):</b>\n"
+                f"{issues_str}\n\n"
+                "Verificar yfinance antes del snapshot EOD (01:00 UTC)."
+            )
+        _tg_send(tg_text)
+    except Exception as tg_err:
+        log(f"  [WARN] Telegram no disponible: {tg_err}")
+
     if not critical:
         log("  RESULTADO: OK — datos intraday validos para EOD snapshot")
         _sys.exit(0)
