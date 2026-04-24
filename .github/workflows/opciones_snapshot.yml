@@ -2,12 +2,14 @@ name: Opciones Snapshot Diario
 
 on:
   schedule:
-    # Ma-Sa a la 01:00 UTC (10:00 PM ET / 11:00 PM Argentina)
-    # Captura el cierre del dia anterior (L-V).
-    # Corre 5 horas despues del cierre de opciones (4:15 PM ET = 20:15 UTC),
-    # asegurando que yfinance haya publicado los datos de fin de dia.
-    # El script recibe --fecha ayer para etiquetar correctamente el trading day.
-    - cron: '0 1 * * 2-6'
+    # Ma-Sa a las 10:00 UTC (6 AM ET / 7 AM Argentina)
+    # Captura EOD del dia anterior (L-V) en ventana pre-apertura.
+    # yfinance tiene los datos completos del cierre anterior y el mercado
+    # aun no abrio (apertura 13:30 UTC). Con hasta 3h de delay de GH Actions
+    # (caso peor: 13:00 UTC = 9 AM ET), seguimos antes de la apertura.
+    # EVITA la ventana de mantenimiento de Yahoo (00:00-03:00 AM ET = 04-07 UTC)
+    # que devuelve opciones vacias para todos los tickers.
+    - cron: '0 10 * * 2-6'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:
