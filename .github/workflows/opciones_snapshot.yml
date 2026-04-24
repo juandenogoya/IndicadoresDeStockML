@@ -2,14 +2,20 @@ name: Opciones Snapshot Diario
 
 on:
   schedule:
-    # Ma-Sa a las 10:00 UTC (6 AM ET / 7 AM Argentina)
-    # Captura EOD del dia anterior (L-V) en ventana pre-apertura.
-    # yfinance tiene los datos completos del cierre anterior y el mercado
-    # aun no abrio (apertura 13:30 UTC). Con hasta 3h de delay de GH Actions
-    # (caso peor: 13:00 UTC = 9 AM ET), seguimos antes de la apertura.
-    # EVITA la ventana de mantenimiento de Yahoo (00:00-03:00 AM ET = 04-07 UTC)
-    # que devuelve opciones vacias para todos los tickers.
+    # Dos intentos en ventana pre-apertura (mercado NY abre 13:30 UTC).
+    # Ambos corren con --fecha yesterday capturando EOD del dia anterior.
+    # Si el primero escribe datos, el segundo detecta "ya completo" y termina OK.
+    # Si el primero falla o GH lo demora mucho, el segundo actua como respaldo.
+    #
+    # Intento 1 — 10:00 UTC (6 AM ET / 7 AM Argentina)
+    #   Con delay maximo observado de 3h18m -> corre a las 13:18 UTC -> pre-apertura OK
+    # Intento 2 — 11:00 UTC (8 AM Argentina / 7 AM ET)
+    #   Respaldo: si intento 1 fallo o datos incompletos -> reintenta
+    #   Con delay 2h -> 13:00 UTC -> aun pre-apertura OK
+    #
+    # EVITA ventana mantenimiento Yahoo (00:00-03:00 AM ET = 04:00-07:00 UTC)
     - cron: '0 10 * * 2-6'
+    - cron: '0 11 * * 2-6'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:

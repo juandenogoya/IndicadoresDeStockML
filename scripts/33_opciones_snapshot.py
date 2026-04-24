@@ -544,10 +544,40 @@ _MAX_SIN_OPC     = 60       # > 60 tickers sin contratos = sospechoso (~30%)
 def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
     """
     Verifica la calidad del snapshot recien escrito en DB.
-    - Envia Telegram siempre (OK o ISSUES).
+    - Envia Telegram siempre (OK, redundante o ISSUES).
     - Si hay issues criticos: exit(1) -> GH Actions marca FAILED -> email automatico.
+    - Si total_filas == 0 pero la fecha ya tiene datos completos en DB
+      (run redundante / segundo intento): reporta OK y termina sin alarma.
     """
     import sys as _sys
+
+    # ── Deteccion de run redundante ───────────────────────────────────────────
+    # Ocurre cuando el cron de respaldo (2do intento) corre despues de que
+    # el 1er intento ya escribio todos los datos. UNIQUE constraint -> 0 rows nuevas.
+    if total_filas == 0 and errores == 0:
+        try:
+            engine = _get_engine()
+            with engine.connect() as conn:
+                filas_db = conn.execute(
+                    text("SELECT COUNT(*) FROM opciones_snapshot WHERE fecha_snapshot = :f"),
+                    {"f": fecha}
+                ).scalar() or 0
+        except Exception:
+            filas_db = 0
+
+        if filas_db >= _MIN_FILAS:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+            log(f"  [POST-CHECK] Run redundante: fecha {fecha} ya tiene {filas_db:,} filas en DB.")
+            try:
+                from src.pipeline.telegram_notifier import _send as _tg_send
+                _tg_send(
+                    "\u2139\ufe0f <b>Snapshot EOD — run redundante OK</b>\n"
+                    f"<i>{fecha} | {ts}</i>\n"
+                    f"Datos ya existian: {filas_db:,} filas. 2do intento innecesario."
+                )
+            except Exception as tg_err:
+                log(f"  [WARN] Telegram no disponible: {tg_err}")
+            return   # sin exit(1), todo bien
 
     issues    = []   # criticos  -> exit(1) + Telegram rojo
     warnings  = []   # menores   -> solo Telegram amarillo
