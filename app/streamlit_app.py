@@ -1300,13 +1300,14 @@ try:
 except Exception:
     pass
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Dashboard",
     "➕ Agregar Ticker",
     "📋 Historial",
     "📈 Analisis Tecnico",
     "🕯️ Velas",
     "🎯 Opciones",
+    "🧪 Forward Testing",
 ])
 
 with tab1:
@@ -1334,4 +1335,16 @@ with tab6:
     except Exception as _e:
         import traceback as _tb
         st.error(f"Error cargando tab Opciones: {_e}")
+        st.code(_tb.format_exc())
+
+with tab7:
+    try:
+        try:
+            from app.forward_testing_tab import render_forward_testing_tab
+        except ImportError:
+            from forward_testing_tab import render_forward_testing_tab
+        render_forward_testing_tab(query)
+    except Exception as _e:
+        import traceback as _tb
+        st.error(f"Error cargando tab Forward Testing: {_e}")
         st.code(_tb.format_exc())
