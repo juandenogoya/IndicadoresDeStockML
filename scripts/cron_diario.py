@@ -213,6 +213,12 @@ def paso_actualizar_datos() -> dict:
                            if c in df_t.columns]
             df_t = df_t[cols_needed].dropna(subset=["close"])
             df_t = df_t[df_t["close"] > 0]
+
+            # Excluir datos del dia actual: el mercado puede no haber cerrado aun.
+            # Solo se almacenan cierres confirmados (dias anteriores a hoy).
+            from datetime import date as _date
+            df_t = df_t[df_t["fecha"].dt.date < _date.today()]
+
             df_t["ticker"] = ticker
             df_t["adj_close"] = df_t["close"]
             df_t = df_t.sort_values("fecha").reset_index(drop=True)
