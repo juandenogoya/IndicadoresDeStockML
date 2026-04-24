@@ -125,48 +125,81 @@ def paso_actualizar_datos() -> dict:
         log("  [WARN] Lista de tickers vacia, saltando actualizacion.")
         return {"ok": 0, "error": 0}
 
-    log(f"  {len(tickers_db)} tickers — descarga batch (1 sola llamada yfinance)...")
+    # Descarga en lotes para evitar YFRateLimitError con 200 tickers en una sola llamada.
+    # 50 tickers/lote, 8s entre lotes, reintento de 90s si hay rate limit.
+    import time
 
-    # 1. Descarga batch: UNA sola llamada para todos los tickers
-    try:
-        raw_all = yf.download(
-            tickers=tickers_db,
-            period="1mo",
-            auto_adjust=True,
-            progress=False,
-            group_by="ticker",
-            threads=False,
-        )
-    except Exception as e:
-        log(f"  [ERROR] Descarga batch yfinance fallo: {e}. Saltando actualizacion.")
-        return {"ok": 0, "error": len(tickers_db)}
+    BATCH_SIZE   = 50
+    BATCH_DELAY  = 8    # segundos entre lotes (evita rate limit proactivo)
+    RETRY_DELAY  = 90   # segundos de espera si el lote falla con rate limit
 
-    if raw_all is None or raw_all.empty:
-        log("  [WARN] yfinance batch no retorno datos. Saltando actualizacion.")
-        return {"ok": 0, "error": len(tickers_db)}
+    batches = [tickers_db[i:i + BATCH_SIZE]
+               for i in range(0, len(tickers_db), BATCH_SIZE)]
+    log(f"  {len(tickers_db)} tickers | {len(batches)} lotes de hasta {BATCH_SIZE}...")
 
-    log(f"  Batch descargado: {raw_all.shape[0]} filas x {raw_all.shape[1]} columnas.")
+    # ticker -> DataFrame raw (sin procesar) del lote
+    ticker_raw = {}
 
+    for b_idx, batch in enumerate(batches, 1):
+        log(f"  Lote {b_idx}/{len(batches)} ({len(batch)} tickers)...")
+        raw = None
+
+        for attempt in (1, 2):
+            try:
+                raw = yf.download(
+                    tickers=batch,
+                    period="1mo",
+                    auto_adjust=True,
+                    progress=False,
+                    group_by="ticker",
+                    threads=False,
+                )
+                break   # descarga OK
+            except Exception as e:
+                err_s = str(e)
+                if attempt == 1 and "RateLimit" in err_s:
+                    log(f"    [WARN] Rate limit en lote {b_idx}, reintentando en {RETRY_DELAY}s...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    log(f"    [ERROR] Lote {b_idx} fallo: {err_s[:80]}")
+                    raw = None
+                    break
+
+        if raw is None or raw.empty:
+            log(f"    [WARN] Lote {b_idx}: sin datos.")
+        else:
+            # Extraer DataFrame por ticker del lote
+            for ticker in batch:
+                try:
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        lvl0 = raw.columns.get_level_values(0).unique().tolist()
+                        lvl1 = raw.columns.get_level_values(1).unique().tolist()
+                        if ticker in lvl0:
+                            ticker_raw[ticker] = raw[ticker].copy()
+                        elif ticker in lvl1:
+                            ticker_raw[ticker] = raw.xs(ticker, axis=1, level=1).copy()
+                    else:
+                        # Lote de un solo ticker (sin MultiIndex)
+                        ticker_raw[ticker] = raw.copy()
+                except Exception:
+                    pass
+            log(f"    Lote {b_idx} OK: {raw.shape[0]} filas.")
+
+        if b_idx < len(batches):
+            time.sleep(BATCH_DELAY)
+
+    log(f"  Descarga completada: {len(ticker_raw)}/{len(tickers_db)} tickers con datos.")
+
+    # Procesar cada ticker: upsert precios + recalculo indicadores
     n_ok = 0
     n_err = 0
 
     for i, ticker in enumerate(tickers_db, 1):
         try:
-            # 2. Extraer datos del ticker desde el DataFrame batch
-            if isinstance(raw_all.columns, pd.MultiIndex):
-                lvl0 = raw_all.columns.get_level_values(0).unique().tolist()
-                lvl1 = raw_all.columns.get_level_values(1).unique().tolist()
-                if ticker in lvl0:
-                    df_t = raw_all[ticker].copy()
-                elif ticker in lvl1:
-                    df_t = raw_all.xs(ticker, axis=1, level=1).copy()
-                else:
-                    raise ValueError(f"{ticker} no encontrado en resultado batch")
-            else:
-                # Solo un ticker en el batch (fallback)
-                df_t = raw_all.copy()
+            if ticker not in ticker_raw:
+                raise ValueError("sin datos en batch")
 
-            df_t = df_t.reset_index()
+            df_t = ticker_raw[ticker].reset_index()
             df_t.columns = [
                 c[0].lower() if isinstance(c, tuple) else str(c).lower()
                 for c in df_t.columns
@@ -189,12 +222,12 @@ def paso_actualizar_datos() -> dict:
 
             upsert_precios(df_t)
 
-            # 3. Cargar historico completo desde DB para SMA200
+            # Cargar historico completo desde DB para SMA200
             df_full = cargar_precios_db(ticker, ultimas_n=500)
             if len(df_full) < 250:
                 raise ValueError(f"historico insuficiente ({len(df_full)} barras)")
 
-            # 4. Recalcular indicadores
+            # Recalcular indicadores
             procesar_indicadores_ticker(ticker, df_full, guardar_db=True)
             ultima = df_t["fecha"].max()
             log(f"    [{i:03d}/{len(tickers_db)}] {ticker}: OK (ultima: {ultima.date()})")
