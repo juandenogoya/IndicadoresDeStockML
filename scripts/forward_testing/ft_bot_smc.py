@@ -59,6 +59,7 @@ from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_posiciones_abiertas,
     obtener_precios_cierre_todos, abrir_operacion, cerrar_operacion,
     actualizar_stop_loss, registrar_metricas_diarias, calcular_qty_ft,
+    calcular_cash_desplegable,
 )
 
 # ── Parametros de la estrategia ───────────────────────────────────────────────
@@ -69,6 +70,7 @@ MIN_SL_DIST_PCT     = 1.0
 MAX_SL_DIST_PCT     = 8.0
 DIAS_MAX_POS        = 20
 MAX_POSICIONES      = 5
+MAX_DEPLOY_PCT      = 0.80     # nunca desplegar mas del 80% del capital
 RIESGO_POR_TRADE    = 0.15
 
 
@@ -194,12 +196,19 @@ def evaluar_entradas(
     """
     tickers_abiertos = {p["ticker"] for p in posiciones}
     excluidos        = tickers_bloqueados | tickers_abiertos
-    cash             = float(estrategia["cash_disponible"])
     capital_actual   = float(estrategia["capital_actual"])
     slots_libres     = MAX_POSICIONES - len(posiciones)
 
     if slots_libres <= 0:
         log("  Maximo de posiciones alcanzado, sin entradas.")
+        return []
+
+    # Cash efectivo respetando el techo de despliegue del 80%
+    cash = calcular_cash_desplegable(estrategia, MAX_DEPLOY_PCT)
+    if cash <= 0:
+        pct_actual = float(estrategia["capital_inmovilizado"]) / capital_actual * 100
+        log(f"  Techo de despliegue alcanzado ({pct_actual:.1f}% desplegado, "
+            f"max={MAX_DEPLOY_PCT*100:.0f}%). Sin entradas.")
         return []
 
     features   = obtener_features_hoy()

@@ -397,6 +397,30 @@ def registrar_metricas_diarias(estrategia_id: int, fecha: date) -> None:
 
 # ── Position sizing ───────────────────────────────────────────────────────────
 
+def calcular_cash_desplegable(
+    estrategia:     dict,
+    max_deploy_pct: float = 0.80,
+) -> float:
+    """
+    Retorna el cash efectivamente disponible para nuevas posiciones,
+    respetando el limite maximo de despliegue sobre el capital_actual.
+
+    Logica:
+        max_desplegable = capital_actual * max_deploy_pct  (ej: 80.000 sobre 100.000)
+        headroom        = max_desplegable - capital_inmovilizado
+        resultado       = min(cash_disponible, headroom)
+
+    Si el portfolio ya supera el techo (ej: posiciones valen mas por PnL), retorna 0.
+    """
+    capital_actual       = float(estrategia["capital_actual"])
+    capital_inmovilizado = float(estrategia["capital_inmovilizado"])
+    cash_disponible      = float(estrategia["cash_disponible"])
+
+    max_desplegable = capital_actual * max_deploy_pct
+    headroom        = max(0.0, max_desplegable - capital_inmovilizado)
+    return min(cash_disponible, headroom)
+
+
 def calcular_qty_ft(
     cash_disponible: float,
     precio:          float,
@@ -412,7 +436,7 @@ def calcular_qty_ft(
 
     Retorna 0 si no alcanza para 1 share.
     """
-    base            = capital_actual if capital_actual else cash_disponible
-    capital_trade   = min(base * riesgo_pct, cash_disponible)
-    qty             = int(capital_trade / precio)
+    base          = capital_actual if capital_actual else cash_disponible
+    capital_trade = min(base * riesgo_pct, cash_disponible)
+    qty           = int(capital_trade / precio)
     return max(qty, 0)
