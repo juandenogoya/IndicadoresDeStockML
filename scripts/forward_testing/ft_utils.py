@@ -397,6 +397,57 @@ def registrar_metricas_diarias(estrategia_id: int, fecha: date) -> None:
 
 # ── Position sizing ───────────────────────────────────────────────────────────
 
+# ── Candidatos diarios (oportunidades) ───────────────────────────────────────
+
+def registrar_candidatos_diarios(
+    estrategia_id: int,
+    fecha:         date,
+    candidatos:    list[dict],
+) -> None:
+    """
+    Registra todos los candidatos de entrada del dia en ft_candidatos_diarios.
+    Incluye tanto los que entraron (entro=True) como los que no pudieron
+    entrar por limite de capital o posiciones (entro=False).
+
+    Idempotente via ON CONFLICT DO UPDATE.
+
+    candidatos: lista de dicts con keys:
+        ticker      : str
+        score       : float
+        entro       : bool    (True si se abrio posicion ese dia)
+        motivo_skip : str | None  (razon por la que no entro, o None si entro)
+    """
+    if not candidatos:
+        return
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        for c in candidatos:
+            conn.execute(text("""
+                INSERT INTO ft_candidatos_diarios
+                    (estrategia_id, fecha, ticker, score, entro, motivo_skip)
+                VALUES
+                    (:eid, :fecha, :ticker, :score, :entro, :motivo_skip)
+                ON CONFLICT (estrategia_id, fecha, ticker) DO UPDATE SET
+                    score       = EXCLUDED.score,
+                    entro       = EXCLUDED.entro,
+                    motivo_skip = EXCLUDED.motivo_skip
+            """), {
+                "eid":         estrategia_id,
+                "fecha":       fecha,
+                "ticker":      c["ticker"],
+                "score":       c["score"],
+                "entro":       c["entro"],
+                "motivo_skip": c.get("motivo_skip"),
+            })
+        conn.commit()
+
+    n_entro = sum(1 for c in candidatos if c["entro"])
+    n_oport = len(candidatos) - n_entro
+    log(f"  [CANDIDATOS] {len(candidatos)} guardados — "
+        f"{n_entro} abiertos, {n_oport} oportunidades")
+
+
 def calcular_cash_desplegable(
     estrategia:     dict,
     max_deploy_pct: float = 0.80,

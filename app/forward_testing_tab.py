@@ -272,6 +272,122 @@ def _render_tabla(df_ops: pd.DataFrame):
     )
 
 
+# ── Tabla de oportunidades ────────────────────────────────────────────────────
+
+def _render_oportunidades(query_fn, estrategia_id: int, df_ops: pd.DataFrame):
+    """
+    Tabla de oportunidades: candidatos que cumplieron condiciones de entrada
+    en los ultimos 5 dias pero no entraron por limite de capital o posiciones.
+    Muestra el score de cada dia para ver la consistencia de la senal.
+    """
+    st.subheader("Oportunidades")
+    st.caption(
+        "Activos con senal de entrada qualifying que no pudieron abrirse "
+        "por limite de capital (80%) o posiciones (max 5). "
+        "Mas dias consecutivos con score alto = senal mas robusta."
+    )
+
+    # Tickers actualmente abiertos — no son oportunidades
+    tickers_abiertos = set(
+        df_ops[df_ops["fecha_salida"].isna()]["ticker"].tolist()
+    )
+
+    # Ultimas 5 fechas con datos de candidatos para esta estrategia
+    df_cand = query_fn("""
+        SELECT ticker, fecha, score, entro
+        FROM ft_candidatos_diarios
+        WHERE estrategia_id = :eid
+          AND fecha IN (
+              SELECT DISTINCT fecha
+              FROM ft_candidatos_diarios
+              WHERE estrategia_id = :eid
+              ORDER BY fecha DESC
+              LIMIT 5
+          )
+        ORDER BY ticker, fecha DESC
+    """, {"eid": estrategia_id})
+
+    if df_cand.empty:
+        st.info("Sin datos de candidatos todavia. Se registran automaticamente al correr los bots.")
+        return
+
+    # Filtrar: solo tickers que tuvieron al menos un dia sin entrar
+    tickers_oport = (
+        df_cand[df_cand["entro"] == False]["ticker"].unique().tolist()
+    )
+    # Excluir los que ya estan abiertos (ya capturamos esa oportunidad)
+    tickers_oport = [t for t in tickers_oport if t not in tickers_abiertos]
+
+    if not tickers_oport:
+        st.info("Todos los candidatos tienen posicion abierta o no hay oportunidades pendientes.")
+        return
+
+    # Pivot: ticker x fecha, valor = score
+    df_pivot = df_cand[df_cand["ticker"].isin(tickers_oport)].pivot_table(
+        index="ticker", columns="fecha", values="score", aggfunc="first"
+    )
+
+    # Ordenar columnas: mas reciente primero
+    df_pivot = df_pivot[sorted(df_pivot.columns, reverse=True)]
+
+    # Calcular score promedio de los dias disponibles (para ordenar filas)
+    df_pivot["_avg"] = df_pivot.iloc[:, :].mean(axis=1, skipna=True)
+    df_pivot = df_pivot.sort_values("_avg", ascending=False)
+    df_pivot = df_pivot.drop(columns=["_avg"])
+
+    # Renombrar columnas a formato legible (dd/mm)
+    df_pivot.columns = [
+        pd.to_datetime(c).strftime("%d/%m") if not isinstance(c, str)
+        else str(c)[5:10].replace("-", "/")
+        for c in df_pivot.columns
+    ]
+
+    # Formatear valores: mostrar score con 1 decimal o "-" si falta
+    df_show = df_pivot.copy()
+    for col in df_show.columns:
+        df_show[col] = df_show[col].map(
+            lambda v: f"{v:.1f}" if pd.notna(v) else "-"
+        )
+
+    df_show = df_show.reset_index()
+    df_show.columns.name = None
+
+    # Estilo: colorear scores por nivel
+    def _style_score(val: str) -> str:
+        try:
+            v = float(val)
+            if v >= 80:
+                return "color: #4caf50; font-weight: bold"
+            if v >= 65:
+                return "color: #8bc34a"
+            if v >= 4.5:
+                return "color: #4caf50; font-weight: bold"
+            if v >= 4.0:
+                return "color: #8bc34a"
+            if v >= 2:
+                return "color: #ffb300"
+        except Exception:
+            pass
+        return ""
+
+    cols_fecha = [c for c in df_show.columns if c != "ticker"]
+    col_cfg    = {"ticker": st.column_config.TextColumn("Ticker", width=80)}
+    for c in cols_fecha:
+        col_cfg[c] = st.column_config.TextColumn(c, width=80)
+
+    st.dataframe(
+        df_show.style.applymap(_style_score, subset=cols_fecha),
+        use_container_width=True,
+        hide_index=True,
+        column_config=col_cfg,
+    )
+    st.caption(
+        f"{len(tickers_oport)} activos con senal qualifying sin posicion abierta. "
+        "Verde intenso = score muy alto. Verde claro = qualifying. "
+        "'-' = sin senal ese dia (senal perdio fuerza)."
+    )
+
+
 # ── Sub-tab por estrategia ────────────────────────────────────────────────────
 
 def _render_estrategia(query_fn, est: dict):
@@ -284,6 +400,8 @@ def _render_estrategia(query_fn, est: dict):
     _render_header(est, df_ops)
     st.divider()
     _render_tabla(df_ops)
+    st.divider()
+    _render_oportunidades(query_fn, eid, df_ops)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_posiciones_abiertas,
     obtener_precios_cierre_todos, abrir_operacion, cerrar_operacion,
     registrar_metricas_diarias, calcular_qty_ft, calcular_cash_desplegable,
+    registrar_candidatos_diarios,
 )
 
 # ── Parametros de la estrategia ───────────────────────────────────────────────
@@ -341,7 +342,37 @@ def run(dry_run: bool = False):
                 if op_id:
                     log(f"    -> operacion id={op_id} registrada.")
 
-    # 9. Registrar metricas del dia
+    # 9. Guardar candidatos del dia (abiertos + oportunidades)
+    log(sep)
+    log("CANDIDATOS:")
+    tickers_abiertos_hoy  = {p["ticker"] for p in posiciones}
+    tickers_que_abrimos   = {e["ticker"] for e in a_abrir}
+
+    candidatos_log = []
+    for s in todas_las_senales:
+        t = s["ticker"]
+        if t in tickers_abiertos_hoy:
+            continue   # ya tenia posicion abierta
+        if t in tickers_bloqueados:
+            continue   # bloqueado por earnings
+        entro = t in tickers_que_abrimos
+        candidatos_log.append({
+            "ticker":      t,
+            "score":       float(s["score"]),
+            "entro":       entro,
+            "motivo_skip": None if entro else "CAPITAL_O_POSICIONES",
+        })
+
+    if candidatos_log:
+        log(f"  {len(candidatos_log)} candidatos qualifying — "
+            f"{sum(1 for c in candidatos_log if c['entro'])} abiertos, "
+            f"{sum(1 for c in candidatos_log if not c['entro'])} oportunidades")
+        if not dry_run:
+            registrar_candidatos_diarios(eid, hoy, candidatos_log)
+    else:
+        log("  Sin candidatos qualifying hoy.")
+
+    # 10. Registrar metricas del dia
     log(sep)
     if not dry_run:
         registrar_metricas_diarias(eid, hoy)
