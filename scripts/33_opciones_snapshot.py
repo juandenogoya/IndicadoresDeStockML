@@ -556,7 +556,7 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
     # el 1er intento ya escribio todos los datos. UNIQUE constraint -> 0 rows nuevas.
     if total_filas == 0 and errores == 0:
         try:
-            engine = _get_engine()
+            engine = get_engine()
             with engine.connect() as conn:
                 filas_db = conn.execute(
                     text("SELECT COUNT(*) FROM opciones_snapshot WHERE fecha_snapshot = :f"),
