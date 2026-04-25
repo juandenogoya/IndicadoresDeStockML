@@ -15,6 +15,23 @@ if "%FECHA%"=="" (
 )
 
 echo.
+echo [0/2] Verificando que fecha tienen los datos en yfinance AHORA...
+echo ----------------------------------------
+python scripts/manual/check_yfinance_fecha.py
+echo ----------------------------------------
+echo.
+echo IMPORTANTE: si la fecha de yfinance NO coincide con "%FECHA%",
+echo cancelar (n) y ejecutar este script en el horario correcto.
+echo (Ventana valida: despues del cierre y antes de la apertura siguiente)
+echo.
+set /p CONTINUAR="Continuar con el DRY RUN? (s/n): "
+if /i not "%CONTINUAR%"=="s" (
+    echo Operacion cancelada.
+    pause
+    exit /b 0
+)
+
+echo.
 echo [1/2] DRY RUN para %FECHA% ...
 echo ----------------------------------------
 python scripts/33_opciones_snapshot.py --fecha %FECHA% --dry-run
