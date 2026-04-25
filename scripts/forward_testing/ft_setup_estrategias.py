@@ -31,7 +31,31 @@ from scripts.forward_testing.ft_utils import log
 
 CAPITAL_INICIAL = 100_000.00
 
+SECTORES_ACTIVOS = [
+    "Technology", "Consumer Cyclical", "Financial Services",
+    "Industrials", "Basic Materials", "Healthcare",
+    "Energy", "Communication Services", "Consumer Defensive",
+]
+
 ESTRATEGIAS = [
+    {
+        "nombre":      "FT_TECH_SECTOR_v1",
+        "descripcion": "AT Tecnico sectorial. 9 sectores x $11.111. "
+                       "Max 5 pos/sector al 20% del presupuesto. "
+                       "Scoring SMA/MACD/RSI. SL/TP ATR-based.",
+        "logica":      "tecnico_sectorial",
+        "parametros":  {
+            "sectores":           SECTORES_ACTIVOS,
+            "n_sectores":         len(SECTORES_ACTIVOS),
+            "score_entrada":      4.0,
+            "score_salida":       3.5,
+            "atr_mult_sl":        2.0,
+            "atr_mult_tp":        4.0,
+            "max_pos_sector":     5,
+            "position_pct":       0.20,
+            "max_deploy_pct":     1.0,   # 100% — sector partition ya diversifica
+        },
+    },
     {
         "nombre":      "FT_ML_SCANNER_v1",
         "descripcion": "Replica Bot1 Alpaca. Entrada: COMPRA_FUERTE score>=65. "
