@@ -12,7 +12,8 @@ REM       Copiar el bloque ":: --- BOT N ---" al final de la lista
 REM       y cambiar el nombre del script.
 REM ============================================================
 
-SET ROOT=%~dp0
+REM Subir dos niveles desde scripts\manual\ hasta la raiz del proyecto
+SET ROOT=%~dp0..\..\
 SET PYTHON=%ROOT%venv\Scripts\python.exe
 SET LOG_DIR=%ROOT%logs\forward_testing
 
