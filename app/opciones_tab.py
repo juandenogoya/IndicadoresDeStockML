@@ -173,107 +173,293 @@ def _subtab_universo(query_fn):
 # SUB-TAB 2: SECTORES
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── helpers de sentimiento / tendencia ────────────────────────────────────────
+
+def _semaforo(pcr):
+    """Devuelve (emoji, etiqueta) segun PCR_vol."""
+    if pcr is None or pd.isna(pcr):
+        return "⚪", "NEUTRO"
+    if pcr > 1.0:
+        return "🔴", "BAJISTA"
+    if pcr > 0.7:
+        return "🟡", "NEUTRO"
+    return "🟢", "ALCISTA"
+
+
+def _tendencia_label(avg_new, avg_old, sentimiento):
+    """
+    Compara promedio PCR ultimas 2 fechas (avg_new) vs primeras 3 (avg_old).
+    PCR bajando = mas alcista = sentimiento alcista fortaleciendose.
+    PCR subiendo = mas bajista = sentimiento bajista fortaleciendose.
+    """
+    if avg_new is None or avg_old is None:
+        return "sin cambio"
+    delta = avg_new - avg_old   # positivo = mas bajista, negativo = mas alcista
+    if abs(delta) < 0.05:
+        return "sin cambio"
+    if sentimiento == "ALCISTA":
+        return "fortaleciendose" if delta < 0 else "debilitandose"
+    if sentimiento == "BAJISTA":
+        return "fortaleciendose" if delta > 0 else "debilitandose"
+    # NEUTRO: umbral mas alto para evitar ruido
+    if abs(delta) < 0.10:
+        return "sin cambio"
+    return "fortaleciendose" if delta < 0 else "debilitandose"
+
+
+def _flow_signal(pcr_vol):
+    """Etiqueta de flujo en lenguaje de mercado."""
+    if pcr_vol is None or pd.isna(pcr_vol):
+        return "Sin direccion"
+    if pcr_vol < 0.7:
+        return "Calls dominando"
+    if pcr_vol > 1.0:
+        return "Puts dominando"
+    return "Sin direccion"
+
+
 def _subtab_sectores(query_fn):
     st.subheader("Opciones por Sector")
 
+    # Ultimas 5 fechas disponibles (mas reciente primero)
     df_fechas = query_fn(
-        "SELECT DISTINCT fecha FROM opciones_resumen_diario ORDER BY fecha DESC LIMIT 30"
+        "SELECT DISTINCT fecha FROM opciones_resumen_diario ORDER BY fecha DESC LIMIT 5"
     )
     if df_fechas.empty:
         st.warning("No hay datos disponibles.")
         return
 
-    fechas = [str(f) for f in df_fechas["fecha"].tolist()]
+    fechas_desc = [str(f) for f in df_fechas["fecha"].tolist()]   # newest first
+    fechas_asc  = list(reversed(fechas_desc))                      # oldest to newest
 
-    col1, col2 = st.columns([2, 2])
-    with col1:
-        fecha_sel = st.selectbox("Fecha snapshot", fechas, key="sect_fecha")
-    with col2:
-        fecha_comp = st.selectbox("Comparar con (opcional)", ["(ninguna)"] + fechas[1:],
-                                  key="sect_comp")
+    # Cargar datos de sectores para todas las fechas disponibles
+    fecha_list = "', '".join(fechas_desc)
+    df_all = query_fn(
+        f"""
+        SELECT a.sector,
+               r.fecha::text AS fecha,
+               SUM(r.call_vol) AS call_vol,
+               SUM(r.put_vol)  AS put_vol,
+               CASE WHEN SUM(r.call_vol) > 0
+                    THEN ROUND(SUM(r.put_vol)::numeric / SUM(r.call_vol), 3)
+                    ELSE NULL END AS pcr_vol,
+               SUM(r.call_oi)  AS call_oi,
+               SUM(r.put_oi)   AS put_oi,
+               CASE WHEN SUM(r.call_oi) > 0
+                    THEN ROUND(SUM(r.put_oi)::numeric / SUM(r.call_oi), 3)
+                    ELSE NULL END AS pcr_oi
+        FROM opciones_resumen_diario r
+        JOIN activos a ON r.ticker = a.ticker
+        WHERE r.fecha::text IN ('{fecha_list}')
+          AND a.sector IS NOT NULL
+        GROUP BY a.sector, r.fecha
+        ORDER BY a.sector, r.fecha
+        """
+    )
 
-    def _sector_data(fecha):
-        return query_fn(
-            """
-            SELECT a.sector,
-                   SUM(r.call_vol) AS call_vol,
-                   SUM(r.put_vol)  AS put_vol,
-                   CASE WHEN SUM(r.call_vol) > 0
-                        THEN ROUND(SUM(r.put_vol)::numeric / SUM(r.call_vol), 3)
-                        ELSE NULL END AS pcr_vol,
-                   SUM(r.call_oi)  AS call_oi,
-                   SUM(r.put_oi)   AS put_oi,
-                   CASE WHEN SUM(r.call_oi) > 0
-                        THEN ROUND(SUM(r.put_oi)::numeric / SUM(r.call_oi), 3)
-                        ELSE NULL END AS pcr_oi,
-                   COUNT(DISTINCT r.ticker) AS tickers
-            FROM opciones_resumen_diario r
-            JOIN activos a ON r.ticker = a.ticker
-            WHERE r.fecha = :fecha AND a.sector IS NOT NULL
-            GROUP BY a.sector
-            ORDER BY (SUM(r.call_vol) + SUM(r.put_vol)) DESC
-            """,
-            {"fecha": fecha},
-        )
-
-    df = _sector_data(fecha_sel)
-    if df.empty:
-        st.info(f"Sin datos de sector para {fecha_sel}.")
+    if df_all.empty:
+        st.info("Sin datos de sector para las ultimas 5 fechas.")
         return
 
-    # Comparacion opcional
-    if fecha_comp != "(ninguna)":
-        df2 = _sector_data(fecha_comp)
-        if not df2.empty:
-            df2 = df2[["sector", "pcr_vol"]].rename(columns={"pcr_vol": "pcr_vol_ant"})
-            df = df.merge(df2, on="sector", how="left")
-            df["PCR delta"] = (df["pcr_vol"] - df["pcr_vol_ant"]).apply(
-                lambda x: f"+{x:.3f}" if pd.notna(x) and x > 0 else (f"{x:.3f}" if pd.notna(x) else "-")
+    # Ordenar sectores por volumen total descendente
+    vol_por_sector = (
+        df_all.groupby("sector")
+        .apply(lambda g: float(g["call_vol"].sum() + g["put_vol"].sum()))
+        .sort_values(ascending=False)
+    )
+    sectores = vol_por_sector.index.tolist()
+
+    # ── TABLA PIVOT: sector x fecha, PCR_vol ────────────────────────────────
+    st.markdown("### PCR Vol por Sector — Ultimas 5 fechas")
+
+    pivot_rows = []
+    for sector in sectores:
+        sdf = df_all[df_all["sector"] == sector]
+        row = {"Sector": sector}
+        pcr_vol_vals, pcr_oi_vals = [], []
+
+        for f in fechas_asc:
+            match = sdf[sdf["fecha"] == f]
+            if not match.empty and pd.notna(match["pcr_vol"].iloc[0]):
+                v = float(match["pcr_vol"].iloc[0])
+                row[f] = v
+                pcr_vol_vals.append(v)
+            else:
+                row[f] = None
+
+            if not match.empty and pd.notna(match["pcr_oi"].iloc[0]):
+                pcr_oi_vals.append(float(match["pcr_oi"].iloc[0]))
+
+        row["_avg_vol"] = sum(pcr_vol_vals) / len(pcr_vol_vals) if pcr_vol_vals else None
+        row["_avg_oi"]  = sum(pcr_oi_vals)  / len(pcr_oi_vals)  if pcr_oi_vals  else None
+        pivot_rows.append(row)
+
+    df_pivot_raw = pd.DataFrame(pivot_rows)
+
+    # Renombrar columnas: fechas cortas + promedios legibles
+    rename_map = {f: f[5:] for f in fechas_asc}   # "2026-04-24" -> "04-24"
+    rename_map["_avg_vol"] = "PCR_vol avg"
+    rename_map["_avg_oi"]  = "PCR_oi avg"
+    df_pivot = df_pivot_raw.rename(columns=rename_map)
+
+    date_cols_short = [f[5:] for f in fechas_asc]
+    color_cols = date_cols_short + ["PCR_vol avg", "PCR_oi avg"]
+
+    def _color_pivot(df):
+        styles = pd.DataFrame("", index=df.index, columns=df.columns)
+        for col in color_cols:
+            if col in df.columns:
+                styles[col] = df[col].apply(
+                    lambda v: _pcr_bg(v) if (v is not None and pd.notna(v))
+                    else "background-color:#1e1e1e"
+                )
+        return styles
+
+    def _fmt_pcr(v):
+        return f"{v:.2f}" if (v is not None and pd.notna(v)) else "-"
+
+    fmt_map = {col: _fmt_pcr for col in color_cols if col in df_pivot.columns}
+
+    styled_pivot = (
+        df_pivot.style
+        .apply(_color_pivot, axis=None)
+        .format(fmt_map, na_rep="-")
+    )
+    st.dataframe(styled_pivot, use_container_width=True, hide_index=True)
+    st.caption(
+        "Verde = Alcista (PCR < 0.7)  |  "
+        "Amarillo = Neutro (0.7-1.0)  |  "
+        "Rojo = Bajista (> 1.0)  |  "
+        "avg = promedio de las 5 fechas"
+    )
+
+    # ── TARJETAS RESUMEN POR SECTOR ──────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Resumen por Sector")
+    st.caption(
+        "Tendencia: promedio ultimas 2 fechas vs promedio primeras 3 fechas del periodo."
+    )
+
+    card_style_base = (
+        "border:1px solid #333; border-radius:8px; padding:14px 16px; "
+        "margin:4px 0; min-height:130px;"
+    )
+
+    n_per_row = 3
+    for i in range(0, len(sectores), n_per_row):
+        group = sectores[i : i + n_per_row]
+        cols  = st.columns(n_per_row)
+
+        for j, sector in enumerate(group):
+            sdf = df_all[df_all["sector"] == sector]
+
+            # PCR por fecha disponible (en orden cronologico)
+            pcr_by_date = {}
+            for f in fechas_asc:
+                match = sdf[sdf["fecha"] == f]
+                if not match.empty and pd.notna(match["pcr_vol"].iloc[0]):
+                    pcr_by_date[f] = float(match["pcr_vol"].iloc[0])
+
+            dates_ok = [f for f in fechas_asc if f in pcr_by_date]
+
+            # Dividir: first 3 / last 2
+            if len(dates_ok) >= 2:
+                last2  = dates_ok[-2:]
+                first3 = dates_ok[:-2] if len(dates_ok) > 2 else []
+                avg_new = sum(pcr_by_date[f] for f in last2) / len(last2)
+                avg_old = (sum(pcr_by_date[f] for f in first3) / len(first3)
+                           if first3 else None)
+                current_pcr = avg_new
+            elif len(dates_ok) == 1:
+                current_pcr = pcr_by_date[dates_ok[0]]
+                avg_new = current_pcr
+                avg_old = None
+            else:
+                current_pcr = avg_new = avg_old = None
+
+            emoji, sentimiento = _semaforo(current_pcr)
+            tendencia = _tendencia_label(avg_new, avg_old, sentimiento)
+            flow      = _flow_signal(current_pcr)
+            pcr_str   = f"{current_pcr:.2f}" if current_pcr is not None else "-"
+
+            # Color de sentimiento para el texto
+            color_sent = {"ALCISTA": "#4CAF50", "BAJISTA": "#f44336", "NEUTRO": "#FFC107"}
+            color_tend = {"fortaleciendose": "#81C784", "debilitandose": "#e57373",
+                          "sin cambio": "#90A4AE"}
+            sent_color = color_sent.get(sentimiento, "#ccc")
+            tend_color = color_tend.get(tendencia, "#ccc")
+
+            html = (
+                f"<div style='{card_style_base}'>"
+                f"  <div style='font-size:1.0em; font-weight:bold; margin-bottom:6px;'>"
+                f"    {emoji} {sector}"
+                f"  </div>"
+                f"  <div style='font-size:1.3em; font-weight:bold; color:{sent_color};'>"
+                f"    {sentimiento}"
+                f"  </div>"
+                f"  <div style='color:{tend_color}; font-size:0.85em; margin-top:4px;'>"
+                f"    Tendencia: {tendencia}"
+                f"  </div>"
+                f"  <div style='color:#aaa; font-size:0.85em;'>"
+                f"    Flujo: {flow}"
+                f"  </div>"
+                f"  <div style='color:#666; font-size:0.75em; margin-top:6px;'>"
+                f"    PCR Vol actual: {pcr_str}"
+                f"  </div>"
+                f"</div>"
             )
 
-    df["PCR Vol"]  = df["pcr_vol"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "-")
-    df["PCR OI"]   = df["pcr_oi"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "-")
-    df["Sentimiento"] = df["pcr_vol"].apply(_pcr_label)
-    df["Call Vol"]    = df["call_vol"].apply(lambda x: f"{x:,.0f}")
-    df["Put Vol"]     = df["put_vol"].apply(lambda x: f"{x:,.0f}")
-    df["Call OI"]     = df["call_oi"].apply(lambda x: f"{x:,.0f}")
-    df["Put OI"]      = df["put_oi"].apply(lambda x: f"{x:,.0f}")
+            with cols[j]:
+                st.markdown(html, unsafe_allow_html=True)
 
-    cols_show = ["sector", "tickers", "Call Vol", "Put Vol", "PCR Vol", "Sentimiento",
-                 "Call OI", "Put OI", "PCR OI"]
-    if "PCR delta" in df.columns:
-        cols_show.insert(6, "PCR delta")
-    col_labels = {
-        "sector": "Sector", "tickers": "Tickers",
-    }
-    display = df[cols_show].rename(columns=col_labels).reset_index(drop=True)
+        # Relleno de columnas vacias en la ultima fila
+        for j in range(len(group), n_per_row):
+            with cols[j]:
+                st.empty()
 
-    def _style_sector(row):
-        pcr_str = row.get("PCR Vol", "-")
-        try:
-            pcr = float(pcr_str)
-        except Exception:
-            pcr = float("nan")
-        bg = _pcr_bg(pcr)
-        return [bg if col in ("PCR Vol", "Sentimiento") else "" for col in row.index]
+    # ── GLOSARIO ─────────────────────────────────────────────────────────────
+    st.markdown("")
+    with st.expander("Glosario — Como leer el resumen por sector"):
+        glosario = pd.DataFrame({
+            "Sentimiento": [
+                "ALCISTA", "ALCISTA",
+                "NEUTRO",  "NEUTRO",
+                "BAJISTA", "BAJISTA",
+            ],
+            "Tendencia": [
+                "fortaleciendose", "debilitandose",
+                "fortaleciendose", "debilitandose",
+                "fortaleciendose", "debilitandose",
+            ],
+            "Significado": [
+                "Calls dominan y aumentan: flujo comprador creciente",
+                "Calls dominan pero se reducen: posible toma de ganancias",
+                "Flujo mixto moviendose hacia calls: sesgo alcista emergente",
+                "Flujo mixto moviendose hacia puts: cautela creciente",
+                "Puts dominan y aumentan: cobertura o presion vendedora creciente",
+                "Puts dominan pero se reducen: posible relajacion de cobertura",
+            ],
+        })
+        st.dataframe(glosario, use_container_width=True, hide_index=True)
+        st.caption(
+            "PCR Vol < 0.7 = Alcista  |  0.7 - 1.0 = Neutro  |  > 1.0 = Bajista  |  "
+            "Tendencia compara promedio ultimas 2 fechas vs primeras 3 del periodo de 5 dias."
+        )
 
-    styled = display.style.apply(_style_sector, axis=1)
-    st.dataframe(styled, use_container_width=True)
-
-    # Grafico
+    # ── DRILL-DOWN POR SECTOR ─────────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("**PCR Vol por Sector**")
-    chart = df[["sector", "pcr_vol"]].set_index("sector")
-    chart.columns = ["PCR Vol"]
-    # Linea de referencia en 1.0 (neutral)
-    st.bar_chart(chart)
-    st.caption("PCR > 1.0 = sesgo bajista (mas puts). PCR < 0.7 = sesgo alcista (mas calls).")
+    st.markdown("### Drill-down por sector")
 
-    # Drill-down por sector
-    st.markdown("---")
-    sectores_list = df["sector"].dropna().tolist()
-    sector_drill = st.selectbox("Drill-down: ver tickers del sector", ["(elegir)"] + sectores_list,
-                                key="sect_drill")
+    col_d1, col_d2 = st.columns([2, 2])
+    with col_d1:
+        sector_drill = st.selectbox(
+            "Sector", ["(elegir)"] + sectores, key="sect_drill"
+        )
+    with col_d2:
+        fecha_drill = st.selectbox(
+            "Fecha", fechas_desc, key="sect_drill_fecha"
+        )
+
     if sector_drill != "(elegir)":
         df_drill = query_fn(
             """
@@ -286,22 +472,38 @@ def _subtab_sectores(query_fn):
             WHERE r.fecha = :fecha AND a.sector = :sector
             ORDER BY (r.call_vol + r.put_vol) DESC
             """,
-            {"fecha": fecha_sel, "sector": sector_drill},
+            {"fecha": fecha_drill, "sector": sector_drill},
         )
-        if not df_drill.empty:
-            df_drill["PCR Vol"] = df_drill["pcr_vol"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "-")
-            df_drill["PCR OI"]  = df_drill["pcr_oi"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "-")
-            df_drill["IV Call"] = df_drill["iv_call_avg"].apply(lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-")
-            df_drill["IV Put"]  = df_drill["iv_put_avg"].apply(lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-")
-            df_drill["Precio"]  = df_drill["precio_sub"].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "-")
+        if df_drill.empty:
+            st.info(f"Sin datos para {sector_drill} en {fecha_drill}.")
+        else:
+            df_drill["PCR Vol"]    = df_drill["pcr_vol"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "-")
+            df_drill["PCR OI"]     = df_drill["pcr_oi"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "-")
+            df_drill["IV Call"]    = df_drill["iv_call_avg"].apply(lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-")
+            df_drill["IV Put"]     = df_drill["iv_put_avg"].apply(lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-")
+            df_drill["Precio"]     = df_drill["precio_sub"].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "-")
             df_drill["Sentimiento"] = df_drill["pcr_vol"].apply(_pcr_label)
-            show = df_drill[["ticker", "Precio", "call_vol", "put_vol", "PCR Vol",
-                             "Sentimiento", "call_oi", "put_oi", "PCR OI",
-                             "IV Call", "IV Put"]].copy()
-            show.columns = ["Ticker", "Precio", "Call Vol", "Put Vol", "PCR Vol",
-                            "Sentimiento", "Call OI", "Put OI", "PCR OI",
-                            "IV Call", "IV Put"]
-            st.dataframe(show.reset_index(drop=True), use_container_width=True)
+
+            show = df_drill[[
+                "ticker", "Precio", "call_vol", "put_vol", "PCR Vol",
+                "Sentimiento", "call_oi", "put_oi", "PCR OI", "IV Call", "IV Put",
+            ]].copy()
+            show.columns = [
+                "Ticker", "Precio", "Call Vol", "Put Vol", "PCR Vol",
+                "Sentimiento", "Call OI", "Put OI", "PCR OI", "IV Call", "IV Put",
+            ]
+
+            def _style_drill_sector(row):
+                pcr_str = row.get("PCR Vol", "-")
+                try:
+                    pcr = float(pcr_str)
+                except Exception:
+                    pcr = float("nan")
+                bg = _pcr_bg(pcr)
+                return [bg if col in ("PCR Vol", "Sentimiento") else "" for col in row.index]
+
+            styled_drill = show.reset_index(drop=True).style.apply(_style_drill_sector, axis=1)
+            st.dataframe(styled_drill, use_container_width=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
