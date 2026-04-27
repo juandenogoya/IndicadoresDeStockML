@@ -1,14 +1,106 @@
 name: Cron Diario Scanner
 
+# Pipeline particionado en 5 jobs encadenados con `needs`.
+# Cada job tiene su propio timeout. Si uno falla, los siguientes
+# se cancelan automaticamente (no corren con datos desactualizados).
+#
+# Tiempos estimados (199 tickers):
+#   precios  : ~35 min  (yfinance + indicadores secuencial)
+#   features : ~4 min   (features PA + market structure bulk)
+#   scanner  : ~60 min  (ML inference secuencial)
+#   verificar: ~2 min   (retornos post-facto)
+#   sheets   : ~5 min   (exportar Google Sheets, paralelo a verificar)
+#
+# Flujo: 13:00 UTC start -> ~15:00 UTC fin scanner
+# Bots corren a las 15:15 UTC (15 min de margen post-scanner)
+
 on:
   schedule:
-    # L-V a las 13:00 UTC (10:00 hora Argentina, inicio de jornada)
-    # Prerequisito: actualizar_precios_railway.py corre local a las 09:00 ARG (12:00 UTC)
+    # L-V a las 13:00 UTC (10:00 hora Argentina)
     - cron: '0 13 * * 1-5'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:
-  cron:
+
+  # ── Paso 1: Precios + Futuros (~35 min) ──────────────────────────────────
+  precios:
+    name: "Paso 1 -- Precios + Futuros"
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Precios + Futuros
+        env:
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONPATH:          ${{ github.workspace }}
+        run: python scripts/cron_diario.py --step precios
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR -- Cron Paso 1 (Precios)</b>%0AWorkflow fallido.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # ── Paso 2: Features PA + Market Structure (~4 min) ──────────────────────
+  features:
+    name: "Paso 2 -- Features PA + SMC"
+    needs: precios
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Features PA + Market Structure
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PYTHONPATH:   ${{ github.workspace }}
+        run: python scripts/cron_diario.py --step features
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR -- Cron Paso 2 (Features)</b>%0AWorkflow fallido.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # ── Paso 3: Scanner ML (~60 min) ─────────────────────────────────────────
+  scanner:
+    name: "Paso 3 -- Scanner ML"
+    needs: features
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -25,19 +117,76 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Ejecutar cron diario
+      - name: Scanner ML + Telegram resumen
+        env:
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONPATH:          ${{ github.workspace }}
+        run: python scripts/cron_diario.py --step scanner
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR -- Cron Paso 3 (Scanner ML)</b>%0AWorkflow fallido.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # ── Paso 4: Verificacion post-facto (~2 min) ──────────────────────────────
+  verificar:
+    name: "Paso 4 -- Verificacion"
+    needs: scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Verificacion post-facto
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          PYTHONPATH: ${{ github.workspace }}
-        run: python scripts/cron_diario.py
+          PYTHONPATH:   ${{ github.workspace }}
+        run: python scripts/cron_diario.py --step verificar
+
+  # ── Paso 5: Google Sheets (paralelo a verificar, no critico) ─────────────
+  sheets:
+    name: "Paso 5 -- Google Sheets"
+    needs: scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
 
       - name: Exportar a Google Sheets
-        continue-on-error: true
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GOOGLE_SHEETS_KEY: ${{ secrets.GOOGLE_SHEETS_KEY }}
-          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
-          PYTHONPATH: ${{ github.workspace }}
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          GOOGLE_SHEETS_KEY:   ${{ secrets.GOOGLE_SHEETS_KEY }}
+          GOOGLE_SHEETS_ID:    ${{ secrets.GOOGLE_SHEETS_ID }}
+          PYTHONPATH:          ${{ github.workspace }}
         run: python scripts/sheets_export.py

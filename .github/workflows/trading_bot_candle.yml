@@ -1,12 +1,14 @@
 name: Trading Bot SMC Estructura (Alpaca #3)
 
-# Corre L-V a las 13:45 UTC = 9:45 ET (15 min despues de apertura NYSE)
-# Los 3 bots corren en la misma ventana horaria, en paralelo.
-# Estrategia: CHoCH/BOS alcista + estructura sostenida + trailing SL
+# Corre L-V a las 15:15 UTC = 11:15 ET
+# El cron diario (particionado) inicia a las 13:00 UTC.
+# El scanner ML (Paso 3) termina ~15:00 UTC.
+# Los 3 bots corren en paralelo a las 15:15 UTC con datos del dia.
+# Estrategia: CHoCH/BOS alcista + estructura sostenida. Salidas por estructura pura.
 
 on:
   schedule:
-    - cron: "45 13 * * 1-5"
+    - cron: "15 15 * * 1-5"
   workflow_dispatch:
 
 jobs:

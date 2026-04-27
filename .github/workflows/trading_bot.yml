@@ -1,12 +1,13 @@
 name: Trading Bot Alpaca
 
-# Corre L-V a las 13:45 UTC = 9:45 ET (15 min despues de apertura NYSE)
-# El scanner (cron_diario.yml) ya corrio a las 13:00 UTC y tiene las senales listas.
-# Senales basadas en datos del cierre anterior  14 no hay razon para esperar.
+# Corre L-V a las 15:15 UTC = 11:15 ET
+# El cron diario (particionado) inicia a las 13:00 UTC.
+# El scanner ML (Paso 3) termina ~15:00 UTC.
+# Los bots corren con 15 min de margen para garantizar datos del dia.
 
 on:
   schedule:
-    - cron: "45 13 * * 1-5"
+    - cron: "15 15 * * 1-5"
   workflow_dispatch:          # permite correr manualmente desde GitHub
 
 jobs:
