@@ -50,9 +50,9 @@ def _native(v):
 def _persistir_alertas(resultados: list):
     """
     Upsert de resultados en alertas_scanner.
-    ON CONFLICT (ticker, date(scan_fecha)) -> actualiza todos los campos.
-    Idempotente: correr varias veces el mismo dia sobreescribe el scan anterior.
-    No depende del SERIAL id para detectar duplicados.
+    Clave de deduplicacion: (ticker, precio_fecha) = fecha real del cierre del ticker.
+    Idempotente: re-runs del mismo dia habil sobreescriben el scan anterior.
+    scan_fecha (timestamp del cron) se actualiza en cada upsert para trazabilidad.
     """
     from src.data.database import get_connection
 
@@ -68,23 +68,26 @@ def _persistir_alertas(resultados: list):
         "alert_score", "alert_nivel", "alert_detalle",
     )
 
+    # Solo persistir registros sin error y con precio_fecha valida (requerida por el constraint)
     records = [
         {k: _native(r.get(k)) for k in campos}
-        for r in resultados if not r.get("error")
+        for r in resultados
+        if not r.get("error") and r.get("precio_fecha") is not None
     ]
     if not records:
         return
 
+    # precio_fecha y ticker son la clave — no se actualizan en conflicto
     update_set = ", ".join(
         f"{c} = EXCLUDED.{c}"
         for c in campos
-        if c not in ("scan_fecha", "ticker")
+        if c not in ("precio_fecha", "ticker")
     )
 
     sql = f"""
         INSERT INTO alertas_scanner ({', '.join(campos)})
         VALUES ({', '.join(f'%({c})s' for c in campos)})
-        ON CONFLICT (ticker, date(scan_fecha))
+        ON CONFLICT (ticker, precio_fecha)
         DO UPDATE SET {update_set}
     """
 
@@ -92,7 +95,7 @@ def _persistir_alertas(resultados: list):
         with conn.cursor() as cur:
             psycopg2.extras.execute_batch(cur, sql, records, page_size=100)
 
-    log(f"  DB: {len(records)} alertas guardadas (upsert por ticker/dia).")
+    log(f"  DB: {len(records)} alertas guardadas (upsert por ticker/precio_fecha).")
 
 
 def paso_actualizar_datos() -> dict:
