@@ -78,13 +78,13 @@ def _persistir_alertas(resultados: list):
     update_set = ", ".join(
         f"{c} = EXCLUDED.{c}"
         for c in campos
-        if c not in ("scan_fecha", "ticker")
+        if c not in ("precio_fecha", "ticker")
     )
 
     sql = f"""
         INSERT INTO alertas_scanner ({', '.join(campos)})
         VALUES ({', '.join(f'%({c})s' for c in campos)})
-        ON CONFLICT (ticker, date(scan_fecha))
+        ON CONFLICT (ticker, precio_fecha)
         DO UPDATE SET {update_set}
     """
 
@@ -92,7 +92,7 @@ def _persistir_alertas(resultados: list):
         with conn.cursor() as cur:
             psycopg2.extras.execute_batch(cur, sql, records, page_size=100)
 
-    log(f"  DB: {len(records)} alertas guardadas (upsert por ticker/dia).")
+    log(f"  DB: {len(records)} alertas guardadas (upsert por ticker/precio_fecha).")
 
 
 def paso_actualizar_datos() -> dict:
