@@ -8,7 +8,7 @@ REM       Correr DESPUES de las 13:00 UTC (cuando el cron de GH
 REM       Actions ya cargo los datos del cierre del dia anterior)
 REM
 REM  Para agregar una nueva estrategia:
-REM       Copiar el bloque ":: --- BOT N ---" al final de la lista
+REM       Copiar el bloque "BOT N" al final de la lista
 REM       y cambiar el nombre del script.
 REM ============================================================
 
@@ -20,22 +20,16 @@ SET LOG_DIR=%ROOT%logs\forward_testing
 REM Crear carpeta de logs si no existe
 IF NOT EXIST "%LOG_DIR%" mkdir "%LOG_DIR%"
 
-REM Fecha y hora para el nombre del log (formato YYYYMMDD_HHMM)
-FOR /F "tokens=1-3 delims=/" %%A IN ("%DATE%") DO (
-    SET DIA=%%A
-    SET MES=%%B
-    SET ANIO=%%C
-)
-FOR /F "tokens=1-2 delims=:" %%A IN ("%TIME: =0%") DO (
-    SET HORA=%%A
-    SET MIN=%%B
-)
-SET TIMESTAMP=%ANIO%%MES%%DIA%_%HORA%%MIN%
+REM Timestamp YYYYMMDD_HHMM via WMIC (evita el nombre del dia del locale)
+FOR /F "tokens=2 delims==" %%A IN ('wmic os get LocalDateTime /value ^| find "="') DO SET _DT=%%A
+SET TIMESTAMP=%_DT:~0,8%_%_DT:~8,4%
 SET LOGFILE=%LOG_DIR%\ft_%TIMESTAMP%.log
+
+SET ERRORS=0
 
 echo.
 echo ============================================================
-echo  FORWARD TESTING — Ejecucion diaria
+echo  FORWARD TESTING - Ejecucion diaria
 echo  Fecha : %DATE%  Hora: %TIME%
 echo  Log   : %LOGFILE%
 echo ============================================================
@@ -47,49 +41,66 @@ echo  FORWARD TESTING - %DATE% %TIME% >> "%LOGFILE%"
 echo ============================================================ >> "%LOGFILE%"
 
 
-REM ── BOT 1 — ML Scanner ──────────────────────────────────────
-echo [1/4] FT_ML_SCANNER_v1...
+REM ── BOT 1 - ML Scanner ──────────────────────────────────────
+echo [1/5] FT_ML_SCANNER_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_ML_SCANNER_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_ml_scanner.py" >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] ft_bot_ml_scanner.py fallo. Ver log.
+    SET ERRORS=1
 ) ELSE (
     echo [OK]
 )
 
 
-REM ── BOT 2 — Tecnico global ──────────────────────────────────
-echo [2/4] FT_TECH_v1...
+REM ── BOT 2 - Tecnico global ──────────────────────────────────
+echo [2/5] FT_TECH_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tecnico.py" >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] ft_bot_tecnico.py fallo. Ver log.
+    SET ERRORS=1
 ) ELSE (
     echo [OK]
 )
 
 
-REM ── BOT 3 — SMC Estructura ──────────────────────────────────
-echo [3/4] FT_SMC_v1...
+REM ── BOT 3 - SMC Estructura ──────────────────────────────────
+echo [3/5] FT_SMC_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_SMC_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_smc.py" >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] ft_bot_smc.py fallo. Ver log.
+    SET ERRORS=1
 ) ELSE (
     echo [OK]
 )
 
 
-REM ── BOT 4 — Tecnico Sectorial ───────────────────────────────
-echo [4/4] FT_TECH_SECTOR_v1...
+REM ── BOT 4 - Tecnico Sectorial ───────────────────────────────
+echo [4/5] FT_TECH_SECTOR_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_SECTOR_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tech_sectorial.py" >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] ft_bot_tech_sectorial.py fallo. Ver log.
+    SET ERRORS=1
+) ELSE (
+    echo [OK]
+)
+
+
+REM ── BOT 5 - Combo Tecnico + Candle Score ────────────────────
+echo [5/5] FT_COMBO_v1...
+echo. >> "%LOGFILE%"
+echo --- FT_COMBO_v1 --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_combo_v1.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] ft_bot_combo_v1.py fallo. Ver log.
+    SET ERRORS=1
 ) ELSE (
     echo [OK]
 )
@@ -97,7 +108,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 REM ── AGREGAR NUEVOS BOTS AQUI ─────────────────────────────────
 REM Copiar el bloque de arriba y modificar:
-REM   - El numero [N/N]
+REM   - El numero [N/N] en ambos echo
 REM   - El nombre de la estrategia
 REM   - El nombre del script .py
 
@@ -106,6 +117,9 @@ echo.
 echo ============================================================
 echo  Completado. Ver detalle en:
 echo  %LOGFILE%
+IF %ERRORS% EQU 1 (
+    echo  ATENCION: uno o mas bots reportaron error - ver log.
+)
 echo ============================================================
 echo.
 pause

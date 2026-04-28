@@ -88,6 +88,25 @@ ESTRATEGIAS = [
         },
     },
     {
+        "nombre":      "FT_COMBO_v1",
+        "descripcion": "AT Tecnico sectorial + scoring de velas 5d como desempate. "
+                       "9 sectores x $11.111. Ranking: tech_score DESC, candle_score_5d DESC. "
+                       "Excluye si candle_score < -3 (distribucion activa). SL/TP ATR-based.",
+        "logica":      "combo_tech_candle",
+        "parametros":  {
+            "sectores":         SECTORES_ACTIVOS,
+            "n_sectores":       len(SECTORES_ACTIVOS),
+            "score_entrada":    4.0,
+            "score_salida":     3.5,
+            "candle_score_min": -3.0,
+            "candle_ventana_d": 5,
+            "atr_mult_sl":      2.0,
+            "atr_mult_tp":      4.0,
+            "max_pos_sector":   5,
+            "position_pct":     0.20,
+        },
+    },
+    {
         "nombre":      "FT_SMC_v1",
         "descripcion": "Replica Bot3 Alpaca. CHoCH/BOS + estructura + vela alcista. "
                        "Trailing SL estructural. Sin TP. Time stop 20d.",

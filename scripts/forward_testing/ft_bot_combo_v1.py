@@ -1,40 +1,60 @@
 """
-ft_bot_tech_sectorial.py
-Forward-testing — AT Tecnico con particion sectorial.
+ft_bot_combo_v1.py
+Forward-testing — AT Tecnico sectorial con scoring de velas como desempate.
 
-Estrategia FT_TECH_SECTOR_v1:
-    Capital $100.000 dividido en 9 sectores de $11.111 cada uno.
-    Cada sector opera de forma independiente con su propio presupuesto.
+Estrategia FT_COMBO_v1:
+    Base identica a FT_TECH_SECTOR_v1:
+        Capital $100.000 / 9 sectores / $11.111 por sector.
+        Max 5 posiciones por sector al 20% del presupuesto sectorial.
+        SL = 2x ATR14 | TP = 4x ATR14.
 
-    ENTRADA : score tecnico >= 4.0 (misma logica que FT_TECH_v1)
-              Ranking por score dentro de cada sector.
-              Max 5 posiciones por sector al 20% del presupuesto sectorial.
-              100% deployable — la diversificacion la controla la particion.
+    Diferencia clave vs FT_TECH_SECTOR_v1:
+        Cuando dos o mas tickers tienen el mismo score tecnico,
+        el desempate lo gana el que tiene mejor score de velas
+        acumulado en los ultimos 5 dias de trading.
 
-    SALIDA  : P1. Earnings manana (prioridad absoluta)
-              P2. Score degradado (<= 3.5) — exit primario
-              P3. Stop loss 2 x ATR14  — exit emergencia
-              P4. Take profit 4 x ATR14 — exit emergencia
+        Orden de ranking dentro de cada sector:
+            1. tech_score DESC          (primario  — SMA/MACD/RSI, max 5.5)
+            2. candle_score_5d DESC     (desempate — velas 5 dias, tipico -12 a +17)
 
-    SIZING  : ~$2.222 por posicion (20% de $11.111 sector budget)
-              qty = floor(POSITION_SIZE / precio_cierre)
+        Adicionalmente: si candle_score_5d < CANDLE_SCORE_MIN (-3),
+        el ticker se excluye aunque el tech_score sea 5.5.
+        Significa que en los ultimos 5 dias las senales de distribucion
+        superan a las de acumulacion — el tecnico puede estar rezagado.
 
-Diferencias vs FT_TECH_v1:
-    - Sin techo global del 80% (la particion sectorial ya diversifica)
-    - Position sizing fijo en dolares (no % del capital total)
-    - Hasta 9 x 5 = 45 posiciones teoricas (en practica muchas menos)
-    - Capital ocioso por sector: si un sector no tiene candidatos, esos
-      $11.111 quedan liquidos y NO se reasignan a otros sectores.
+    Scoring de velas (calculado en ft_scoring.obtener_candle_score_5d):
+        Por dia (+/-):
+            es_alcista              +0.5 / -0.5  base direccional
+            patron_engulfing_bull   +1.5  (absorbe oferta previa)
+            patron_hammer           +1.0  (rechazo de zona baja)
+            patron_marubozu bull    +1.0  (fuerza compradora total)
+            patron_engulfing_bear   -1.5  (absorbe demanda previa)
+            patron_shooting_star    -1.0  (rechazo de zona alta)
+            patron_marubozu bear    -0.5  (fuerza vendedora)
+            vol_price_confirm       +1.0  (volumen confirma movimiento)
+            vol_price_diverge       -0.5  (volumen diverge del movimiento)
+            vol_spike solo          +0.5  (atencion elevada)
+        Una sola vez (estructura de mercado, ultimo dia):
+            bos_bull_5              +2.0
+            choch_bull_5            +1.5
+            bos_bear_5              -2.0
+            choch_bear_5            -3.0
+
+Diferencias vs Bot Alpaca:
+    - Precio de ejecucion = cierre del dia (precios_diarios), sin Alpaca
+    - Escribe en ft_operaciones / ft_estrategias / ft_metricas_diarias
+    - No envia ordenes al broker
 
 Uso:
-    python scripts/forward_testing/ft_bot_tech_sectorial.py
-    python scripts/forward_testing/ft_bot_tech_sectorial.py --dry-run
+    python scripts/forward_testing/ft_bot_combo_v1.py
+    python scripts/forward_testing/ft_bot_combo_v1.py --dry-run
 """
 
 import sys
 import os
 import argparse
 from datetime import date
+from collections import Counter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -51,8 +71,11 @@ except ImportError:
 from sqlalchemy import text
 from src.data.database import get_engine
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
-from scripts.forward_testing.ft_scoring import calcular_score_tecnico
 
+from scripts.forward_testing.ft_scoring import (
+    calcular_score_tecnico,
+    obtener_candle_score_5d,
+)
 from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_precios_cierre_todos,
     abrir_operacion, cerrar_operacion,
@@ -61,7 +84,7 @@ from scripts.forward_testing.ft_utils import (
 
 # ── Parametros de la estrategia ───────────────────────────────────────────────
 
-NOMBRE_ESTRATEGIA = "FT_TECH_SECTOR_v1"
+NOMBRE_ESTRATEGIA = "FT_COMBO_v1"
 
 SECTORES_ACTIVOS = [
     "Technology", "Consumer Cyclical", "Financial Services",
@@ -69,26 +92,28 @@ SECTORES_ACTIVOS = [
     "Energy", "Communication Services", "Consumer Defensive",
 ]
 
-CAPITAL_TOTAL      = 100_000.0
-N_SECTORES         = len(SECTORES_ACTIVOS)                   # 9
-SECTOR_BUDGET      = round(CAPITAL_TOTAL / N_SECTORES, 2)    # 11.111,11
-MAX_POS_SECTOR     = 5
-POSITION_PCT       = 0.20                                    # 20% del presupuesto sectorial
-POSITION_SIZE      = round(SECTOR_BUDGET * POSITION_PCT, 2)  # ~2.222,22
+CAPITAL_TOTAL  = 100_000.0
+N_SECTORES     = len(SECTORES_ACTIVOS)           # 9
+SECTOR_BUDGET  = round(CAPITAL_TOTAL / N_SECTORES, 2)  # 11.111,11
+MAX_POS_SECTOR = 5
+POSITION_PCT   = 0.20
+POSITION_SIZE  = round(SECTOR_BUDGET * POSITION_PCT, 2)  # ~2.222,22
 
-SCORE_ENTRADA      = 4.0
-SCORE_SALIDA       = 3.5
-SCORE_MAXIMO       = 5.5
-ATR_MULT_SL        = 2.0
-ATR_MULT_TP        = 4.0
+SCORE_ENTRADA     = 4.0
+SCORE_SALIDA      = 3.5
+SCORE_MAXIMO      = 5.5
+ATR_MULT_SL       = 2.0
+ATR_MULT_TP       = 4.0
+
+# Umbral minimo de candle score: si un ticker tiene score < este valor
+# se excluye aunque el score tecnico sea perfecto (distribucion activa)
+CANDLE_SCORE_MIN = -3.0
 
 
 # ── Queries especificas de este bot ──────────────────────────────────────────
 
-def obtener_posiciones_con_sector(estrategia_id: int) -> list[dict]:
-    """
-    Posiciones abiertas enriquecidas con el sector del ticker (JOIN activos).
-    """
+def obtener_posiciones_con_sector(estrategia_id: int) -> list:
+    """Posiciones abiertas enriquecidas con el sector del ticker."""
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
@@ -106,10 +131,8 @@ def obtener_posiciones_con_sector(estrategia_id: int) -> list[dict]:
 
 def obtener_indicadores_con_sector() -> list:
     """
-    Indicadores tecnicos del ultimo dia disponible para los 9 sectores activos.
-    JOIN con activos (sector) y precios_diarios (close).
-    Devuelve las columnas que calcular_score_tecnico() necesita:
-        close, sma21, sma50, sma200, rsi14, macd, macd_signal, atr14
+    Indicadores tecnicos del ultimo dia para los 9 sectores activos.
+    Devuelve close, sma21, sma50, sma200, rsi14, macd, macd_signal, atr14.
     """
     engine = get_engine()
     with engine.connect() as conn:
@@ -119,14 +142,13 @@ def obtener_indicadores_con_sector() -> list:
                    i.sma21, i.sma50, i.sma200,
                    i.rsi14, i.macd, i.macd_signal,
                    (i.macd - i.macd_signal) AS macd_hist,
-                   i.atr14,
-                   i.adx, i.vol_relativo
+                   i.atr14
             FROM (
                 SELECT DISTINCT ON (ticker)
                        ticker, fecha,
                        sma21, sma50, sma200,
                        rsi14, macd, macd_signal,
-                       atr14, adx, vol_relativo
+                       atr14
                 FROM indicadores_tecnicos
                 ORDER BY ticker, fecha DESC
             ) i
@@ -140,20 +162,24 @@ def obtener_indicadores_con_sector() -> list:
     return [dict(r._mapping) for r in rows]
 
 
-def obtener_estado_tecnico_tickers(tickers: list[str]) -> dict[str, dict]:
-    """Para posiciones abiertas: trae indicadores actuales para evaluar score de salida."""
+def obtener_estado_tecnico_tickers(tickers: list) -> dict:
+    """Indicadores actuales para evaluar score de salida de posiciones abiertas."""
     if not tickers:
         return {}
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT DISTINCT ON (ticker)
-                   ticker, dist_sma21, dist_sma50, dist_sma200,
-                   rsi14, macd, macd_signal, macd_hist,
-                   adx, vol_relativo, atr14
-            FROM indicadores_tecnicos
-            WHERE ticker = ANY(:tickers)
-            ORDER BY ticker, fecha DESC
+            SELECT DISTINCT ON (i.ticker)
+                   i.ticker,
+                   p.close,
+                   i.sma21, i.sma50, i.sma200,
+                   i.rsi14, i.macd, i.macd_signal,
+                   i.atr14
+            FROM indicadores_tecnicos i
+            JOIN precios_diarios p
+              ON p.ticker = i.ticker AND p.fecha = i.fecha
+            WHERE i.ticker = ANY(:tickers)
+            ORDER BY i.ticker, i.fecha DESC
         """), {"tickers": tickers}).fetchall()
     return {r.ticker: dict(r._mapping) for r in rows}
 
@@ -161,17 +187,17 @@ def obtener_estado_tecnico_tickers(tickers: list[str]) -> dict[str, dict]:
 # ── Evaluacion de cierres ─────────────────────────────────────────────────────
 
 def evaluar_cierres(
-    posiciones:      list[dict],
-    precios:         dict[str, float],
-    earnings_map:    dict[str, date],
-    indicadores_map: dict[str, dict],
-) -> list[dict]:
+    posiciones:      list,
+    precios:         dict,
+    earnings_map:    dict,
+    indicadores_map: dict,
+) -> list:
     """
-    Mismas prioridades que FT_TECH_v1:
+    Prioridades de salida (identicas a FT_TECH_SECTOR_v1):
         P1. Earnings manana  (prioridad absoluta)
-        P2. Score degradado  (<= SCORE_SALIDA)
-        P3. Stop loss ATR    (emergencia)
-        P4. Take profit ATR  (emergencia)
+        P2. Score degradado  (<= SCORE_SALIDA) — exit primario
+        P3. Stop loss ATR    — exit emergencia
+        P4. Take profit ATR  — exit emergencia
     """
     if not posiciones:
         return []
@@ -180,9 +206,8 @@ def evaluar_cierres(
 
     for pos in posiciones:
         ticker         = pos["ticker"]
-        precio_entrada = float(pos["precio_entrada"])
         precio_actual  = precios.get(ticker)
-        sl             = float(pos["stop_loss"])  if pos.get("stop_loss")  else None
+        sl             = float(pos["stop_loss"])   if pos.get("stop_loss")   else None
         tp             = float(pos["take_profit"]) if pos.get("take_profit") else None
         ind            = indicadores_map.get(ticker)
 
@@ -192,21 +217,15 @@ def evaluar_cierres(
 
         motivo = None
 
-        # P1: Earnings
         if ticker in earnings_map:
             motivo = "EARNINGS_MANANA"
-
-        # P2: Score degradado
         elif ind:
             score_actual, _ = calcular_score_tecnico(ind)
             if score_actual <= SCORE_SALIDA:
                 motivo = f"SCORE_DEGRADADO_{score_actual:.1f}"
 
-        # P3: Stop loss ATR
         if not motivo and sl and precio_actual <= sl:
             motivo = "STOP_LOSS_ATR"
-
-        # P4: Take profit ATR
         if not motivo and tp and precio_actual >= tp:
             motivo = "TAKE_PROFIT_ATR"
 
@@ -222,24 +241,25 @@ def evaluar_cierres(
 
 # ── Evaluacion de entradas por sector ─────────────────────────────────────────
 
-def evaluar_entradas_sectorial(
-    posiciones:         list[dict],
-    indicadores:        list[dict],
-    precios:            dict[str, float],
+def evaluar_entradas_combo(
+    posiciones:         list,
+    indicadores:        list,
+    candle_scores:      dict,
+    precios:            dict,
     tickers_bloqueados: set,
     tickers_cerrados:   set,
-) -> list[dict]:
+) -> list:
     """
     Para cada sector:
-        1. Calcula cuanto capital ya esta desplegado en ese sector
-        2. Determina slots disponibles (max 5 por sector)
-        3. Rankea candidatos qualifying por score (desc)
-        4. Abre hasta completar slots o presupuesto sectorial
+        1. Filtra candidatos con tech_score >= SCORE_ENTRADA
+        2. Descarta tickers con candle_score_5d < CANDLE_SCORE_MIN
+        3. Rankea por (tech_score DESC, candle_score_5d DESC)
+        4. Abre los mejores hasta completar slots o presupuesto sectorial
     """
     tickers_abiertos = {p["ticker"] for p in posiciones}
     excluidos        = tickers_bloqueados | tickers_abiertos | tickers_cerrados
 
-    # Capital ya desplegado por sector
+    # Capital y slots abiertos por sector
     sector_deployed = {}
     sector_n_open   = {}
     for pos in posiciones:
@@ -247,54 +267,63 @@ def evaluar_entradas_sectorial(
         sector_deployed[s] = sector_deployed.get(s, 0.0) + float(pos["capital_entrada"])
         sector_n_open[s]   = sector_n_open.get(s, 0) + 1
 
-    # Candidatos qualifying por sector (score >= SCORE_ENTRADA)
-    candidatos_por_sector: dict[str, list] = {s: [] for s in SECTORES_ACTIVOS}
+    # Candidatos qualifying por sector
+    candidatos_por_sector = {s: [] for s in SECTORES_ACTIVOS}
 
     for ind in indicadores:
         t = ind["ticker"]
         s = ind.get("sector", "Unknown")
         if t in excluidos or s not in SECTORES_ACTIVOS:
             continue
-        score, detalle = calcular_score_tecnico(ind)
-        if score < SCORE_ENTRADA:
+
+        tech_score, detalle = calcular_score_tecnico(ind)
+        if tech_score < SCORE_ENTRADA:
             continue
+
+        candle_score = candle_scores.get(t, 0.0)
+
+        # Umbral minimo de velas: excluir si distribucion activa
+        if candle_score < CANDLE_SCORE_MIN:
+            continue
+
         candidatos_por_sector[s].append({
-            "ticker":  t,
-            "sector":  s,
-            "score":   score,
-            "detalle": detalle,
-            "ind":     ind,
+            "ticker":       t,
+            "sector":       s,
+            "tech_score":   tech_score,
+            "candle_score": candle_score,
+            "detalle":      detalle,
+            "ind":          ind,
         })
 
-    # Ordenar por score dentro de cada sector
+    # Ranking por (tech_score DESC, candle_score DESC) dentro de cada sector
     for s in candidatos_por_sector:
-        candidatos_por_sector[s].sort(key=lambda x: x["score"], reverse=True)
+        candidatos_por_sector[s].sort(
+            key=lambda x: (x["tech_score"], x["candle_score"]),
+            reverse=True,
+        )
 
     a_abrir = []
 
     for sector in SECTORES_ACTIVOS:
-        candidatos    = candidatos_por_sector[sector]
-        deployed      = sector_deployed.get(sector, 0.0)
-        n_open        = sector_n_open.get(sector, 0)
-        available     = round(SECTOR_BUDGET - deployed, 2)
-        slots         = MAX_POS_SECTOR - n_open
+        candidatos = candidatos_por_sector[sector]
+        deployed   = sector_deployed.get(sector, 0.0)
+        n_open     = sector_n_open.get(sector, 0)
+        available  = round(SECTOR_BUDGET - deployed, 2)
+        slots      = MAX_POS_SECTOR - n_open
 
         if not candidatos:
             continue
-
         if slots <= 0:
             log(f"  [{sector}] Max posiciones ({MAX_POS_SECTOR}) alcanzado.")
             continue
-
         if available <= 0:
-            log(f"  [{sector}] Presupuesto sectorial agotado "
-                f"({deployed:,.2f}/{SECTOR_BUDGET:,.2f}).")
+            log(f"  [{sector}] Presupuesto agotado ({deployed:,.2f}/{SECTOR_BUDGET:,.2f}).")
             continue
 
         log(f"  [{sector}] {len(candidatos)} candidatos | "
             f"slots={slots} | disponible=${available:,.2f}")
 
-        avail_local = available   # copia local para descontar en el loop
+        avail_local = available
 
         for c in candidatos:
             if slots <= 0 or avail_local <= 0:
@@ -312,30 +341,31 @@ def evaluar_entradas_sectorial(
 
             qty = int(POSITION_SIZE / precio)
             if qty < 1:
-                log(f"    [SKIP] {ticker}: precio ${precio:.2f} > position_size "
-                    f"${POSITION_SIZE:,.2f} (1 share no cabe).")
+                log(f"    [SKIP] {ticker}: precio ${precio:.2f} > "
+                    f"position_size ${POSITION_SIZE:,.2f}.")
                 continue
 
             capital_trade = round(precio * qty, 2)
             if capital_trade > avail_local:
                 log(f"    [SKIP] {ticker}: trade ${capital_trade:,.2f} > "
-                    f"disponible sector ${avail_local:,.2f}.")
+                    f"disponible ${avail_local:,.2f}.")
                 continue
 
             sl = round(precio - ATR_MULT_SL * atr, 4)
             tp = round(precio + ATR_MULT_TP * atr, 4)
 
             a_abrir.append({
-                "ticker":  ticker,
-                "sector":  sector,
-                "precio":  precio,
-                "qty":     qty,
-                "capital": capital_trade,
-                "sl":      sl,
-                "tp":      tp,
-                "score":   c["score"],
-                "detalle": c["detalle"],
-                "atr":     round(atr, 4),
+                "ticker":       ticker,
+                "sector":       sector,
+                "precio":       precio,
+                "qty":          qty,
+                "capital":      capital_trade,
+                "sl":           sl,
+                "tp":           tp,
+                "tech_score":   c["tech_score"],
+                "candle_score": c["candle_score"],
+                "detalle":      c["detalle"],
+                "atr":          round(atr, 4),
             })
 
             avail_local -= capital_trade
@@ -348,12 +378,14 @@ def evaluar_entradas_sectorial(
 
 def run(dry_run: bool = False):
     hoy = date.today()
-    sep = "-" * 60
+    sep = "-" * 62
 
     log(sep)
-    log(f"FT Bot Tecnico Sectorial | {hoy} {'[DRY RUN]' if dry_run else ''}")
+    log(f"FT Bot COMBO v1 | {hoy} {'[DRY RUN]' if dry_run else ''}")
     log(f"  {N_SECTORES} sectores x ${SECTOR_BUDGET:,.2f} | "
-        f"Position size: ${POSITION_SIZE:,.2f} | Max {MAX_POS_SECTOR} pos/sector")
+        f"Position: ${POSITION_SIZE:,.2f} | Max {MAX_POS_SECTOR}/sector")
+    log(f"  Ranking: tech_score DESC, candle_score_5d DESC | "
+        f"Filtro candle: >= {CANDLE_SCORE_MIN}")
     log(sep)
 
     # 1. Cargar estrategia
@@ -367,51 +399,52 @@ def run(dry_run: bool = False):
     log(f"Estrategia id={eid} | capital={estrategia['capital_actual']:,.2f} | "
         f"cash={estrategia['cash_disponible']:,.2f}")
 
-    # 2. Precios de cierre
-    precios = obtener_precios_cierre_todos()
-    log(f"Precios cargados: {len(precios)} tickers")
+    # 2. Datos de mercado (3 queries en paralelo conceptual — se ejecutan secuencialmente)
+    precios      = obtener_precios_cierre_todos()
+    indicadores  = obtener_indicadores_con_sector()
+    candle_scores = obtener_candle_score_5d()   # dict {ticker: score}
 
-    # 3. Indicadores con sector
-    indicadores = obtener_indicadores_con_sector()
-    log(f"Indicadores cargados: {len(indicadores)} tickers en {N_SECTORES} sectores")
+    log(f"Precios: {len(precios)} tickers | "
+        f"Indicadores: {len(indicadores)} | "
+        f"Candle scores: {len(candle_scores)} tickers")
 
-    # 4. Posiciones abiertas con sector
+    # 3. Posiciones abiertas con sector
     posiciones = obtener_posiciones_con_sector(eid)
     log(f"Posiciones abiertas: {len(posiciones)}")
 
-    # Resumen por sector
     if posiciones:
-        from collections import Counter
         sector_count = Counter(p["sector"] for p in posiciones)
         for s, n in sorted(sector_count.items()):
-            dep = sum(float(p["capital_entrada"]) for p in posiciones if p["sector"] == s)
+            dep = sum(float(p["capital_entrada"])
+                      for p in posiciones if p["sector"] == s)
             log(f"  {s}: {n} pos | ${dep:,.2f} / ${SECTOR_BUDGET:,.2f}")
 
-    # 5. Filtro earnings para posiciones abiertas
+    # 4. Filtro earnings — posiciones abiertas
     tickers_pos     = [p["ticker"] for p in posiciones]
     earnings_cierre = tickers_a_cerrar_hoy(tickers_pos) if tickers_pos else {}
     if earnings_cierre:
-        log(f"Earnings manana (cerrar hoy): {list(earnings_cierre.keys())}")
+        log(f"Earnings manana (cerrar): {list(earnings_cierre.keys())}")
 
-    # 6. Evaluar cierres
+    # 5. Evaluar cierres
     log(sep)
     log("CIERRES:")
-    tickers_pos_all   = [p["ticker"] for p in posiciones]
-    indicadores_map   = obtener_estado_tecnico_tickers(tickers_pos_all)
-    a_cerrar          = evaluar_cierres(posiciones, precios, earnings_cierre, indicadores_map)
-    tickers_cerrados  = set()
+    tickers_pos_all = [p["ticker"] for p in posiciones]
+    indicadores_map = obtener_estado_tecnico_tickers(tickers_pos_all)
+    a_cerrar        = evaluar_cierres(posiciones, precios, earnings_cierre, indicadores_map)
+    tickers_cerrados = set()
 
     if not a_cerrar:
         log("  Sin posiciones a cerrar.")
     else:
         for c in a_cerrar:
-            ticker = c["ticker"]
-            precio = c["precio_cierre"]
-            motivo = c["motivo"]
-            pnl_est = round((precio - float(c["precio_entrada"])) * int(c["cantidad"]), 2)
+            ticker  = c["ticker"]
+            precio  = c["precio_cierre"]
+            motivo  = c["motivo"]
+            pnl_est = round(
+                (precio - float(c["precio_entrada"])) * int(c["cantidad"]), 2
+            )
             log(f"  CERRAR {ticker} [{c.get('sector','-')}] | "
                 f"precio={precio:.2f} | pnl_est={pnl_est:+.2f} | motivo={motivo}")
-
             tickers_cerrados.add(ticker)
 
             if not dry_run:
@@ -419,40 +452,53 @@ def run(dry_run: bool = False):
                 log(f"    -> pnl={resultado.get('pnl', 0):+.2f} "
                     f"({resultado.get('pnl_pct', 0):+.2f}%)")
 
-    # 7. Recargar posiciones y estrategia tras cierres
+    # 6. Recargar tras cierres
     if not dry_run and a_cerrar:
         posiciones = obtener_posiciones_con_sector(eid)
         estrategia = cargar_estrategia(NOMBRE_ESTRATEGIA)
 
-    # 8. Filtro earnings para candidatos de entrada
+    # 7. Filtro earnings — candidatos de entrada
     tickers_candidatos = [i["ticker"] for i in indicadores]
     earnings_bloqueo   = tickers_a_bloquear_entrada(tickers_candidatos) if tickers_candidatos else {}
     tickers_bloqueados = set(earnings_bloqueo.keys())
     if tickers_bloqueados:
         log(f"Bloqueados por earnings proximos: {len(tickers_bloqueados)} tickers")
 
-    # 9. Evaluar entradas por sector
+    # 8. Evaluar entradas por sector
     log(sep)
     log("ENTRADAS POR SECTOR:")
-    a_abrir = evaluar_entradas_sectorial(
-        posiciones, indicadores, precios,
-        tickers_bloqueados, tickers_cerrados,
+    a_abrir = evaluar_entradas_combo(
+        posiciones, indicadores, candle_scores,
+        precios, tickers_bloqueados, tickers_cerrados,
     )
+
+    # Estadistica de candle scores de candidatos
+    candle_vals = [candle_scores.get(i["ticker"], 0.0) for i in indicadores]
+    excluidos_candle = sum(
+        1 for i in indicadores
+        if calcular_score_tecnico(i)[0] >= SCORE_ENTRADA
+        and candle_scores.get(i["ticker"], 0.0) < CANDLE_SCORE_MIN
+    )
+    if excluidos_candle:
+        log(f"  [INFO] {excluidos_candle} tickers excluidos por candle_score < {CANDLE_SCORE_MIN}")
 
     if not a_abrir:
         log("  Sin entradas.")
     else:
         for e in a_abrir:
             log(f"  ABRIR {e['ticker']} [{e['sector']}] | "
+                f"tech={e['tech_score']:.1f}/{SCORE_MAXIMO} | "
+                f"candle={e['candle_score']:+.1f} | "
                 f"precio={e['precio']:.2f} | qty={e['qty']} | "
-                f"capital={e['capital']:,.2f} | score={e['score']:.1f}/{SCORE_MAXIMO} | "
-                f"sl={e['sl']:.2f} | tp={e['tp']:.2f} | atr={e['atr']:.4f}")
+                f"capital={e['capital']:,.2f} | "
+                f"sl={e['sl']:.2f} | tp={e['tp']:.2f}")
 
             if not dry_run:
                 detalle = {
                     **e["detalle"],
                     "sector":        e["sector"],
-                    "score":         e["score"],
+                    "tech_score":    e["tech_score"],
+                    "candle_score":  e["candle_score"],
                     "score_maximo":  SCORE_MAXIMO,
                     "atr":           e["atr"],
                     "sl_mult_atr":   ATR_MULT_SL,
@@ -468,13 +514,13 @@ def run(dry_run: bool = False):
                     cantidad=e["qty"],
                     stop_loss=e["sl"],
                     take_profit=e["tp"],
-                    score=e["score"],
+                    score=e["tech_score"],
                     detalle=detalle,
                 )
                 if op_id:
                     log(f"    -> operacion id={op_id} registrada.")
 
-    # 10. Guardar candidatos del dia (abiertos + oportunidades)
+    # 9. Guardar candidatos del dia
     log(sep)
     log("CANDIDATOS:")
     tickers_abiertos_hoy = {p["ticker"] for p in posiciones}
@@ -486,27 +532,40 @@ def run(dry_run: bool = False):
         s = ind.get("sector", "Unknown")
         if t in tickers_abiertos_hoy or t in tickers_bloqueados:
             continue
-        score, _ = calcular_score_tecnico(ind)
-        if score < SCORE_ENTRADA:
+        tech_score, _ = calcular_score_tecnico(ind)
+        if tech_score < SCORE_ENTRADA:
             continue
+        candle_score = candle_scores.get(t, 0.0)
+        # Guardamos TODOS los qualifying tecnicos (incluso los excluidos por candle)
         entro = t in tickers_que_abrimos
+        motivo_skip = None
+        if not entro:
+            if candle_score < CANDLE_SCORE_MIN:
+                motivo_skip = f"CANDLE_SCORE_{candle_score:.1f}"
+            else:
+                motivo_skip = f"CAPITAL_O_SLOTS_{s}"
         candidatos_log.append({
             "ticker":      t,
-            "score":       float(score),
+            "score":       float(tech_score),
             "entro":       entro,
-            "motivo_skip": None if entro else f"CAPITAL_O_SLOTS_{s}",
+            "motivo_skip": motivo_skip,
         })
 
     if candidatos_log:
         n_entro = sum(1 for c in candidatos_log if c["entro"])
-        log(f"  {len(candidatos_log)} qualifying — {n_entro} abiertos, "
-            f"{len(candidatos_log)-n_entro} oportunidades")
+        n_candle_filter = sum(
+            1 for c in candidatos_log
+            if (c.get("motivo_skip") or "").startswith("CANDLE_SCORE")
+        )
+        log(f"  {len(candidatos_log)} qualifying — {n_entro} abiertos | "
+            f"{n_candle_filter} filtrados por candle | "
+            f"{len(candidatos_log)-n_entro-n_candle_filter} por capital/slots")
         if not dry_run:
             registrar_candidatos_diarios(eid, hoy, candidatos_log)
     else:
         log("  Sin candidatos qualifying hoy.")
 
-    # 11. Registrar metricas del dia
+    # 10. Metricas del dia
     log(sep)
     if not dry_run:
         registrar_metricas_diarias(eid, hoy)
@@ -520,7 +579,7 @@ def run(dry_run: bool = False):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="FT Bot Tecnico Sectorial")
+    parser = argparse.ArgumentParser(description="FT Bot COMBO v1")
     parser.add_argument("--dry-run", action="store_true",
                         help="Evalua sin escribir en DB")
     args = parser.parse_args()

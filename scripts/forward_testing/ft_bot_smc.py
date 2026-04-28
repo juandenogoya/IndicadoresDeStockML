@@ -47,7 +47,7 @@ except ImportError:
     pass
 
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
-from src.trading.strategy_structure import (
+from scripts.forward_testing.ft_scoring import (
     calcular_score_estructura,
     obtener_features_hoy,
     obtener_estructura_tickers,
