@@ -318,7 +318,13 @@ def paso_scanner() -> list:
     from src.pipeline.telegram_notifier import enviar_resumen
 
     modelos    = cargar_modelos_v3()
-    scan_fecha = datetime.now()
+    # Usar el ultimo dia habil como fecha del scan (no datetime.now() que puede
+    # cruzar medianoche UTC si el cron tarda mucho o corre en re-run nocturno)
+    from datetime import date as _date
+    from src.utils.trading_calendar import is_trading_day, prev_trading_day
+    _hoy = _date.today()
+    _dia_habil = _hoy if is_trading_day(_hoy) else prev_trading_day(_hoy)
+    scan_fecha = datetime(_dia_habil.year, _dia_habil.month, _dia_habil.day, 21, 0, 0)
     resultados = []
 
     for i, ticker in enumerate(ALL_TICKERS, 1):
