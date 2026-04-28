@@ -551,23 +551,24 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
     """
     import sys as _sys
 
-    # ── Deteccion de fin de semana / dia no habil ────────────────────────────
-    # Sabado (5) y Domingo (6) no tienen datos de mercado en yfinance.
-    # 199/199 "sin opciones" + 0 errores en fin de semana es comportamiento normal,
-    # no un fallo del pipeline. Evitar exit(1) y falsa alarma en Telegram.
+    # ── Deteccion de dia no habil NYSE (fin de semana o feriado) ────────────
+    # Si 0 filas + 0 errores + todos sin opciones en un dia no habil:
+    # es comportamiento esperado, no un fallo. Evitar exit(1) y alarma falsa.
     from datetime import date as _date
+    from src.utils.trading_calendar import is_trading_day, describe_date
     fecha_obj = fecha if isinstance(fecha, _date) else _date.fromisoformat(str(fecha))
     if total_filas == 0 and errores == 0 and sin_opciones >= n_tickers * 0.95:
-        if fecha_obj.weekday() >= 5:  # 5=Sabado, 6=Domingo
+        if not is_trading_day(fecha_obj):
             ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
-            weekday_name = "Sabado" if fecha_obj.weekday() == 5 else "Domingo"
-            log(f"  [POST-CHECK] Fecha {fecha} es {weekday_name} — mercado cerrado, normal.")
+            desc = describe_date(fecha_obj)
+            log(f"  [POST-CHECK] {desc} — mercado cerrado, sin datos esperado.")
             try:
                 from src.pipeline.telegram_notifier import _send as _tg_send
                 _tg_send(
-                    "ℹ️ <b>Snapshot EOD — fin de semana</b>\n"
-                    f"<i>{fecha} ({weekday_name}) | {ts}</i>\n"
-                    "Mercado cerrado. Sin opciones disponibles. Comportamiento normal."
+                    "ℹ️ <b>Snapshot EOD — dia no habil</b>\n"
+                    f"<i>{ts}</i>\n"
+                    f"Fecha: {desc}\n"
+                    "Sin opciones disponibles. Comportamiento normal."
                 )
             except Exception as tg_err:
                 log(f"  [WARN] Telegram no disponible: {tg_err}")

@@ -7,7 +7,7 @@ echo ============================================
 echo   CARGA MANUAL OPCIONES SNAPSHOT
 echo ============================================
 echo.
-set /p FECHA="Fecha a poblar (YYYY-MM-DD, ej: 2026-04-23): "
+set /p FECHA="Fecha a poblar (YYYY-MM-DD, ej: 2026-04-27): "
 if "%FECHA%"=="" (
     echo ERROR: fecha requerida.
     pause
@@ -15,7 +15,24 @@ if "%FECHA%"=="" (
 )
 
 echo.
-echo [0/2] Verificando que fecha tienen los datos en yfinance AHORA...
+echo [0/3] Verificando si %FECHA% es dia habil NYSE...
+echo ----------------------------------------
+python scripts/manual/check_fecha.py %FECHA%
+if errorlevel 1 (
+    echo.
+    echo ATENCION: %FECHA% NO es un dia habil NYSE.
+    echo El mercado no opero ese dia - no hay datos de opciones.
+    echo.
+    set /p IGUAL="Continuar de todas formas? (s/n): "
+    if /i not "%IGUAL%"=="s" (
+        echo Operacion cancelada.
+        pause
+        exit /b 0
+    )
+)
+
+echo.
+echo [1/3] Verificando que fecha tienen los datos en yfinance AHORA...
 echo ----------------------------------------
 python scripts/manual/check_yfinance_fecha.py
 echo ----------------------------------------
@@ -33,7 +50,7 @@ if /i not "%CONTINUAR%"=="s" (
 )
 
 echo.
-echo [1/2] DRY RUN para %FECHA% ...
+echo [2/3] DRY RUN para %FECHA% ...
 echo ----------------------------------------
 python scripts/33_opciones_snapshot.py --fecha %FECHA% --dry-run
 echo ----------------------------------------
@@ -46,7 +63,7 @@ if /i not "%CONFIRM%"=="s" (
 )
 
 echo.
-echo [2/2] Cargando datos a DB...
+echo [3/3] Cargando datos a DB...
 echo ----------------------------------------
 python scripts/33_opciones_snapshot.py --fecha %FECHA%
 echo ----------------------------------------
