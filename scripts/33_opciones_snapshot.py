@@ -551,6 +551,28 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
     """
     import sys as _sys
 
+    # ── Deteccion de fin de semana / dia no habil ────────────────────────────
+    # Sabado (5) y Domingo (6) no tienen datos de mercado en yfinance.
+    # 199/199 "sin opciones" + 0 errores en fin de semana es comportamiento normal,
+    # no un fallo del pipeline. Evitar exit(1) y falsa alarma en Telegram.
+    from datetime import date as _date
+    fecha_obj = fecha if isinstance(fecha, _date) else _date.fromisoformat(str(fecha))
+    if total_filas == 0 and errores == 0 and sin_opciones >= n_tickers * 0.95:
+        if fecha_obj.weekday() >= 5:  # 5=Sabado, 6=Domingo
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+            weekday_name = "Sabado" if fecha_obj.weekday() == 5 else "Domingo"
+            log(f"  [POST-CHECK] Fecha {fecha} es {weekday_name} — mercado cerrado, normal.")
+            try:
+                from src.pipeline.telegram_notifier import _send as _tg_send
+                _tg_send(
+                    "ℹ️ <b>Snapshot EOD — fin de semana</b>\n"
+                    f"<i>{fecha} ({weekday_name}) | {ts}</i>\n"
+                    "Mercado cerrado. Sin opciones disponibles. Comportamiento normal."
+                )
+            except Exception as tg_err:
+                log(f"  [WARN] Telegram no disponible: {tg_err}")
+            return   # sin exit(1)
+
     # ── Deteccion de run redundante ───────────────────────────────────────────
     # Ocurre cuando el cron de respaldo (2do intento) corre despues de que
     # el 1er intento ya escribio todos los datos. UNIQUE constraint -> 0 rows nuevas.

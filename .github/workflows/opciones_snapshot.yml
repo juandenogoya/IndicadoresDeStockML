@@ -2,20 +2,23 @@ name: Opciones Snapshot Diario
 
 on:
   schedule:
-    # Dos intentos en ventana pre-apertura (mercado NY abre 13:30 UTC).
-    # Ambos corren con --fecha yesterday capturando EOD del dia anterior.
-    # Si el primero escribe datos, el segundo detecta "ya completo" y termina OK.
-    # Si el primero falla o GH lo demora mucho, el segundo actua como respaldo.
+    # Captura opciones EOD del mismo dia, despues del cierre del mercado NY.
     #
-    # Intento 1 — 10:00 UTC (6 AM ET / 7 AM Argentina)
-    #   Con delay maximo observado de 3h18m -> corre a las 13:18 UTC -> pre-apertura OK
-    # Intento 2 — 11:00 UTC (8 AM Argentina / 7 AM ET)
-    #   Respaldo: si intento 1 fallo o datos incompletos -> reintenta
-    #   Con delay 2h -> 13:00 UTC -> aun pre-apertura OK
+    # Ventana segura: 20:00-03:59 UTC (16:00-23:59 ET)
+    #   - Mercado NY cierra: 20:00 UTC (16:00 ET)
+    #   - Mantenimiento Yahoo empieza: ~04:00 UTC (00:00 ET)
+    #   - Margen de ~7 horas sin riesgo de datos vacios
     #
-    # EVITA ventana mantenimiento Yahoo (00:00-03:00 AM ET = 04:00-07:00 UTC)
-    - cron: '0 10 * * 2-6'
-    - cron: '0 11 * * 2-6'
+    # Intento 1 — 21:00 UTC (17:00 ET)  L-V
+    #   Con delay maximo observado de 3h -> corre hasta 00:00 UTC -> aun seguro
+    # Intento 2 — 22:00 UTC (18:00 ET)  L-V
+    #   Respaldo: corre 1 hora despues del intento 1
+    #   Si intento 1 escribio datos -> detecta run redundante y termina OK
+    #
+    # --fecha usa la fecha DEL DIA (no yesterday) porque corremos el mismo dia del cierre.
+    # Dia 1=Lunes ... 5=Viernes en cron UTC
+    - cron: '0 21 * * 1-5'
+    - cron: '0 22 * * 1-5'
   workflow_dispatch:  # Permite ejecucion manual desde GitHub
 
 jobs:
@@ -42,4 +45,4 @@ jobs:
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONPATH: ${{ github.workspace }}
-        run: python scripts/33_opciones_snapshot.py --fecha $(date -d 'yesterday' +%Y-%m-%d)
+        run: python scripts/33_opciones_snapshot.py --fecha $(date +%Y-%m-%d)

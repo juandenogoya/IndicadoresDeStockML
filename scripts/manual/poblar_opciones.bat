@@ -22,7 +22,8 @@ echo ----------------------------------------
 echo.
 echo IMPORTANTE: si la fecha de yfinance NO coincide con "%FECHA%",
 echo cancelar (n) y ejecutar este script en el horario correcto.
-echo (Ventana valida: despues del cierre y antes de la apertura siguiente)
+echo (Ventana valida: L-V entre 17:00-23:00 ET = 21:00-03:00 UTC)
+echo (Evitar: 00:00-09:00 ET = mantenimiento Yahoo Finance)
 echo.
 set /p CONTINUAR="Continuar con el DRY RUN? (s/n): "
 if /i not "%CONTINUAR%"=="s" (
