@@ -34,8 +34,19 @@ def get_engine():
 # ── Conexión psycopg2 (para operaciones directas) ─────────────
 @contextmanager
 def get_connection():
-    """Context manager que abre y cierra la conexión automáticamente."""
-    conn = psycopg2.connect(**DB_CONFIG)
+    """
+    Context manager que abre y cierra la conexion automaticamente.
+    Prioridad: DATABASE_URL (Railway / GH Actions / Cloud) > DB_CONFIG (localhost).
+    Mismo comportamiento que get_engine() para que reads y writes apunten siempre
+    a la misma base de datos.
+    """
+    import os
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        db_url = db_url.strip().replace("postgres://", "postgresql://", 1)
+        conn = psycopg2.connect(db_url, sslmode="require")
+    else:
+        conn = psycopg2.connect(**DB_CONFIG)
     try:
         yield conn
         conn.commit()
