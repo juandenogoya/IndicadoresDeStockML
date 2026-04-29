@@ -474,7 +474,8 @@ def _check_datos_existentes(fecha: date) -> int:
 
 def cmd_run(tickers: list[str], dry_run: bool = False,
             fecha_override: Optional[date] = None, intento: int = 1):
-    fecha_hoy = fecha_override or date.today()
+    fecha_hoy      = fecha_override or date.today()
+    _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
 
     log("=" * 60)
     log(f"  OPCIONES SNAPSHOT  |  {fecha_hoy}")
@@ -493,15 +494,17 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
         if filas_existentes >= _MIN_FILAS:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
             log(f"  Datos ya disponibles para {fecha_hoy}: {filas_existentes:,} filas — skip.")
-            try:
-                from src.pipeline.telegram_notifier import _send as _tg_send
-                _tg_send(
-                    "ℹ️ <b>Opciones snapshot — datos ya disponibles</b>\n"
-                    f"<i>{fecha_hoy} | {ts}</i>\n"
-                    f"Intento {intento}/3 omitido: ya existen {filas_existentes:,} contratos en DB."
-                )
-            except Exception as tg_err:
-                log(f"  [WARN] Telegram no disponible: {tg_err}")
+            if not _skip_telegram:
+                try:
+                    from src.pipeline.telegram_notifier import _send as _tg_send
+                    nl = "\n"
+                    _tg_send(
+                        f"INFO Opciones snapshot -- datos ya disponibles{nl}"
+                        f"<i>{fecha_hoy} | {ts}</i>{nl}"
+                        f"Intento {intento}/3 omitido: ya existen {filas_existentes:,} contratos en DB."
+                    )
+                except Exception as tg_err:
+                    log(f"  [WARN] Telegram no disponible: {tg_err}")
             return
 
     log("  Cargando precios subyacentes y HV_20d desde DB...")
@@ -576,39 +579,35 @@ _MAX_SIN_OPC     = 60       # > 60 tickers sin contratos = sospechoso (~30%)
 def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones, intento: int = 1):
     """
     Verifica la calidad del snapshot recien escrito en DB.
-    - Envia Telegram siempre (OK, redundante o ISSUES).
-    - Si hay issues criticos: exit(1) -> GH Actions marca FAILED -> email automatico.
-    - Si total_filas == 0 pero la fecha ya tiene datos completos en DB
-      (run redundante / segundo intento): reporta OK y termina sin alarma.
+    - Envia Telegram siempre (OK, redundante o ISSUES), salvo modo manual.
+    - Si hay issues criticos: exit(1) -> GH Actions marca FAILED.
     """
     import sys as _sys
+    _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
 
-    # ── Deteccion de dia no habil NYSE (fin de semana o feriado) ────────────
-    # Si 0 filas + 0 errores + todos sin opciones en un dia no habil:
-    # es comportamiento esperado, no un fallo. Evitar exit(1) y alarma falsa.
+    def _tg(msg):
+        if _skip_telegram:
+            return
+        try:
+            from src.pipeline.telegram_notifier import _send as _tg_send
+            _tg_send(msg)
+        except Exception as tg_err:
+            log(f"  [WARN] Telegram no disponible: {tg_err}")
+
+    # Deteccion de dia no habil NYSE
     from datetime import date as _date
     from src.utils.trading_calendar import is_trading_day, describe_date
     fecha_obj = fecha if isinstance(fecha, _date) else _date.fromisoformat(str(fecha))
     if total_filas == 0 and errores == 0 and sin_opciones >= n_tickers * 0.95:
         if not is_trading_day(fecha_obj):
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+            ts   = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
             desc = describe_date(fecha_obj)
-            log(f"  [POST-CHECK] {desc} — mercado cerrado, sin datos esperado.")
-            try:
-                from src.pipeline.telegram_notifier import _send as _tg_send
-                _tg_send(
-                    "ℹ️ <b>Snapshot EOD — dia no habil</b>\n"
-                    f"<i>{ts}</i>\n"
-                    f"Fecha: {desc}\n"
-                    "Sin opciones disponibles. Comportamiento normal."
-                )
-            except Exception as tg_err:
-                log(f"  [WARN] Telegram no disponible: {tg_err}")
-            return   # sin exit(1)
+            log(f"  [POST-CHECK] {desc} -- mercado cerrado, sin datos esperado.")
+            nl = "\n"
+            _tg(f"INFO Snapshot EOD -- dia no habil{nl}<i>{ts}</i>{nl}Fecha: {desc}{nl}Sin opciones. Comportamiento normal.")
+            return
 
-    # ── Deteccion de run redundante ───────────────────────────────────────────
-    # Ocurre cuando el cron de respaldo (2do intento) corre despues de que
-    # el 1er intento ya escribio todos los datos. UNIQUE constraint -> 0 rows nuevas.
+    # Deteccion de run redundante / rate limit
     if total_filas == 0 and errores == 0:
         try:
             engine = get_engine()
@@ -620,121 +619,58 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones, intent
         except Exception:
             filas_db = 0
 
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        nl = "\n"
         if filas_db >= _MIN_FILAS:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
             log(f"  [POST-CHECK] Datos ya existentes: {filas_db:,} filas para {fecha}.")
-            try:
-                from src.pipeline.telegram_notifier import _send as _tg_send
-                msg_skip = "ℹ️ <b>Opciones snapshot — datos ya disponibles</b>
-"
-                msg_skip += f"<i>{fecha} | {ts}</i>
-"
-                msg_skip += f"Intento {intento}/3 omitido: ya existen {filas_db:,} contratos en DB."
-                _tg_send(msg_skip)
-            except Exception as tg_err:
-                log(f"  [WARN] Telegram no disponible: {tg_err}")
-            return   # sin exit(1), todo bien
+            _tg(f"INFO Opciones snapshot -- datos ya disponibles{nl}<i>{fecha} | {ts}</i>{nl}Intento {intento}/3: ya existen {filas_db:,} contratos en DB.")
+            return
 
-        # 0 filas + no hay datos en DB = rate limit de yfinance
+        # Rate limit de yfinance
         _proximos = {1: "02:00 UTC", 2: "11:00 UTC", 3: None}
         proximo   = _proximos.get(intento)
-        ts2 = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
         log(f"  [POST-CHECK] Rate limit yfinance (intento {intento}/3). 0 filas escritas.")
-        try:
-            from src.pipeline.telegram_notifier import _send as _tg_send
-            if proximo:
-                msg_rl = f"⚠️ <b>Opciones snapshot — sin datos (intento {intento}/3)</b>
-"
-                msg_rl += f"<i>{fecha} | {ts2}</i>
-"
-                msg_rl += "yfinance no devolvio contratos (rate limit).
-"
-                msg_rl += f"Proximo intento automatico: <b>{proximo}</b>"
-                _tg_send(msg_rl)
-            else:
-                msg_fail = "🚨 <b>Opciones snapshot — todos los intentos fallaron</b>
-"
-                msg_fail += f"<i>{fecha} | {ts2}</i>
-"
-                msg_fail += "3 intentos sin datos (23:00 / 02:00 / 11:00 UTC).
-"
-                msg_fail += "Requiere revision manual o backfill."
-                _tg_send(msg_fail)
-        except Exception as tg_err:
-            log(f"  [WARN] Telegram no disponible: {tg_err}")
+        if proximo:
+            _tg(f"WARN Opciones snapshot -- sin datos (intento {intento}/3){nl}<i>{fecha} | {ts}</i>{nl}yfinance sin contratos (rate limit).{nl}Proximo intento: <b>{proximo}</b>")
+        else:
+            _tg(f"ERROR Opciones snapshot -- todos los intentos fallaron{nl}<i>{fecha} | {ts}</i>{nl}3 intentos sin datos (23:00 / 02:00 / 11:00 UTC).{nl}Requiere revision manual.")
         if intento < 3:
-            return   # hay mas intentos -- no es fallo critico aun
-        # intento 3 fallo: cae a issues para exit(1)
+            return
 
+    issues   = []
+    warnings = []
 
-    issues    = []   # criticos  -> exit(1) + Telegram rojo
-    warnings  = []   # menores   -> solo Telegram amarillo
-
-    # ── Checks ───────────────────────────────────────────────────────────────
     if total_filas == 0:
         issues.append("0 filas escritas en opciones_snapshot (posible fallo yfinance o DB)")
     elif total_filas < _MIN_FILAS:
-        issues.append(
-            f"Solo {total_filas:,} filas insertadas "
-            f"(minimo esperado {_MIN_FILAS:,} con {n_tickers} tickers)"
-        )
+        issues.append(f"Solo {total_filas:,} filas (minimo {_MIN_FILAS:,} con {n_tickers} tickers)")
 
     if errores > _MAX_ERRORES:
-        issues.append(
-            f"{errores}/{n_tickers} tickers con error al recolectar "
-            f"({errores/n_tickers*100:.0f}%)"
-        )
+        issues.append(f"{errores}/{n_tickers} tickers con error ({errores/n_tickers*100:.0f}%)")
     elif errores > 10:
         warnings.append(f"{errores}/{n_tickers} tickers con error")
 
     if sin_opciones > _MAX_SIN_OPC:
-        warnings.append(
-            f"{sin_opciones}/{n_tickers} tickers sin contratos activos "
-            f"({sin_opciones/n_tickers*100:.0f}%)"
-        )
+        warnings.append(f"{sin_opciones}/{n_tickers} sin contratos ({sin_opciones/n_tickers*100:.0f}%)")
 
-    # ── Telegram ─────────────────────────────────────────────────────────────
-    try:
-        from src.pipeline.telegram_notifier import _send as _tg_send
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+    nl = "\n"
+    if issues:
+        iss_str = nl.join(f"  - {x}" for x in issues)
+        _tg(f"ERROR Snapshot EOD FALLIDO{nl}<i>{fecha} | {ts}</i>{nl}{nl}<b>Issues:</b>{nl}{iss_str}{nl}Revisar GH Actions.")
+    elif warnings:
+        warn_str = nl.join(f"  - {x}" for x in warnings)
+        _tg(f"WARN Snapshot EOD con advertencias{nl}<i>{fecha} | {ts}</i>{nl}{total_filas:,} filas | {n_tickers} tickers{nl}<b>Advertencias:</b>{nl}{warn_str}")
+    else:
+        _tg(f"OK Snapshot EOD OK{nl}<i>{fecha} | {ts}</i>{nl}{total_filas:,} filas | {n_tickers} tickers | {errores} errores")
 
-        if issues:
-            iss_str  = "\n".join(f"  - {x}" for x in issues)
-            warn_str = ("\n<b>Advertencias:</b>\n" + "\n".join(f"  - {x}" for x in warnings)) if warnings else ""
-            tg_text  = (
-                "\U0001f6a8 <b>Snapshot EOD FALLIDO</b>\n"
-                f"<i>{fecha} | {ts}</i>\n\n"
-                f"<b>Issues criticos:</b>\n{iss_str}"
-                f"{warn_str}\n\n"
-                "Revisar GH Actions y yfinance."
-            )
-        elif warnings:
-            warn_str = "\n".join(f"  - {x}" for x in warnings)
-            tg_text  = (
-                "\u26a0\ufe0f <b>Snapshot EOD con advertencias</b>\n"
-                f"<i>{fecha} | {ts}</i>\n\n"
-                f"{total_filas:,} filas | {n_tickers} tickers\n\n"
-                f"<b>Advertencias:</b>\n{warn_str}"
-            )
-        else:
-            tg_text  = (
-                "\u2705 <b>Snapshot EOD OK</b>\n"
-                f"<i>{fecha} | {ts}</i>\n"
-                f"{total_filas:,} filas | {n_tickers} tickers | {errores} errores"
-            )
-
-        _tg_send(tg_text)
-    except Exception as tg_err:
-        log(f"  [WARN] Telegram no disponible: {tg_err}")
-
-    # ── Exit ─────────────────────────────────────────────────────────────────
     if issues:
         log("")
         log("  [POST-CHECK] ISSUES CRITICOS:")
         for x in issues:
             log(f"    - {x}")
-        import sys as _sys2
-        _sys2.exit(1)
+        _sys.exit(1)
+
 
 
 def cmd_backfill_resumen():
