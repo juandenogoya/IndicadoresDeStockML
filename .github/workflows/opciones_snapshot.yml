@@ -2,24 +2,22 @@ name: Opciones Snapshot Diario
 
 on:
   schedule:
-    # Captura opciones EOD del mismo dia, despues del cierre del mercado NY.
+    # 3 intentos diarios para resistir rate limiting de yfinance post-cierre.
+    # Cada intento verifica si ya hay datos en DB antes de correr.
+    # Si los datos existen -> Telegram "ya disponible" -> exit 0 (skip).
+    # Si 0 contratos (rate limit) -> Telegram "proximo intento HH:MM" -> exit 0.
+    # Solo el intento 3 fallido genera exit 1 (error critico).
     #
-    # Ventana segura: 20:00-03:59 UTC (16:00-23:59 ET)
-    #   - Mercado NY cierra: 20:00 UTC (16:00 ET)
-    #   - Mantenimiento Yahoo empieza: ~04:00 UTC (00:00 ET)
-    #   - Margen de ~7 horas sin riesgo de datos vacios
+    # Intento 1 -- 23:00 UTC L-V  (3hs post-cierre, mismo dia)
+    # Intento 2 -- 02:00 UTC Ma-Sa (madrugada, dia siguiente)
+    # Intento 3 -- 11:00 UTC Ma-Sa (2.5hs antes apertura, dia siguiente)
     #
-    # Intento 1 — 21:00 UTC (17:00 ET)  L-V
-    #   Con delay maximo observado de 3h -> corre hasta 00:00 UTC -> aun seguro
-    # Intento 2 — 22:00 UTC (18:00 ET)  L-V
-    #   Respaldo: corre 1 hora despues del intento 1
-    #   Si intento 1 escribio datos -> detecta run redundante y termina OK
-    #
-    # --fecha usa la fecha DEL DIA (no yesterday) porque corremos el mismo dia del cierre.
-    # Dia 1=Lunes ... 5=Viernes en cron UTC
-    - cron: '0 21 * * 1-5'
-    - cron: '0 22 * * 1-5'
-  workflow_dispatch:  # Permite ejecucion manual desde GitHub
+    # --fecha: intento 1 usa la fecha del mismo dia;
+    #          intentos 2 y 3 usan la fecha de ayer (prev trading day).
+    - cron: '0 23 * * 1-5'
+    - cron: '0  2 * * 2-6'
+    - cron: '0 11 * * 2-6'
+  workflow_dispatch:
 
 jobs:
   opciones:
@@ -39,10 +37,40 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Snapshot opciones (calls/puts EOD)
+      - name: Snapshot opciones -- Intento 1 (23:00 UTC)
+        if: github.event.schedule == '0 23 * * 1-5' || github.event_name == 'workflow_dispatch'
         env:
           DATABASE_URL:        ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONPATH: ${{ github.workspace }}
-        run: python scripts/33_opciones_snapshot.py --fecha $(date +%Y-%m-%d)
+        run: python scripts/33_opciones_snapshot.py --intento 1 --fecha $(date +%Y-%m-%d)
+
+      - name: Snapshot opciones -- Intento 2 (02:00 UTC)
+        if: github.event.schedule == '0  2 * * 2-6'
+        env:
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python scripts/33_opciones_snapshot.py --intento 2 --fecha $(date -d 'yesterday' +%Y-%m-%d)
+
+      - name: Snapshot opciones -- Intento 3 (11:00 UTC)
+        if: github.event.schedule == '0 11 * * 2-6'
+        env:
+          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python scripts/33_opciones_snapshot.py --intento 3 --fecha $(date -d 'yesterday' +%Y-%m-%d)
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR -- Opciones Snapshot</b>%0AWorkflow fallido (3 intentos sin datos).%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

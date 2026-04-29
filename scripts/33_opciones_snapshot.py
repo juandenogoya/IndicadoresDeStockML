@@ -459,7 +459,21 @@ def persistir_resumenes(resumenes: list[dict]) -> int:
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
-def cmd_run(tickers: list[str], dry_run: bool = False, fecha_override: Optional[date] = None):
+def _check_datos_existentes(fecha: date) -> int:
+    """Retorna cuantas filas hay en opciones_snapshot para la fecha dada."""
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            return conn.execute(
+                text("SELECT COUNT(*) FROM opciones_snapshot WHERE fecha_snapshot = :f"),
+                {"f": fecha}
+            ).scalar() or 0
+    except Exception:
+        return 0
+
+
+def cmd_run(tickers: list[str], dry_run: bool = False,
+            fecha_override: Optional[date] = None, intento: int = 1):
     fecha_hoy = fecha_override or date.today()
 
     log("=" * 60)
@@ -470,7 +484,25 @@ def cmd_run(tickers: list[str], dry_run: bool = False, fecha_override: Optional[
     log(f"  MAX_DTE   : {MAX_DTE} dias")
     log(f"  MIN_OI    : {MIN_OI} (umbral sin volumen)")
     log(f"  Modo      : {'DRY RUN' if dry_run else 'REAL'}")
+    log(f"  Intento   : {intento}/3")
     log("=" * 60)
+
+    # ── Check previo: datos ya existentes ────────────────────────────────────
+    if not dry_run:
+        filas_existentes = _check_datos_existentes(fecha_hoy)
+        if filas_existentes >= _MIN_FILAS:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+            log(f"  Datos ya disponibles para {fecha_hoy}: {filas_existentes:,} filas — skip.")
+            try:
+                from src.pipeline.telegram_notifier import _send as _tg_send
+                _tg_send(
+                    "ℹ️ <b>Opciones snapshot — datos ya disponibles</b>\n"
+                    f"<i>{fecha_hoy} | {ts}</i>\n"
+                    f"Intento {intento}/3 omitido: ya existen {filas_existentes:,} contratos en DB."
+                )
+            except Exception as tg_err:
+                log(f"  [WARN] Telegram no disponible: {tg_err}")
+            return
 
     log("  Cargando precios subyacentes y HV_20d desde DB...")
     precios = _get_precios_subyacentes(tickers)
@@ -530,7 +562,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False, fecha_override: Optional[
     log("  Completado.")
 
     if not dry_run:
-        _post_run_check(fecha_hoy, total_filas, len(tickers), errores, sin_opciones)
+        _post_run_check(fecha_hoy, total_filas, len(tickers), errores, sin_opciones, intento=intento)
 
 
 # ── Chequeo post-escritura EOD ────────────────────────────────────────────────
@@ -541,7 +573,7 @@ _MAX_ERRORES     = 30       # > 30 tickers con error = problema sistemico (~15%)
 _MAX_SIN_OPC     = 60       # > 60 tickers sin contratos = sospechoso (~30%)
 
 
-def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
+def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones, intento: int = 1):
     """
     Verifica la calidad del snapshot recien escrito en DB.
     - Envia Telegram siempre (OK, redundante o ISSUES).
@@ -590,17 +622,50 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones):
 
         if filas_db >= _MIN_FILAS:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
-            log(f"  [POST-CHECK] Run redundante: fecha {fecha} ya tiene {filas_db:,} filas en DB.")
+            log(f"  [POST-CHECK] Datos ya existentes: {filas_db:,} filas para {fecha}.")
             try:
                 from src.pipeline.telegram_notifier import _send as _tg_send
-                _tg_send(
-                    "\u2139\ufe0f <b>Snapshot EOD — run redundante OK</b>\n"
-                    f"<i>{fecha} | {ts}</i>\n"
-                    f"Datos ya existian: {filas_db:,} filas. 2do intento innecesario."
-                )
+                msg_skip = "ℹ️ <b>Opciones snapshot — datos ya disponibles</b>
+"
+                msg_skip += f"<i>{fecha} | {ts}</i>
+"
+                msg_skip += f"Intento {intento}/3 omitido: ya existen {filas_db:,} contratos en DB."
+                _tg_send(msg_skip)
             except Exception as tg_err:
                 log(f"  [WARN] Telegram no disponible: {tg_err}")
             return   # sin exit(1), todo bien
+
+        # 0 filas + no hay datos en DB = rate limit de yfinance
+        _proximos = {1: "02:00 UTC", 2: "11:00 UTC", 3: None}
+        proximo   = _proximos.get(intento)
+        ts2 = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        log(f"  [POST-CHECK] Rate limit yfinance (intento {intento}/3). 0 filas escritas.")
+        try:
+            from src.pipeline.telegram_notifier import _send as _tg_send
+            if proximo:
+                msg_rl = f"⚠️ <b>Opciones snapshot — sin datos (intento {intento}/3)</b>
+"
+                msg_rl += f"<i>{fecha} | {ts2}</i>
+"
+                msg_rl += "yfinance no devolvio contratos (rate limit).
+"
+                msg_rl += f"Proximo intento automatico: <b>{proximo}</b>"
+                _tg_send(msg_rl)
+            else:
+                msg_fail = "🚨 <b>Opciones snapshot — todos los intentos fallaron</b>
+"
+                msg_fail += f"<i>{fecha} | {ts2}</i>
+"
+                msg_fail += "3 intentos sin datos (23:00 / 02:00 / 11:00 UTC).
+"
+                msg_fail += "Requiere revision manual o backfill."
+                _tg_send(msg_fail)
+        except Exception as tg_err:
+            log(f"  [WARN] Telegram no disponible: {tg_err}")
+        if intento < 3:
+            return   # hay mas intentos -- no es fallo critico aun
+        # intento 3 fallo: cae a issues para exit(1)
+
 
     issues    = []   # criticos  -> exit(1) + Telegram rojo
     warnings  = []   # menores   -> solo Telegram amarillo
@@ -1051,6 +1116,8 @@ def main():
                         help="Fecha del snapshot YYYY-MM-DD (default: hoy). "
                              "Usar para backfill de dias perdidos.",
                         default=None)
+    parser.add_argument("--intento", type=int, default=1, choices=[1, 2, 3],
+                        help="Numero de intento del dia (1=23UTC, 2=02UTC, 3=11UTC)")
     args = parser.parse_args()
 
     if args.init:
@@ -1071,7 +1138,7 @@ def main():
 
     fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
     tickers = args.ticker if args.ticker else list(ALL_TICKERS)
-    cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override)
+    cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override, intento=args.intento)
 
 
 if __name__ == "__main__":
