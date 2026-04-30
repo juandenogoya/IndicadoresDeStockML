@@ -669,16 +669,38 @@ def _historial_iv_pcr(query_fn, ticker: str):
         return
 
     df_iv = df_iv.sort_values("fecha").set_index("fecha")
-    st.line_chart(df_iv[["iv_calls", "iv_puts"]].rename(columns={
+
+    # ── IV Chart ──────────────────────────────────────────────
+    df_iv_chart = df_iv[["iv_calls", "iv_puts"]].dropna(how="all").rename(columns={
         "iv_calls": "IV Calls", "iv_puts": "IV Puts"
-    }), height=250)
+    })
+    # Convertir a % para mostrar valores legibles (0.54 -> 54%)
+    df_iv_chart = df_iv_chart * 100
+    if not df_iv_chart.empty:
+        st.line_chart(df_iv_chart, height=250)
+        st.caption("IV en % — promedio de strikes ATM por dia")
 
-    st.line_chart(df_iv[["pcr"]].rename(columns={"pcr": "PCR"}), height=200)
+    # ── PCR Chart (solo si hay datos de volumen) ──────────────
+    df_pcr = df_iv[["pcr"]].dropna()
+    if not df_pcr.empty:
+        st.line_chart(df_pcr.rename(columns={"pcr": "PCR"}), height=200)
+        st.caption("PCR = Put/Call ratio por volumen. >1 = mas puts (sesgo bajista)")
+    else:
+        st.info("PCR sin datos aun — requiere volumen en opciones (se acumula con el tiempo).")
 
-    st.dataframe(
-        df_iv.reset_index().sort_values("fecha", ascending=False),
-        hide_index=True, use_container_width=True
+    # ── Tabla ─────────────────────────────────────────────────
+    df_tabla = df_iv.reset_index().sort_values("fecha", ascending=False).copy()
+    df_tabla["iv_calls"] = df_tabla["iv_calls"].map(
+        lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-"
     )
+    df_tabla["iv_puts"] = df_tabla["iv_puts"].map(
+        lambda x: f"{x*100:.1f}%" if pd.notna(x) else "-"
+    )
+    df_tabla["pcr"] = df_tabla["pcr"].map(
+        lambda x: f"{x:.3f}" if pd.notna(x) else "-"
+    )
+    df_tabla.columns = ["Fecha", "IV Calls", "IV Puts", "PCR"]
+    st.dataframe(df_tabla, hide_index=True, use_container_width=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
