@@ -279,6 +279,28 @@ class IOLClient:
 
     # ── Opciones ─────────────────────────────────────────────────
 
+    def _get_opciones_quotes_bulk(self) -> dict:
+        """
+        Cotizaciones en tiempo real para TODAS las opciones del mercado AR.
+        Endpoint: /api/v2/argentina/Titulos/cotizaciones/Todos/opciones
+
+        Retorna dict: { simbolo -> {ultimoPrecio, volumen, puntas, ...} }
+        Necesario para obtener bid/ask y volumen en tiempo real.
+        Devuelve {} si falla (el chain seguira mostrando datos de cotizacion).
+        """
+        try:
+            data = self._get("/api/v2/argentina/Titulos/cotizaciones/Todos/opciones")
+            if not isinstance(data, list):
+                return {}
+            return {
+                item["simbolo"]: item
+                for item in data
+                if isinstance(item, dict) and "simbolo" in item
+            }
+        except Exception:
+            # 500 fuera de horario BCBA es esperado — se usa cotizacion como fallback
+            return {}
+
     def get_options_chain_raw(self, symbol: str) -> dict:
         """
         Chain de opciones desde IOL.
@@ -335,12 +357,21 @@ class IOLClient:
         r = tasa_libre_riesgo
         hoy = date.today()
 
+        # Cotizaciones en tiempo real (bid/ask/volumen) via endpoint bulk
+        # Devuelve {} si falla; en ese caso se usa el fallback de cotizacion
+        quotes_rt = self._get_opciones_quotes_bulk()
+
         rows = []
         for opt in options_list:
             if not isinstance(opt, dict):
                 continue
 
+            simbolo    = opt.get("simbolo") or ""
             cotizacion = opt.get("cotizacion") or {}
+
+            # Quote en tiempo real (bid/ask/volumen actualizados)
+            # Si no disponible, cae en cotizacion del endpoint /Opciones
+            qt = quotes_rt.get(simbolo, {})
 
             # ── Tipo (CALL / PUT) ─────────────────────────────────
             tipo_raw = str(opt.get("tipoOpcion") or "").upper()
@@ -361,20 +392,34 @@ class IOLClient:
             if strike <= 0:
                 continue   # sin strike no sirve
 
-            # ── Bid / Ask desde puntas ────────────────────────────
-            puntas = cotizacion.get("puntas") or []
-            if isinstance(puntas, list) and puntas:
-                puntas = puntas[0]
-            elif not isinstance(puntas, dict):
-                puntas = {}
-            bid_raw = puntas.get("precioCompra")
-            ask_raw = puntas.get("precioVenta")
-            bid = float(bid_raw) if bid_raw else None
-            ask = float(ask_raw) if ask_raw else None
+            # ── Bid / Ask: RT primero, fallback a cotizacion ──────
+            def _bid_ask_from(src: dict):
+                puntas = src.get("puntas") or []
+                if isinstance(puntas, list) and puntas:
+                    puntas = puntas[0]
+                elif not isinstance(puntas, dict):
+                    return None, None
+                b = puntas.get("precioCompra")
+                a = puntas.get("precioVenta")
+                return (float(b) if b else None), (float(a) if a else None)
 
-            ultimo_raw = cotizacion.get("ultimoPrecio")
-            ultimo  = float(ultimo_raw) if ultimo_raw else None
-            volumen = int(cotizacion.get("volumen") or 0)
+            bid, ask = _bid_ask_from(qt)
+            if bid is None and ask is None:
+                bid, ask = _bid_ask_from(cotizacion)
+
+            # ── Ultimo precio: RT primero, fallback a cotizacion ──
+            ultimo_raw = qt.get("ultimoPrecio") or cotizacion.get("ultimoPrecio")
+            ultimo = float(ultimo_raw) if ultimo_raw else None
+
+            # ── Volumen: RT primero, fallback a cotizacion ────────
+            # Campo en cotizacion es "volumenNominal" (no "volumen")
+            volumen = int(
+                qt.get("volumen")
+                or qt.get("volumenNominal")
+                or cotizacion.get("volumenNominal")
+                or cotizacion.get("volumen")
+                or 0
+            )
 
             # Filtrar sin ningun precio de mercado
             if not bid and not ask and not ultimo:
