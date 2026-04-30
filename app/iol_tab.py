@@ -84,6 +84,17 @@ def _client_ok() -> bool:
         return False
 
 
+def _client_error_msg() -> str:
+    """Retorna mensaje de error de inicializacion del cliente, o '' si esta OK."""
+    try:
+        c = _get_iol_client()
+        if c is None:
+            return "IOL_USERNAME / IOL_PASSWORD no configuradas en .env o st.secrets."
+        return ""
+    except Exception as e:
+        return str(e)
+
+
 # ── Calculos de indicadores (standalone, sin dependencias externas) ───────────
 
 def _sma(s, n):
@@ -214,13 +225,13 @@ def _fetch_quote(ticker: str):
 def _fetch_opciones(ticker: str):
     client = _get_iol_client()
     if client is None:
-        return None, None
+        return None, None, "Credenciales IOL no configuradas."
     try:
         raw  = client.get_options_chain_raw(ticker)
         df   = client.get_options_chain_df(ticker)
-        return raw, df
-    except Exception:
-        return None, None
+        return raw, df, None
+    except Exception as e:
+        return None, None, str(e)
 
 
 # ── Helpers de formato ────────────────────────────────────────────────────────
@@ -348,7 +359,8 @@ def _subtab_analisis(query_fn):
     st.subheader("Analisis Live por Ticker")
 
     if not _client_ok():
-        st.error("IOL_USERNAME / IOL_PASSWORD no configuradas. Agregalas en .env o st.secrets.")
+        msg = _client_error_msg()
+        st.error(msg or "No se pudo inicializar el cliente IOL.")
         return
 
     # Selector
@@ -502,7 +514,8 @@ def _subtab_opciones(query_fn):
     st.caption("Greeks calculados por IOL via Black-Scholes. Solo disponible en horario BCBA (10:30-17:00 ART).")
 
     if not _client_ok():
-        st.error("Credenciales IOL no configuradas.")
+        msg = _client_error_msg()
+        st.error(msg or "No se pudo inicializar el cliente IOL.")
         return
 
     # Tickers con opciones
@@ -518,11 +531,21 @@ def _subtab_opciones(query_fn):
     col_sub1, col_sub2 = st.tabs(["Chain Live", "Historial IV / PCR"])
 
     with col_sub1:
+        # Boton para forzar refresco (limpia cache si habia error previo)
+        if st.button("Recargar chain", key="btn_reload_chain"):
+            _fetch_opciones.clear()
+            st.rerun()
+
         with st.spinner(f"Cargando chain de {ticker_sel}..."):
-            raw, df_chain = _fetch_opciones(ticker_sel)
+            raw, df_chain, err = _fetch_opciones(ticker_sel)
 
         if raw is None:
-            st.warning("No se pudo obtener el chain. Verificar horario BCBA.")
+            if err:
+                st.error(f"Error al obtener el chain: {err}")
+            else:
+                st.warning("No se pudo obtener el chain.")
+            st.caption("Posibles causas: (1) mercado BCBA cerrado (10:30-17:00 ART), "
+                       "(2) credenciales IOL incorrectas, (3) ticker sin opciones activas.")
             return
 
         spot       = raw.get("precioSubyacente") or raw.get("spot_price", 0)
@@ -726,7 +749,8 @@ def _ejecutar_bt(query_fn):
     st.caption("Fetch de 3 anos de historia desde IOL -> calculo de indicadores -> simulacion de trades -> guardado en DB")
 
     if not _client_ok():
-        st.error("Credenciales IOL no configuradas.")
+        msg = _client_error_msg()
+        st.error(msg or "No se pudo inicializar el cliente IOL.")
         return
 
     df_ar = query_fn("SELECT ticker, sector FROM activos_ar WHERE activo=true ORDER BY ticker")
