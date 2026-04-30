@@ -8,6 +8,15 @@ Instrumentos:
     NQ=F   Nasdaq-100 E-mini
     RTY=F  Russell 2000 E-mini
 
+    GC=F   Gold futures (CMX)
+    SI=F   Silver futures (CMX)
+    UB=F   Ultra T-Bond 30Y (CBOT)
+    TN=F   Ultra 10-Year Note (CBOT)
+    ZL=F   Soybean Oil (CBOT)
+    ZM=F   Soybean Meal (CBOT)
+    XAE=F  E-mini Energy Select Sector (CME)
+    XAU=F  E-mini Utilities Select Sector (CME)
+
 Criterio de historial:
     Solo se cargan 3 anos hacia atras (inicio backfill).
     Datos mas antiguos aportan regimenes de mercado irrelevantes para
@@ -50,10 +59,23 @@ from src.data.database import get_engine, get_connection
 # ── Instrumentos ──────────────────────────────────────────────────────────────
 
 FUTUROS = {
+    # Indices de renta variable
     "YM=F":  "Dow Jones Mini (US30)",
     "ES=F":  "S&P 500 E-mini",
     "NQ=F":  "Nasdaq-100 E-mini",
     "RTY=F": "Russell 2000 E-mini",
+    # Metales preciosos
+    "GC=F":  "Gold futures",
+    "SI=F":  "Silver futures",
+    # Renta fija (tasas largas)
+    "UB=F":  "Ultra T-Bond 30Y",
+    "TN=F":  "Ultra 10-Year Note",
+    # Commodities agricolas
+    "ZL=F":  "Soybean Oil",
+    "ZM=F":  "Soybean Meal",
+    # Futuros sectoriales
+    "XAE=F": "E-mini Energy Select Sector",
+    "XAU=F": "E-mini Utilities Select Sector",
 }
 
 ANOS_BACKFILL = 3   # historial inicial al correr --init
@@ -217,11 +239,15 @@ def cmd_init():
 def cmd_update():
     """Descarga los ultimos 5 dias para mantener la tabla al dia (cron diario)."""
     start = (date.today() - timedelta(days=7)).isoformat()   # 7 dias calendario = ~5 habiles
+    hoy   = date.today()
     total = 0
     errores = 0
 
     for ticker in FUTUROS:
         filas = descargar_futuro(ticker, start=start)
+        # Excluir sesion parcial del dia actual (futuros cotizan 24hs y yfinance
+        # retorna la sesion en curso aunque no haya cerrado — igual que precios_diarios).
+        filas = [f for f in filas if f["fecha"] < hoy]
         if not filas:
             errores += 1
             continue
