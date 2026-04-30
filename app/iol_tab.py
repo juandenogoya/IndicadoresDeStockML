@@ -223,12 +223,19 @@ def _fetch_quote(ticker: str):
 
 @st.cache_data(ttl=120)
 def _fetch_opciones(ticker: str):
+    """
+    Fetches options chain from IOL.
+    Returns (raw_dict, df_chain, error_msg).
+    raw_dict keys: precioSubyacente, tasaLibreDeRiesgo, opciones (raw IOL list).
+    """
     client = _get_iol_client()
     if client is None:
         return None, None, "Credenciales IOL no configuradas."
     try:
-        raw  = client.get_options_chain_raw(ticker)
-        df   = client.get_options_chain_df(ticker)
+        # get_options_chain_raw fetchea la lista + spot en un solo paso
+        raw = client.get_options_chain_raw(ticker)
+        # get_options_chain_df reutiliza el raw para evitar una segunda llamada a la API
+        df  = client.get_options_chain_df(ticker)
         return raw, df, None
     except Exception as e:
         return None, None, str(e)
@@ -511,7 +518,7 @@ def _subtab_analisis(query_fn):
 
 def _subtab_opciones(query_fn):
     st.subheader("Opciones Argentina — Chain Live + Historial")
-    st.caption("Greeks calculados por IOL via Black-Scholes. Solo disponible en horario BCBA (10:30-17:00 ART).")
+    st.caption("IV y Greeks calculados via Black-Scholes (Brent). Solo disponible en horario BCBA (10:30-17:00 ART).")
 
     if not _client_ok():
         msg = _client_error_msg()

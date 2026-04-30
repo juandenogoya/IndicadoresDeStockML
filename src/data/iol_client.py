@@ -6,13 +6,19 @@ Maneja autenticacion OAuth2 con refresh automatico de token.
 Credenciales en .env:
     IOL_USERNAME=...
     IOL_PASSWORD=...
+
+Endpoints clave:
+    Historico  : /api/v2/bCBA/Titulos/{symbol}/Cotizacion/serieHistorica/...
+    Quote live : /api/v2/bCBA/Titulos/{symbol}/Cotizacion
+    Opciones   : /api/v2/bCBA/Titulos/{symbol}/Opciones   <-- lista de opciones con metadata
 """
 
 import os
+import re
 import time
 import requests
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 IOL_BASE = "https://api.invertironline.com"
@@ -27,11 +33,115 @@ MARKET_MAP = {
     "nYSE":   "nYSE",
 }
 
-# Tickers BCBA con opciones activas en el panel
+# Tickers BCBA con opciones activas (simbolos IOL correctos)
 TICKERS_CON_OPCIONES = {
-    "GGAL", "BMA", "YPFD", "PAM", "TGS", "EDN",
-    "CEPU", "TXAR", "ALU", "VALO", "MIRG", "BYMA",
+    "GGAL", "BMA", "YPFD", "PAMP", "TGSU2", "EDN",
+    "CEPU", "TXAR", "ALUA", "VALO", "MIRG", "BYMA",
 }
+
+
+# ── Helpers de calculo BSM ────────────────────────────────────────────────────
+
+def _extraer_strike(descripcion: str) -> float:
+    """
+    Extrae el strike de la descripcion IOL.
+    Ej: "Call GGAL 4,348.70 Vencimiento: 17/04/2026" -> 4348.70
+    """
+    if not descripcion:
+        return 0.0
+    matches = re.findall(r"[\d]{1,3}(?:[,\.][\d]{3})*(?:[.,]\d+)?", descripcion)
+    for m in matches:
+        try:
+            limpio = m.replace(",", "")
+            val = float(limpio)
+            if val > 0:
+                return val
+        except ValueError:
+            continue
+    return 0.0
+
+
+def _bsm_calcular(S: float, K: float, T: float, r: float,
+                  prima: float, tipo: str) -> dict:
+    """
+    Calcula IV y Greeks (Delta, Gamma, Theta, Vega, Rho) via Black-Scholes-Merton.
+
+    tipo : "call" o "put"
+    Retorna dict con claves: iv, delta, gamma, theta, vega, rho.
+    Todos None si falla (scipy no disponible, T<=0, etc.).
+    """
+    resultado = {
+        "iv": None, "delta": None, "gamma": None,
+        "theta": None, "vega": None, "rho": None,
+    }
+    if S <= 0 or K <= 0 or T <= 0 or prima <= 0:
+        return resultado
+
+    tipo = tipo.lower()
+
+    try:
+        import numpy as np
+        from scipy.stats import norm
+        from scipy.optimize import brentq
+    except ImportError:
+        return resultado
+
+    # Valor intrinseco: si prima <= intrinseco, IV no calculable
+    intrinseco = max(S - K, 0.0) if tipo == "call" else max(K - S, 0.0)
+    if prima <= intrinseco:
+        return resultado
+
+    def _d1_d2(sigma):
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+        return d1, d2
+
+    def precio_bsm(sigma):
+        d1, d2 = _d1_d2(sigma)
+        if tipo == "call":
+            return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+
+    # IV via Brent's method
+    try:
+        iv = brentq(lambda s: precio_bsm(s) - prima, 1e-6, 20.0, xtol=1e-6, maxiter=200)
+    except Exception:
+        return resultado
+
+    if iv <= 0:
+        return resultado
+
+    resultado["iv"] = iv
+
+    # Greeks
+    d1, d2 = _d1_d2(iv)
+    if tipo == "call":
+        delta = float(norm.cdf(d1))
+        rho   = float(K * T * np.exp(-r * T) * norm.cdf(d2) * 0.01)
+    else:
+        delta = float(norm.cdf(d1) - 1)
+        rho   = float(-K * T * np.exp(-r * T) * norm.cdf(-d2) * 0.01)
+
+    gamma = float(norm.pdf(d1) / (S * iv * np.sqrt(T)))
+
+    theta_base = (
+        -(S * norm.pdf(d1) * iv) / (2 * np.sqrt(T))
+        - r * K * np.exp(-r * T) * norm.cdf(d2 if tipo == "call" else -d2)
+    )
+    if tipo == "put":
+        theta_base += r * K * np.exp(-r * T)
+    theta = float(theta_base / 365)  # por dia calendario
+
+    vega = float(S * norm.pdf(d1) * np.sqrt(T) * 0.01)  # por 1% cambio en vol
+
+    resultado.update({
+        "delta": round(delta, 4),
+        "gamma": round(gamma, 6),
+        "theta": round(theta, 4),
+        "vega":  round(vega, 4),
+        "rho":   round(rho, 4),
+    })
+    return resultado
 
 
 class IOLClient:
@@ -170,55 +280,159 @@ class IOLClient:
     # ── Opciones ─────────────────────────────────────────────────
 
     def get_options_chain_raw(self, symbol: str) -> dict:
-        """Chain completo de opciones incluyendo Greeks. Solo util en horario BCBA."""
-        return self._get(f"/api/v2/Titulos/{symbol}/opciones")
-
-    def get_options_chain_df(self, symbol: str) -> pd.DataFrame:
         """
-        Chain filtrado: solo strikes liquidos (is_stale=False, IV no nula).
-        Listo para insertar en opciones_ar_gregas.
-        """
-        data = self.get_options_chain_raw(symbol)
+        Chain de opciones desde IOL.
 
-        spot        = data.get("precioSubyacente") or data.get("spot_price")
-        risk_free   = data.get("tasaLibreDeRiesgo") or data.get("risk_free_rate")
-        options_raw = data.get("opciones") or data.get("options") or []
+        Retorna un dict normalizado para consumo por iol_tab.py:
+            precioSubyacente : float | None
+            tasaLibreDeRiesgo: float  (default 0.155 = 15.5% referencia AR)
+            opciones         : list   (opciones crudas de la API)
+
+        Endpoint correcto: /api/v2/bCBA/Titulos/{symbol}/Opciones
+        Retorna lista de opciones; este metodo la envuelve en el dict esperado.
+        """
+        options_list = self._get(f"/api/v2/bCBA/Titulos/{symbol}/Opciones")
+        if not isinstance(options_list, list):
+            options_list = []
+
+        # Spot price via cotizacion
+        spot = None
+        try:
+            quote = self.get_quote(symbol)
+            # El endpoint /Cotizacion puede retornar ultimoPrecio directo o
+            # anidado segun el tipo de respuesta
+            spot = (
+                quote.get("ultimoPrecio")
+                or (quote.get("trade") or {}).get("lot_price", {}).get("value")
+                or (quote.get("trade") or {}).get("unit_price")
+            )
+            spot = float(spot) if spot else None
+        except Exception:
+            pass
+
+        return {
+            "precioSubyacente":  spot,
+            "tasaLibreDeRiesgo": 0.155,   # tasa referencia Argentina ~15.5%
+            "opciones":          options_list,
+        }
+
+    def get_options_chain_df(
+        self,
+        symbol: str,
+        tasa_libre_riesgo: float = 0.155,
+    ) -> pd.DataFrame:
+        """
+        Chain de opciones normalizado con IV y Greeks calculados via BSM.
+
+        Listo para insertar en opciones_ar_gregas o mostrar en el tab.
+        Filtra opciones sin precio de mercado (bid=ask=ultimo=0).
+
+        tasa_libre_riesgo: tasa anualizada decimal (default 15.5% Argentina)
+        """
+        raw = self.get_options_chain_raw(symbol)
+        options_list = raw.get("opciones") or []
+        spot = raw.get("precioSubyacente")
+        r = tasa_libre_riesgo
+        hoy = date.today()
 
         rows = []
-        for opt in options_raw:
-            # Filtrar sin datos reales
-            iv = opt.get("volatilidad") or opt.get("implied_volatility")
-            stale = opt.get("estaVencida") if "estaVencida" in opt else opt.get("is_stale")
-            if iv is None or stale is True:
+        for opt in options_list:
+            if not isinstance(opt, dict):
                 continue
 
-            tipo_raw = opt.get("tipo") or opt.get("option_type") or ""
-            option_type = "C" if str(tipo_raw).lower() in ("call", "c") else "V"
+            cotizacion = opt.get("cotizacion") or {}
 
-            exp_raw = opt.get("vencimiento") or opt.get("expiration") or ""
+            # ── Tipo (CALL / PUT) ─────────────────────────────────
+            tipo_raw = str(opt.get("tipoOpcion") or "").upper()
+            if "CALL" in tipo_raw or tipo_raw == "C":
+                option_type = "C"
+                tipo_bsm    = "call"
+            else:
+                option_type = "V"
+                tipo_bsm    = "put"
+
+            # ── Vencimiento ───────────────────────────────────────
+            exp_raw    = opt.get("fechaVencimiento") or ""
             expiration = str(exp_raw)[:10]
 
+            # ── Strike desde descripcion ──────────────────────────
+            descripcion = opt.get("descripcion") or ""
+            strike = _extraer_strike(descripcion)
+            if strike <= 0:
+                continue   # sin strike no sirve
+
+            # ── Bid / Ask desde puntas ────────────────────────────
+            puntas = cotizacion.get("puntas") or []
+            if isinstance(puntas, list) and puntas:
+                puntas = puntas[0]
+            elif not isinstance(puntas, dict):
+                puntas = {}
+            bid_raw = puntas.get("precioCompra")
+            ask_raw = puntas.get("precioVenta")
+            bid = float(bid_raw) if bid_raw else None
+            ask = float(ask_raw) if ask_raw else None
+
+            ultimo_raw = cotizacion.get("ultimoPrecio")
+            ultimo  = float(ultimo_raw) if ultimo_raw else None
+            volumen = int(cotizacion.get("volumen") or 0)
+
+            # Filtrar sin ningun precio de mercado
+            if not bid and not ask and not ultimo:
+                continue
+
+            # ── Prima para BSM: mid si hay bid+ask, si no ultimo ─
+            mid = None
+            if bid and ask:
+                mid = (bid + ask) / 2.0
+            prima = mid or ultimo or 0.0
+
+            # ── Dias hasta vencimiento ────────────────────────────
+            dias = 0
+            try:
+                vto  = datetime.strptime(expiration, "%Y-%m-%d").date()
+                dias = max((vto - hoy).days, 0)
+            except Exception:
+                pass
+            T = dias / 365.0
+
+            # ── IV + Greeks via BSM ───────────────────────────────
+            bsm = {}
+            if spot and spot > 0 and prima > 0 and T > 0:
+                bsm = _bsm_calcular(spot, strike, T, r, prima, tipo_bsm)
+
+            iv  = bsm.get("iv")
+
             rows.append({
-                "ticker_subyacente": symbol,
-                "symbol":            opt.get("simbolo") or opt.get("symbol"),
-                "option_type":       option_type,
-                "strike_price":      opt.get("strike") or opt.get("strike_price"),
-                "expiration":        expiration,
-                "bid_price":         opt.get("bid") or opt.get("bid_price"),
-                "ask_price":         opt.get("ask") or opt.get("ask_price"),
-                "theoretical_price": opt.get("precioTeorico") or opt.get("theoretical_price"),
-                "implied_volatility": iv,
-                "delta":             opt.get("delta"),
-                "gamma":             opt.get("gamma"),
-                "theta":             opt.get("theta"),
-                "vega":              opt.get("vega"),
-                "rho":               opt.get("rho"),
-                "volume":            opt.get("volumenNominal") or opt.get("volume"),
-                "spot_price":        spot,
-                "risk_free_rate":    risk_free,
+                "ticker_subyacente":  symbol,
+                "symbol":             opt.get("simbolo") or "",
+                "option_type":        option_type,
+                "strike_price":       strike,
+                "expiration":         expiration,
+                "bid_price":          bid,
+                "ask_price":          ask,
+                "theoretical_price":  None,   # no provisto por la API
+                "implied_volatility": round(iv, 4) if iv else None,
+                "delta":              bsm.get("delta"),
+                "gamma":              bsm.get("gamma"),
+                "theta":              bsm.get("theta"),
+                "vega":               bsm.get("vega"),
+                "rho":                bsm.get("rho"),
+                "volume":             volumen if volumen > 0 else None,
+                "spot_price":         spot,
+                "risk_free_rate":     r,
             })
 
-        return pd.DataFrame(rows)
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        # Mantener solo filas con algun dato util
+        has_data = (
+            df["implied_volatility"].notna()
+            | df["bid_price"].notna()
+            | df["ask_price"].notna()
+        )
+        return df[has_data].reset_index(drop=True)
 
     # ── Info del activo ──────────────────────────────────────────
 
