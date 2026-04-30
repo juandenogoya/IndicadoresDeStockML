@@ -1,0 +1,49 @@
+name: Opciones AR Snapshot (Greeks)
+
+on:
+  schedule:
+    # L-V 16:30 UTC = 13:30 ART (inicio horario BCBA: 10:30-17:00 ART)
+    # Greeks de Black-Scholes solo son validos DURANTE el horario de mercado.
+    # Ventana de captura: L-V 13:30-20:00 UTC (= 10:30-17:00 ART).
+    # Se programa a las 16:30 UTC = horario punta de actividad 13:30 ART.
+    - cron: '30 16 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  opciones_ar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Snapshot Greeks opciones BCBA
+        env:
+          DATABASE_URL:   ${{ secrets.DATABASE_URL }}
+          IOL_USERNAME:   ${{ secrets.IOL_USERNAME }}
+          IOL_PASSWORD:   ${{ secrets.IOL_PASSWORD }}
+          PYTHONPATH:     ${{ github.workspace }}
+        # --force: el cron ya garantiza que corre en horario BCBA,
+        # pero se pasa igualmente para evitar que desfases de UTC bloqueen el job.
+        run: python scripts/38_opciones_ar_snapshot.py --force
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR -- Opciones AR Snapshot</b>%0AWorkflow fallido.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

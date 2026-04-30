@@ -197,6 +197,73 @@ def main():
         except Exception as e:
             print(f"  ERROR: {e}")
 
+        # ── MODULO ARGENTINA (IOL) ────────────────────────────────
+        sep("ARGENTINA IOL -- SCANNER AR")
+        try:
+            tabla_ar = conn.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'alertas_scanner_ar')"
+            )).scalar()
+            if not tabla_ar:
+                print("  Tabla alertas_scanner_ar NO EXISTE -- correr init_tablas_ar.py")
+            else:
+                rows_ar = conn.execute(text("""
+                    SELECT DATE(scan_fecha)           AS dia,
+                           COUNT(DISTINCT ticker)     AS tickers,
+                           SUM(CASE WHEN alert_nivel = 'COMPRA_FUERTE'
+                                    THEN 1 ELSE 0 END) AS fuertes,
+                           SUM(CASE WHEN alert_nivel = 'COMPRA'
+                                    THEN 1 ELSE 0 END) AS compras,
+                           SUM(CASE WHEN alert_nivel = 'VENTA'
+                                    THEN 1 ELSE 0 END) AS ventas
+                    FROM alertas_scanner_ar
+                    WHERE scan_fecha >= :desde
+                    GROUP BY DATE(scan_fecha)
+                    ORDER BY dia DESC
+                    LIMIT 7
+                """), {"desde": desde}).fetchall()
+                if rows_ar:
+                    print(f"  {'fecha':<14} {'tickers':>8}  {'fuertes':>8}  {'compras':>8}  {'ventas':>7}")
+                    for r in rows_ar:
+                        print(f"  {str(r[0]):<14} {r[1]:>8}  {r[2]:>8}  {r[3]:>8}  {r[4]:>7}")
+                else:
+                    print("  Sin datos recientes en alertas_scanner_ar")
+                total_ar = conn.execute(text(
+                    "SELECT COUNT(*) FROM activos_ar WHERE activo = true"
+                )).scalar()
+                print(f"\n  Universo activos_ar: {total_ar} tickers activos")
+        except Exception as e:
+            print(f"  ERROR: {e}")
+
+        sep("ARGENTINA IOL -- OPCIONES AR GREGAS")
+        try:
+            tabla_opc = conn.execute(text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'opciones_ar_gregas')"
+            )).scalar()
+            if not tabla_opc:
+                print("  Tabla opciones_ar_gregas NO EXISTE -- correr init_tablas_ar.py")
+            else:
+                rows_opc = conn.execute(text("""
+                    SELECT fecha,
+                           COUNT(DISTINCT ticker_subyacente) AS tickers,
+                           COUNT(*)                          AS strikes,
+                           ROUND(AVG(implied_volatility)::numeric, 4) AS iv_prom
+                    FROM opciones_ar_gregas
+                    WHERE fecha >= :desde
+                    GROUP BY fecha
+                    ORDER BY fecha DESC
+                    LIMIT 7
+                """), {"desde": desde}).fetchall()
+                if rows_opc:
+                    print(f"  {'fecha':<14} {'tickers':>8}  {'strikes':>8}  {'IV_prom':>8}")
+                    for r in rows_opc:
+                        print(f"  {str(r[0]):<14} {r[1]:>8}  {r[2]:>8}  {str(r[3]):>8}")
+                else:
+                    print("  Sin datos en opciones_ar_gregas (se construye dia a dia)")
+        except Exception as e:
+            print(f"  ERROR: {e}")
+
     print()
     print("=" * 60)
     print()

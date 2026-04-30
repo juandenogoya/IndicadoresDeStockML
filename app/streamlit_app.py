@@ -1300,7 +1300,7 @@ try:
 except Exception:
     pass
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 Dashboard",
     "➕ Agregar Ticker",
     "📋 Historial",
@@ -1308,6 +1308,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🕯️ Velas",
     "🎯 Opciones",
     "🧪 Forward Testing",
+    "🇦🇷 Argentina (IOL)",
 ])
 
 with tab1:
@@ -1347,4 +1348,16 @@ with tab7:
     except Exception as _e:
         import traceback as _tb
         st.error(f"Error cargando tab Forward Testing: {_e}")
+        st.code(_tb.format_exc())
+
+with tab8:
+    try:
+        try:
+            from app.iol_tab import render_iol_tab
+        except ImportError:
+            from iol_tab import render_iol_tab
+        render_iol_tab(query)
+    except Exception as _e:
+        import traceback as _tb
+        st.error(f"Error cargando tab Argentina (IOL): {_e}")
         st.code(_tb.format_exc())

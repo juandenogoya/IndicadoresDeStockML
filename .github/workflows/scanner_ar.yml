@@ -1,0 +1,45 @@
+name: Scanner AR Diario
+
+on:
+  schedule:
+    # L-V 20:30 UTC = 17:30 ART (30 min post-cierre BCBA 17:00 ART)
+    # IOL REST API usa datos del cierre de ese mismo dia.
+    - cron: '30 20 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  scanner_ar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar scanner AR
+        env:
+          DATABASE_URL:   ${{ secrets.DATABASE_URL }}
+          IOL_USERNAME:   ${{ secrets.IOL_USERNAME }}
+          IOL_PASSWORD:   ${{ secrets.IOL_PASSWORD }}
+          PYTHONPATH:     ${{ github.workspace }}
+        run: python scripts/37_scanner_ar.py
+
+      - name: Notificar fallo en Telegram
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="<b>ERROR -- Scanner AR</b>%0AWorkflow fallido.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
