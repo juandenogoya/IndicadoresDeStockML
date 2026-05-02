@@ -1,12 +1,14 @@
-name: Opciones AR Snapshot (Greeks)
+name: Opciones AR Snapshot (Greeks + PCR)
 
 on:
   schedule:
-    # L-V 16:30 UTC = 13:30 ART (inicio horario BCBA: 10:30-17:00 ART)
-    # Greeks de Black-Scholes solo son validos DURANTE el horario de mercado.
-    # Ventana de captura: L-V 13:30-20:00 UTC (= 10:30-17:00 ART).
-    # Se programa a las 16:30 UTC = horario punta de actividad 13:30 ART.
+    # ── Snapshot 1: mid-session — 13:30 ART = 16:30 UTC ──────────────────────
+    # Captura IV y Greeks en horario punta de actividad.
     - cron: '30 16 * * 1-5'
+    # ── Snapshot 2: cierre — 16:45 ART = 19:45 UTC ───────────────────────────
+    # Captura el volumen acumulado del dia completo (15 min antes del cierre).
+    # Este snapshot es el clave para PCR y analisis de intenciones del mercado.
+    - cron: '45 19 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -27,14 +29,13 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Snapshot Greeks opciones BCBA
+      - name: Snapshot opciones BCBA (Greeks + PCR)
         env:
           DATABASE_URL:   ${{ secrets.DATABASE_URL }}
           IOL_USERNAME:   ${{ secrets.IOL_USERNAME }}
           IOL_PASSWORD:   ${{ secrets.IOL_PASSWORD }}
           PYTHONPATH:     ${{ github.workspace }}
-        # --force: el cron ya garantiza que corre en horario BCBA,
-        # pero se pasa igualmente para evitar que desfases de UTC bloqueen el job.
+        # --force: garantiza ejecucion aunque haya desfase de UTC.
         run: python scripts/38_opciones_ar_snapshot.py --force
 
       - name: Notificar fallo en Telegram

@@ -214,12 +214,45 @@ CREATE INDEX IF NOT EXISTS idx_opciones_ar_expiracion
     ON opciones_ar_gregas (expiration, ticker_subyacente);
 """
 
+DDL_PCR_AR_DIARIO = """
+CREATE TABLE IF NOT EXISTS pcr_ar_diario (
+    id                  SERIAL PRIMARY KEY,
+    fecha               DATE         NOT NULL,
+    ticker              VARCHAR(10)  NOT NULL,
+    expiration          DATE         NOT NULL,
+    -- Volumenes del dia (snapshot cierre ~16:45 ART)
+    vol_calls           INTEGER      DEFAULT 0,
+    vol_puts            INTEGER      DEFAULT 0,
+    pcr                 NUMERIC(8,4),
+    -- Strikes activos
+    n_strikes_calls     SMALLINT,
+    n_strikes_puts      SMALLINT,
+    -- IV ATM promedio (3 strikes mas cercanos al spot)
+    iv_atm_call         NUMERIC(8,4),
+    iv_atm_put          NUMERIC(8,4),
+    -- Skew: IV put OTM / IV ATM (medida de tail risk)
+    iv_skew             NUMERIC(8,4),
+    -- Spot y tasa al momento del snapshot
+    spot_price          NUMERIC(14,4),
+    risk_free_rate      NUMERIC(8,4),
+    -- Dias hasta vencimiento al momento del snapshot
+    dias_vto            SMALLINT,
+    created_at          TIMESTAMP    DEFAULT NOW(),
+    UNIQUE (fecha, ticker, expiration)
+);
+CREATE INDEX IF NOT EXISTS idx_pcr_ar_ticker_fecha
+    ON pcr_ar_diario (ticker, fecha DESC);
+CREATE INDEX IF NOT EXISTS idx_pcr_ar_expiracion
+    ON pcr_ar_diario (expiration, ticker);
+"""
+
 ALL_DDL = [
     ("activos_ar",          DDL_ACTIVOS_AR),
     ("alertas_scanner_ar",  DDL_ALERTAS_SCANNER_AR),
     ("operaciones_bt_ar",   DDL_OPERACIONES_BT_AR),
     ("resultados_bt_ar",    DDL_RESULTADOS_BT_AR),
     ("opciones_ar_gregas",  DDL_OPCIONES_AR_GREGAS),
+    ("pcr_ar_diario",       DDL_PCR_AR_DIARIO),
 ]
 
 
