@@ -80,6 +80,7 @@ from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_precios_cierre_todos,
     abrir_operacion, cerrar_operacion,
     registrar_metricas_diarias, registrar_candidatos_diarios,
+    registrar_estado_posiciones, backfill_retornos_candidatos,
 )
 
 # ── Parametros de la estrategia ───────────────────────────────────────────────
@@ -545,10 +546,11 @@ def run(dry_run: bool = False):
             else:
                 motivo_skip = f"CAPITAL_O_SLOTS_{s}"
         candidatos_log.append({
-            "ticker":      t,
-            "score":       float(tech_score),
-            "entro":       entro,
-            "motivo_skip": motivo_skip,
+            "ticker":          t,
+            "score":           float(tech_score),
+            "entro":           entro,
+            "motivo_skip":     motivo_skip,
+            "precio_apertura": precios.get(t),
         })
 
     if candidatos_log:
@@ -571,6 +573,11 @@ def run(dry_run: bool = False):
         registrar_metricas_diarias(eid, hoy)
     else:
         log("[DRY RUN] Metricas no registradas.")
+
+    # 11. Observacion diaria: snapshots de posiciones + retornos contrafactuales
+    if not dry_run:
+        registrar_estado_posiciones(eid, hoy, precios)
+        backfill_retornos_candidatos(eid, hoy, precios)
 
     log("Completado.")
     log(sep)

@@ -412,10 +412,11 @@ def registrar_candidatos_diarios(
     Idempotente via ON CONFLICT DO UPDATE.
 
     candidatos: lista de dicts con keys:
-        ticker      : str
-        score       : float
-        entro       : bool    (True si se abrio posicion ese dia)
-        motivo_skip : str | None  (razon por la que no entro, o None si entro)
+        ticker          : str
+        score           : float
+        entro           : bool    (True si se abrio posicion ese dia)
+        motivo_skip     : str | None
+        precio_apertura : float | None  (close del dia — referencia para calcular retornos futuros)
     """
     if not candidatos:
         return
@@ -425,20 +426,24 @@ def registrar_candidatos_diarios(
         for c in candidatos:
             conn.execute(text("""
                 INSERT INTO ft_candidatos_diarios
-                    (estrategia_id, fecha, ticker, score, entro, motivo_skip)
+                    (estrategia_id, fecha, ticker, score, entro,
+                     motivo_skip, precio_apertura)
                 VALUES
-                    (:eid, :fecha, :ticker, :score, :entro, :motivo_skip)
+                    (:eid, :fecha, :ticker, :score, :entro,
+                     :motivo_skip, :precio_apertura)
                 ON CONFLICT (estrategia_id, fecha, ticker) DO UPDATE SET
-                    score       = EXCLUDED.score,
-                    entro       = EXCLUDED.entro,
-                    motivo_skip = EXCLUDED.motivo_skip
+                    score           = EXCLUDED.score,
+                    entro           = EXCLUDED.entro,
+                    motivo_skip     = EXCLUDED.motivo_skip,
+                    precio_apertura = EXCLUDED.precio_apertura
             """), {
-                "eid":         estrategia_id,
-                "fecha":       fecha,
-                "ticker":      c["ticker"],
-                "score":       c["score"],
-                "entro":       c["entro"],
-                "motivo_skip": c.get("motivo_skip"),
+                "eid":             estrategia_id,
+                "fecha":           fecha,
+                "ticker":          c["ticker"],
+                "score":           c["score"],
+                "entro":           c["entro"],
+                "motivo_skip":     c.get("motivo_skip"),
+                "precio_apertura": c.get("precio_apertura"),
             })
         conn.commit()
 
@@ -491,3 +496,298 @@ def calcular_qty_ft(
     capital_trade = min(base * riesgo_pct, cash_disponible)
     qty           = int(capital_trade / precio)
     return max(qty, 0)
+
+
+# ── Helpers calendario ────────────────────────────────────────────────────────
+
+def _hace_n_habiles(d: date, n: int) -> date:
+    """Retorna la fecha que fue n dias habiles antes de d."""
+    from src.utils.trading_calendar import prev_trading_day
+    for _ in range(n):
+        d = prev_trading_day(d)
+    return d
+
+
+# ── Observacion diaria de posiciones ─────────────────────────────────────────
+
+def registrar_estado_posiciones(
+    estrategia_id: int,
+    fecha:         date,
+    precios:       dict[str, float],
+) -> None:
+    """
+    Inserta snapshots diarios en ft_posiciones_diarias.
+
+    Cubre 5 estados del ciclo de vida de una operacion:
+        'abierta'  - posicion activa en <fecha>
+        'cierre'   - posicion cerrada exactamente en <fecha>
+        'post_5d'  - operacion cerrada exactamente 5 habiles antes de <fecha>
+        'post_10d' - operacion cerrada exactamente 10 habiles antes de <fecha>
+        'post_20d' - operacion cerrada exactamente 20 habiles antes de <fecha>
+
+    Los estados post_Nd permiten evaluar si el cierre fue oportuno:
+    si el precio sube despues de cerrar, el exit fue prematuro.
+
+    Idempotente via ON CONFLICT (operacion_id, fecha) DO NOTHING.
+    """
+    from src.utils.trading_calendar import trading_days_between
+    from scripts.forward_testing.ft_scoring import (
+        obtener_candle_score_5d,
+        obtener_indicadores_hoy,
+        calcular_score_tecnico,
+    )
+
+    fecha_5  = _hace_n_habiles(fecha, 5)
+    fecha_10 = _hace_n_habiles(fecha, 10)
+    fecha_20 = _hace_n_habiles(fecha, 20)
+
+    engine = get_engine()
+
+    # ── Recopilar operaciones de interes ─────────────────────────────────────
+    with engine.connect() as conn:
+        abiertas = conn.execute(text("""
+            SELECT id, ticker, fecha_entrada, precio_entrada
+            FROM ft_operaciones
+            WHERE estrategia_id = :eid AND fecha_salida IS NULL
+        """), {"eid": estrategia_id}).fetchall()
+
+        cerradas_hoy = conn.execute(text("""
+            SELECT id, ticker, fecha_entrada, precio_entrada, motivo_salida
+            FROM ft_operaciones
+            WHERE estrategia_id = :eid AND fecha_salida = :fecha
+        """), {"eid": estrategia_id, "fecha": fecha}).fetchall()
+
+        counterfactual = []
+        for estado, fs in [
+            ("post_5d",  fecha_5),
+            ("post_10d", fecha_10),
+            ("post_20d", fecha_20),
+        ]:
+            ops = conn.execute(text("""
+                SELECT id, ticker, fecha_entrada, precio_entrada
+                FROM ft_operaciones
+                WHERE estrategia_id = :eid AND fecha_salida = :fs
+            """), {"eid": estrategia_id, "fs": fs}).fetchall()
+            for op in ops:
+                counterfactual.append((estado, op))
+
+    # ── Tickers involucrados ──────────────────────────────────────────────────
+    all_tickers = set()
+    for op in list(abiertas) + list(cerradas_hoy):
+        all_tickers.add(op.ticker)
+    for _, op in counterfactual:
+        all_tickers.add(op.ticker)
+
+    if not all_tickers:
+        return
+
+    tickers_list = list(all_tickers)
+
+    # ── Batch: rango 5d y vol desde tablas de features ───────────────────────
+    with engine.connect() as conn:
+        rango_rows = conn.execute(text("""
+            WITH ranked AS (
+                SELECT ticker, close,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+                FROM precios_diarios
+                WHERE ticker = ANY(:tickers)
+            )
+            SELECT ticker, MAX(close) - MIN(close) AS rango_5d_abs
+            FROM ranked
+            WHERE rn <= 5
+            GROUP BY ticker
+        """), {"tickers": tickers_list}).fetchall()
+        rango_map = {r.ticker: float(r.rango_5d_abs) for r in rango_rows}
+
+        fms_rows = conn.execute(text("""
+            WITH ranked AS (
+                SELECT ticker, es_alcista, vol_price_confirm, vol_price_diverge,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
+                FROM features_market_structure
+                WHERE ticker = ANY(:tickers)
+            )
+            SELECT ticker,
+                   MAX(CASE WHEN rn = 1 THEN vol_price_confirm ELSE NULL END) AS vpc,
+                   MAX(CASE WHEN rn = 1 THEN vol_price_diverge ELSE NULL END) AS vpd,
+                   SUM(CASE WHEN es_alcista = 1
+                             AND vol_price_confirm = 1 THEN 1 ELSE 0 END) AS up_vol_5d
+            FROM ranked
+            WHERE rn <= 5
+            GROUP BY ticker
+        """), {"tickers": tickers_list}).fetchall()
+        fms_map = {r.ticker: dict(r._mapping) for r in fms_rows}
+
+    # ── Scores de velas y tecnicos (queries batch) ────────────────────────────
+    candle_scores   = obtener_candle_score_5d()
+    indicadores_lst = obtener_indicadores_hoy()
+    ind_map         = {i["ticker"]: i for i in indicadores_lst}
+
+    def _tech_score(ticker):
+        ind = ind_map.get(ticker)
+        if not ind:
+            return None
+        score, _ = calcular_score_tecnico(ind)
+        return float(score)
+
+    def _atr(ticker):
+        ind = ind_map.get(ticker) or {}
+        v = ind.get("atr14")
+        return float(v) if v else None
+
+    # ── Construir filas ───────────────────────────────────────────────────────
+    def _make_fila(op, estado, motivo_sal=None):
+        ticker         = op.ticker
+        precio_entrada = float(op.precio_entrada)
+        precio_cierre  = precios.get(ticker)
+
+        retorno_pct = None
+        if precio_cierre and precio_entrada:
+            retorno_pct = round((precio_cierre / precio_entrada - 1) * 100, 4)
+
+        dias = None
+        try:
+            entrada = op.fecha_entrada
+            if hasattr(entrada, "date"):
+                entrada = entrada.date()
+            dias = trading_days_between(entrada, fecha)
+        except Exception:
+            pass
+
+        atr14        = _atr(ticker)
+        rango_5d_abs = rango_map.get(ticker)
+        rango_5d_pct  = None
+        lateral_ratio = None
+        if rango_5d_abs is not None and precio_entrada > 0:
+            rango_5d_pct = round(rango_5d_abs / precio_entrada * 100, 4)
+        if rango_5d_abs is not None and atr14 and atr14 > 0:
+            lateral_ratio = round(rango_5d_abs / atr14, 4)
+
+        fms = fms_map.get(ticker, {})
+        return {
+            "estrategia_id":      estrategia_id,
+            "operacion_id":       op.id,
+            "ticker":             ticker,
+            "fecha":              fecha,
+            "estado":             estado,
+            "precio_cierre":      precio_cierre,
+            "precio_entrada_ref": precio_entrada,
+            "retorno_pct":        retorno_pct,
+            "dias_abierta":       dias,
+            "tech_score":         _tech_score(ticker),
+            "candle_score_5d":    candle_scores.get(ticker),
+            "rango_5d_pct":       rango_5d_pct,
+            "atr14":              atr14,
+            "lateral_ratio":      lateral_ratio,
+            "vol_price_confirm":  fms.get("vpc"),
+            "vol_price_diverge":  fms.get("vpd"),
+            "up_vol_5d":          fms.get("up_vol_5d"),
+            "motivo_salida":      motivo_sal,
+        }
+
+    filas = []
+    for op in abiertas:
+        filas.append(_make_fila(op, "abierta"))
+    for op in cerradas_hoy:
+        filas.append(_make_fila(op, "cierre",
+                                getattr(op, "motivo_salida", None)))
+    for estado, op in counterfactual:
+        filas.append(_make_fila(op, estado))
+
+    if not filas:
+        return
+
+    # ── Insertar en batch ─────────────────────────────────────────────────────
+    with engine.connect() as conn:
+        for f in filas:
+            conn.execute(text("""
+                INSERT INTO ft_posiciones_diarias (
+                    estrategia_id, operacion_id, ticker, fecha, estado,
+                    precio_cierre, precio_entrada_ref, retorno_pct,
+                    dias_abierta, tech_score, candle_score_5d,
+                    rango_5d_pct, atr14, lateral_ratio,
+                    vol_price_confirm, vol_price_diverge, up_vol_5d,
+                    motivo_salida
+                ) VALUES (
+                    :estrategia_id, :operacion_id, :ticker, :fecha, :estado,
+                    :precio_cierre, :precio_entrada_ref, :retorno_pct,
+                    :dias_abierta, :tech_score, :candle_score_5d,
+                    :rango_5d_pct, :atr14, :lateral_ratio,
+                    :vol_price_confirm, :vol_price_diverge, :up_vol_5d,
+                    :motivo_salida
+                )
+                ON CONFLICT (operacion_id, fecha) DO NOTHING
+            """), f)
+        conn.commit()
+
+    n_ab = sum(1 for f in filas if f["estado"] == "abierta")
+    n_ci = sum(1 for f in filas if f["estado"] == "cierre")
+    n_po = len(filas) - n_ab - n_ci
+    log(f"  [POSICIONES] {len(filas)} snapshots — "
+        f"{n_ab} abiertas, {n_ci} cierres, {n_po} post-cierre")
+
+
+# ── Backfill retornos de candidatos ───────────────────────────────────────────
+
+def backfill_retornos_candidatos(
+    estrategia_id: int,
+    fecha:         date,
+    precios:       dict[str, float],
+) -> None:
+    """
+    Calcula y persiste retorno_5d, retorno_10d, retorno_20d
+    en ft_candidatos_diarios para candidatos identificados hace N dias habiles.
+
+    Logica:
+        Para N en {5, 10, 20}:
+            Busca candidatos de la fecha que fue N habiles antes de <fecha>
+            con precio_apertura guardado pero retorno_Nd aun NULL.
+            Retorno = (precio_actual - precio_apertura) / precio_apertura * 100
+
+    Permite comparar: "si no entre en X, cuanto me habria ganado/perdido N dias despues?"
+    Idempotente: solo actualiza filas con retorno_Nd IS NULL.
+    """
+    engine = get_engine()
+
+    for n, col in [(5, "retorno_5d"), (10, "retorno_10d"), (20, "retorno_20d")]:
+        fecha_n = _hace_n_habiles(fecha, n)
+
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT ticker, precio_apertura
+                FROM ft_candidatos_diarios
+                WHERE estrategia_id = :eid
+                  AND fecha = :fecha_n
+                  AND precio_apertura IS NOT NULL
+                  AND {col} IS NULL
+            """), {"eid": estrategia_id, "fecha_n": fecha_n}).fetchall()
+
+            if not rows:
+                continue
+
+            actualizados = 0
+            for row in rows:
+                precio_actual   = precios.get(row.ticker)
+                precio_apertura = float(row.precio_apertura)
+                if not precio_actual or precio_apertura == 0:
+                    continue
+                retorno = round(
+                    (precio_actual - precio_apertura) / precio_apertura * 100, 4
+                )
+                conn.execute(text(f"""
+                    UPDATE ft_candidatos_diarios
+                    SET {col} = :retorno
+                    WHERE estrategia_id = :eid
+                      AND fecha = :fecha_n
+                      AND ticker = :ticker
+                """), {
+                    "retorno": retorno,
+                    "eid":     estrategia_id,
+                    "fecha_n": fecha_n,
+                    "ticker":  row.ticker,
+                })
+                actualizados += 1
+
+            if actualizados:
+                conn.commit()
+                log(f"  [RETORNOS] {col}: {actualizados} candidatos "
+                    f"actualizados (ref={fecha_n})")
