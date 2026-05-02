@@ -649,7 +649,7 @@ def registrar_estado_posiciones(
             entrada = op.fecha_entrada
             if hasattr(entrada, "date"):
                 entrada = entrada.date()
-            dias = trading_days_between(entrada, fecha)
+            dias = len(trading_days_between(entrada, fecha))
         except Exception:
             pass
 
