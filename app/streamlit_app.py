@@ -1300,7 +1300,7 @@ try:
 except Exception:
     pass
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📊 Dashboard",
     "➕ Agregar Ticker",
     "📋 Historial",
@@ -1308,6 +1308,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🕯️ Velas",
     "🎯 Opciones",
     "🧪 Forward Testing",
+    "🔬 Observacion FT",
     "🇦🇷 Argentina (IOL)",
 ])
 
@@ -1351,6 +1352,18 @@ with tab7:
         st.code(_tb.format_exc())
 
 with tab8:
+    try:
+        try:
+            from app.ft_observacion_tab import render_ft_observacion_tab
+        except ImportError:
+            from ft_observacion_tab import render_ft_observacion_tab
+        render_ft_observacion_tab(query)
+    except Exception as _e:
+        import traceback as _tb
+        st.error(f"Error cargando tab Observacion FT: {_e}")
+        st.code(_tb.format_exc())
+
+with tab9:
     try:
         try:
             from app.iol_tab import render_iol_tab
