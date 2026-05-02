@@ -603,7 +603,7 @@ def registrar_estado_posiciones(
             WITH ranked AS (
                 SELECT ticker, es_alcista, vol_price_confirm, vol_price_diverge,
                        ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY fecha DESC) AS rn
-                FROM features_market_structure
+                FROM features_precio_accion
                 WHERE ticker = ANY(:tickers)
             )
             SELECT ticker,
