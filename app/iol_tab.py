@@ -596,12 +596,28 @@ def _subtab_opciones(query_fn):
         atm_c = calls.iloc[(calls["strike_price"] - spot).abs().argsort()].head(3)
         iv_atm = atm_c["implied_volatility"].mean()
 
-        sc1, sc2, sc3 = st.columns(3)
-        sc1.metric("Expiracion",  venc_sel)
-        sc2.metric("IV ATM (Calls)", f"{iv_atm*100:.1f}%" if pd.notna(iv_atm) else "-")
-        dias_exp = (pd.to_datetime(venc_sel) - pd.Timestamp.today()).days
-        sc3.metric("Dias al venc.", str(dias_exp))
+        # ── HV + IV Rank + VRP ───────────────────────────────────
+        _panel_hv_vrp(ticker_sel, iv_atm, spot)
 
+        dias_exp = (pd.to_datetime(venc_sel) - pd.Timestamp.today()).days
+
+        ec1, ec2, ec3 = st.columns(3)
+        ec1.metric("Expiracion",     venc_sel)
+        ec2.metric("IV ATM (Calls)", f"{iv_atm*100:.1f}%" if pd.notna(iv_atm) else "-")
+        ec3.metric("Dias al venc.",  str(dias_exp))
+
+        # ── Expected Move ─────────────────────────────────────
+        if pd.notna(iv_atm) and spot and dias_exp > 0:
+            T_exp = dias_exp / 365.0
+            move_1s = spot * iv_atm * (T_exp ** 0.5)
+            em1, em2, em3 = st.columns(3)
+            em1.metric("Mov. Esperado +1s",
+                       f"+{_fmt_ars(move_1s)}  (+{move_1s/spot*100:.1f}%)",
+                       help="68% de probabilidad de estar dentro de este rango al vencimiento")
+            em2.metric("Rango superior", _fmt_ars(spot + move_1s))
+            em3.metric("Rango inferior", _fmt_ars(spot - move_1s))
+
+        st.divider()
         st.markdown("**Calls**")
         _mostrar_chain(calls, spot)
 
@@ -612,38 +628,116 @@ def _subtab_opciones(query_fn):
         _historial_iv_pcr(query_fn, ticker_sel)
 
 
+@st.cache_data(ttl=600)
+def _fetch_historia_cached(ticker: str):
+    """Historia IOL cacheada 10 min — usada para HV."""
+    return _fetch_historia(ticker)
+
+
+def _panel_hv_vrp(ticker: str, iv_atm: float, spot: float):
+    """Panel de Volatilidad Historica, IV Rank y VRP."""
+    try:
+        from src.data.iol_client import calcular_hv_iol
+    except ImportError:
+        return
+
+    df_hist = _fetch_historia_cached(ticker)
+    if df_hist is None or df_hist.empty:
+        return
+
+    hv20 = calcular_hv_iol(df_hist, ventana=20)
+    hv30 = calcular_hv_iol(df_hist, ventana=30)
+
+    if not hv20:
+        return
+
+    # IV Rank (donde esta la IV actual vs el rango historico de HV)
+    import numpy as np
+    hv_series = []
+    closes = df_hist["close"].dropna()
+    if len(closes) > 21:
+        log_ret = np.log(closes / closes.shift(1)).dropna()
+        hv_roll = log_ret.rolling(20).std(ddof=1) * np.sqrt(245)
+        hv_series = hv_roll.dropna().values
+    iv_rank = 0.0
+    if len(hv_series) >= 20 and pd.notna(iv_atm):
+        minv, maxv = hv_series[-252:].min(), hv_series[-252:].max()
+        if maxv > minv:
+            iv_rank = (iv_atm - minv) / (maxv - minv) * 100
+
+    # VRP = IV - HV20
+    vrp = (iv_atm - hv20) * 100 if pd.notna(iv_atm) else None
+    if vrp and vrp > 5:
+        vrp_senal = "VENDER PRIMA"
+        vrp_color = "normal"
+    elif vrp and vrp < -5:
+        vrp_senal = "COMPRAR PRIMA"
+        vrp_color = "inverse"
+    else:
+        vrp_senal = "NEUTRAL"
+        vrp_color = "off"
+
+    st.divider()
+    st.markdown("#### Volatilidad — HV vs IV")
+    hc1, hc2, hc3, hc4, hc5 = st.columns(5)
+    hc1.metric("HV 20d",    f"{hv20*100:.1f}%", help="Volatilidad historica 20 dias (BYMA)")
+    hc2.metric("HV 30d",    f"{hv30*100:.1f}%")
+    hc3.metric("IV ATM",    f"{iv_atm*100:.1f}%" if pd.notna(iv_atm) else "-")
+    hc4.metric("VRP",       f"{vrp:+.1f}pp" if vrp is not None else "-",
+               help="VRP = IV - HV20. >5pp = prima cara (vender); <-5pp = prima barata (comprar)")
+    hc5.metric("IV Rank",   f"{iv_rank:.0f}%",
+               help="Donde esta la IV actual vs el rango historico de HV. >50 = IV elevada")
+
+    st.caption(f"Senal VRP: **{vrp_senal}**  |  IV Rank {iv_rank:.0f}%  — basado en {len(hv_series)} dias de historia IOL")
+    st.divider()
+
+
 def _mostrar_chain(df: pd.DataFrame, spot: float):
     if df.empty:
         st.caption("Sin datos.")
         return
     rows = []
     for _, r in df.iterrows():
-        dist = (r["strike_price"] - spot) / spot * 100
+        dist  = (r["strike_price"] - spot) / spot * 100
+        prima = r.get("prima_mercado")
         rows.append({
-            "Symbol":      r["symbol"],
-            "Strike":      _fmt_ars(r["strike_price"]),
-            "Dist Spot %": _fmt_pct(dist),
-            "Bid":         _fmt_ars(r["bid_price"]),
-            "Ask":         _fmt_ars(r["ask_price"]),
-            "Teor.":       _fmt_ars(r["theoretical_price"]),
-            "IV %":        f"{r['implied_volatility']*100:.1f}%" if pd.notna(r["implied_volatility"]) else "-",
-            "Delta":       f"{r['delta']:.3f}" if pd.notna(r["delta"]) else "-",
-            "Gamma":       f"{r['gamma']:.5f}" if pd.notna(r["gamma"]) else "-",
-            "Theta":       f"{r['theta']:.2f}" if pd.notna(r["theta"]) else "-",
-            "Vega":        f"{r['vega']:.2f}" if pd.notna(r["vega"]) else "-",
-            "Vol":         f"{int(r['volume']):,}" if pd.notna(r["volume"]) and r["volume"] else "-",
+            "Symbol":       r["symbol"],
+            "Strike":       _fmt_ars(r["strike_price"]),
+            "Dist %":       _fmt_pct(dist),
+            "Bid":          _fmt_ars(r["bid_price"]),
+            "Ask":          _fmt_ars(r["ask_price"]),
+            "Ultimo":       _fmt_ars(prima),
+            "IV %":         f"{r['implied_volatility']*100:.1f}%" if pd.notna(r["implied_volatility"]) else "-",
+            "PROB OTM %":   f"{r['prob_otm_pct']:.1f}%" if pd.notna(r.get("prob_otm_pct")) else "-",
+            "TNA %":        f"{r['tna_pct']:.1f}%" if pd.notna(r.get("tna_pct")) else "-",
+            "TNA neta %":   f"{r['tna_neta_pct']:+.1f}%" if pd.notna(r.get("tna_neta_pct")) else "-",
+            "Delta":        f"{r['delta']:.3f}" if pd.notna(r["delta"]) else "-",
+            "Theta":        f"{r['theta']:.2f}" if pd.notna(r["theta"]) else "-",
+            "Dias":         str(int(r["dias_vto"])) if r.get("dias_vto") else "-",
+            "Vol":          f"{int(r['volume']):,}" if pd.notna(r["volume"]) and r["volume"] else "-",
         })
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
-                 column_config={
-                     "Symbol":    st.column_config.TextColumn(width=110),
-                     "Strike":    st.column_config.TextColumn(width=100),
-                     "Dist Spot %": st.column_config.TextColumn(width=90),
-                     "IV %":     st.column_config.TextColumn(width=70),
-                     "Delta":    st.column_config.TextColumn(width=70),
-                     "Gamma":    st.column_config.TextColumn(width=80),
-                     "Theta":    st.column_config.TextColumn(width=70),
-                     "Vega":     st.column_config.TextColumn(width=65),
-                 })
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Symbol":     st.column_config.TextColumn(width=115),
+            "Strike":     st.column_config.TextColumn(width=100),
+            "Dist %":     st.column_config.TextColumn(width=75),
+            "Bid":        st.column_config.TextColumn(width=80),
+            "Ask":        st.column_config.TextColumn(width=80),
+            "Ultimo":     st.column_config.TextColumn(width=80),
+            "IV %":       st.column_config.TextColumn(width=65),
+            "PROB OTM %": st.column_config.TextColumn(width=90),
+            "TNA %":      st.column_config.TextColumn(width=75),
+            "TNA neta %": st.column_config.TextColumn(width=90),
+            "Delta":      st.column_config.TextColumn(width=65),
+            "Theta":      st.column_config.TextColumn(width=65),
+            "Dias":       st.column_config.TextColumn(width=50),
+            "Vol":        st.column_config.TextColumn(width=65),
+        },
+    )
+    st.caption("PROB OTM = prob. que expire sin valor (vendedor se queda con prima) | TNA = rendimiento anualizado | Bid/Ask disponibles en horario BCBA")
 
 
 def _historial_iv_pcr(query_fn, ticker: str):

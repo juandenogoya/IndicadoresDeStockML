@@ -144,6 +144,59 @@ def _bsm_calcular(S: float, K: float, T: float, r: float,
     return resultado
 
 
+def _calcular_prob_otm(S: float, K: float, T: float, r: float,
+                       iv: float, tipo: str) -> float:
+    """
+    Probabilidad de que la opcion expire OTM (sin valor) al vencimiento.
+    Para el VENDEDOR es la probabilidad de quedarse con la prima completa.
+      PUT  OTM = P(S_T > K) = N(d2)
+      CALL OTM = P(S_T < K) = N(-d2)
+    """
+    if T <= 0 or iv <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    try:
+        import numpy as np
+        from scipy.stats import norm
+        d1 = (np.log(S / K) + (r + 0.5 * iv ** 2) * T) / (iv * np.sqrt(T))
+        d2 = d1 - iv * np.sqrt(T)
+        if tipo.lower() == "put":
+            return float(norm.cdf(d2))
+        return float(norm.cdf(-d2))
+    except Exception:
+        return 0.0
+
+
+def _calcular_tna(prima: float, base: float, dias: int) -> float:
+    """
+    TNA bruta = (prima / base) x (365 / dias) x 100
+    Para PUT: base = strike. Para CALL cubierto: base = spot.
+    """
+    if base <= 0 or dias <= 0 or prima <= 0:
+        return 0.0
+    return (prima / base) * (365.0 / dias) * 100.0
+
+
+def calcular_hv_iol(df_precios: "pd.DataFrame",
+                    ventana: int = 20,
+                    dias_anio: int = 245) -> float:
+    """
+    HV rolling usando precios de cierre de IOL.
+    dias_anio=245 para BYMA (dias habiles Argentina).
+    Retorna el ultimo valor de HV (decimal, ej: 0.45 = 45%).
+    """
+    try:
+        import numpy as np
+        import pandas as pd
+        closes = pd.to_numeric(df_precios["close"], errors="coerce").dropna()
+        if len(closes) < ventana + 1:
+            return 0.0
+        log_ret = np.log(closes / closes.shift(1)).dropna()
+        hv_series = log_ret.rolling(ventana).std(ddof=1) * np.sqrt(dias_anio)
+        return float(hv_series.dropna().iloc[-1])
+    except Exception:
+        return 0.0
+
+
 class IOLClient:
     """
     Cliente para la API REST de InvertirOnline.
@@ -445,7 +498,18 @@ class IOLClient:
             if spot and spot > 0 and prima > 0 and T > 0:
                 bsm = _bsm_calcular(spot, strike, T, r, prima, tipo_bsm)
 
-            iv  = bsm.get("iv")
+            iv   = bsm.get("iv")
+
+            # ── Metricas adicionales AR ───────────────────────────
+            prob_otm = None
+            tna_pct  = None
+            tna_neta = None
+            if iv and prima > 0 and dias > 0:
+                prob_otm = round(_calcular_prob_otm(spot, strike, T, r, iv, tipo_bsm) * 100, 1)
+                # TNA: para put base=strike, para call base=spot
+                base_tna = strike if tipo_bsm == "put" else spot
+                tna_pct  = round(_calcular_tna(prima, base_tna, dias), 1)
+                tna_neta = round(tna_pct - (r * 100), 1)  # neta de tasa libre
 
             rows.append({
                 "ticker_subyacente":  symbol,
@@ -455,7 +519,7 @@ class IOLClient:
                 "expiration":         expiration,
                 "bid_price":          bid,
                 "ask_price":          ask,
-                "theoretical_price":  None,   # no provisto por la API
+                "theoretical_price":  None,
                 "implied_volatility": round(iv, 4) if iv else None,
                 "delta":              bsm.get("delta"),
                 "gamma":              bsm.get("gamma"),
@@ -465,6 +529,12 @@ class IOLClient:
                 "volume":             volumen if volumen > 0 else None,
                 "spot_price":         spot,
                 "risk_free_rate":     r,
+                # Metricas AR adicionales (no van a DB, solo para UI)
+                "prob_otm_pct":       prob_otm,
+                "tna_pct":            tna_pct,
+                "tna_neta_pct":       tna_neta,
+                "prima_mercado":      round(prima, 2) if prima > 0 else None,
+                "dias_vto":           dias,
             })
 
         if not rows:
