@@ -553,6 +553,19 @@ def cmd_precios():
     except Exception:
         log(f"  ERROR en regimen macro (no critico): {traceback.format_exc()[:200]}")
 
+    log("\n[1e] Z-scores de volumen de acciones...")
+    try:
+        from datetime import date as _date
+        from src.utils.zscore_pipeline import calcular_zscore_tickers, init_tablas
+        from src.data.database import get_engine as _get_engine
+        _engine = _get_engine()
+        init_tablas(_engine)   # crea tabla si no existe (idempotente)
+        _fecha_hoy = _date.today()
+        _n_z = calcular_zscore_tickers(_fecha_hoy, _engine)
+        log(f"  Z-scores tickers: {_n_z} filas -> ticker_zscore_diario")
+    except Exception:
+        log(f"  ERROR en Z-scores tickers (no critico): {traceback.format_exc()[:200]}")
+
     log("\n  Paso 1 finalizado.")
     log("=" * 55)
 
