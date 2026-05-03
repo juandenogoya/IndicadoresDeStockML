@@ -388,11 +388,92 @@ def _render_oportunidades(query_fn, estrategia_id: int, df_ops: pd.DataFrame):
     )
 
 
+# ── Distribucion sectorial ────────────────────────────────────────────────────
+
+def _render_distribucion_sectorial(query_fn, eid: int):
+    """
+    Tabla de ocupacion por sector para estrategias con caps sectoriales.
+    Muestra posiciones abiertas, slots libres, capital invertido y margen
+    disponible sobre la base de 5 posiciones x $11,111.11 por sector.
+    """
+    st.subheader("Distribucion por Sector")
+    st.caption(
+        "Ocupacion de cada sector sobre la base de 5 slots x $11,111.11. "
+        "Margen disponible = capital sin desplegar en sectores con slots libres."
+    )
+
+    df_s = query_fn("""
+        SELECT
+            COALESCE(a.sector, 'Sin sector') AS sector,
+            COUNT(*)                          AS pos_abiertas,
+            SUM(o.capital_entrada)            AS capital_invertido
+        FROM ft_operaciones o
+        JOIN activos a ON a.ticker = o.ticker
+        WHERE o.estrategia_id = :eid
+          AND o.fecha_salida IS NULL
+        GROUP BY a.sector
+        ORDER BY pos_abiertas DESC, a.sector
+    """, {"eid": eid})
+
+    if df_s.empty:
+        st.info("Sin posiciones abiertas para calcular la distribucion sectorial.")
+        return
+
+    MAX_POS   = 5
+    CAP_SECT  = 11_111.11
+
+    df_s["pos_abiertas"]       = df_s["pos_abiertas"].astype(int)
+    df_s["slots_libres"]       = (MAX_POS - df_s["pos_abiertas"]).clip(lower=0)
+    df_s["capital_invertido"]  = df_s["capital_invertido"].fillna(0).astype(float)
+    df_s["capital_disponible"] = (CAP_SECT - df_s["capital_invertido"]).clip(lower=0)
+    df_s["ocupacion_pct"]      = df_s["pos_abiertas"] / MAX_POS * 100
+
+    df_show = pd.DataFrame({
+        "Sector":            df_s["sector"],
+        "Pos. Abiertas":     df_s["pos_abiertas"].astype(str) + " / " + str(MAX_POS),
+        "Slots Libres":      df_s["slots_libres"].astype(str),
+        "Capital Invertido": df_s["capital_invertido"].map(lambda v: f"${v:,.2f}"),
+        "Capital Disponible":df_s["capital_disponible"].map(lambda v: f"${v:,.2f}"),
+        "Ocupacion %":       df_s["ocupacion_pct"].map(lambda v: f"{v:.0f}%"),
+    })
+
+    st.dataframe(
+        df_show,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Sector":            st.column_config.TextColumn(width=185),
+            "Pos. Abiertas":     st.column_config.TextColumn(width=115),
+            "Slots Libres":      st.column_config.TextColumn(width=105,
+                                 help="Posiciones disponibles hasta el maximo de 5"),
+            "Capital Invertido": st.column_config.TextColumn(width=145,
+                                 help="Capital comprometido en posiciones abiertas"),
+            "Capital Disponible":st.column_config.TextColumn(width=155,
+                                 help="Margen disponible sobre los $11,111.11 del sector"),
+            "Ocupacion %":       st.column_config.TextColumn(width=105),
+        },
+    )
+
+    # Metricas de resumen
+    n_sect    = len(df_s)
+    n_full    = int((df_s["pos_abiertas"] >= MAX_POS).sum())
+    total_inv = float(df_s["capital_invertido"].sum())
+    total_dis = float(df_s["capital_disponible"].sum())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Sectores llenos",   f"{n_full} / {n_sect}")
+    c2.metric("Sectores con margen", f"{n_sect - n_full} / {n_sect}")
+    c3.metric("Capital invertido", f"${total_inv:,.2f}")
+    c4.metric("Margen disponible", f"${total_dis:,.2f}",
+              help="Capital sin desplegar en sectores con slots libres")
+
+
 # ── Sub-tab por estrategia ────────────────────────────────────────────────────
 
 def _render_estrategia(query_fn, est: dict):
     """Renderiza el contenido completo de una estrategia."""
-    eid = int(est["id"])
+    eid    = int(est["id"])
+    logica = str(est.get("logica", ""))
 
     with st.spinner("Cargando datos..."):
         df_ops = _cargar_operaciones(query_fn, eid)
@@ -402,6 +483,12 @@ def _render_estrategia(query_fn, est: dict):
     _render_tabla(df_ops)
     st.divider()
     _render_oportunidades(query_fn, eid, df_ops)
+
+    # Distribucion sectorial: solo para estrategias con caps por sector
+    es_sectorial = any(k in logica for k in ("sectorial", "combo", "sector"))
+    if es_sectorial:
+        st.divider()
+        _render_distribucion_sectorial(query_fn, eid)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
