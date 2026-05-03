@@ -305,6 +305,84 @@ def _sec_laterales_op(df, show_charts):
         st.bar_chart(chart)
 
 
+def _sec_distribucion_sectorial(query_fn, eid, fecha):
+    """Tabla de distribucion de posiciones abiertas por sector."""
+    st.markdown("#### Distribucion por Sector — Posiciones Abiertas")
+    st.caption(
+        "Ocupacion de cada sector sobre la base de 5 slots x $11,111.11. "
+        "Muestra el margen disponible para nuevas entradas."
+    )
+
+    sql = """
+        SELECT
+            COALESCE(a.sector, 'Sin sector') AS sector,
+            COUNT(*)                          AS pos_abiertas,
+            SUM(o.capital)                    AS capital_invertido
+        FROM ft_posiciones_diarias p
+        JOIN ft_operaciones o  ON o.id      = p.operacion_id
+        JOIN activos         a ON a.ticker  = p.ticker
+        WHERE p.estado = 'abierta'
+          AND p.fecha  = :fecha
+          AND (:eid = 0 OR p.estrategia_id = :eid)
+        GROUP BY a.sector
+        ORDER BY pos_abiertas DESC, a.sector
+    """
+    df_s = query_fn(sql, {"fecha": str(fecha), "eid": eid})
+
+    if df_s.empty:
+        st.info("Sin datos de posiciones abiertas para calcular la distribucion sectorial.")
+        return
+
+    MAX_POS = 5
+    CAP_SECTOR = 11_111.11
+
+    df_s["pos_abiertas"]      = df_s["pos_abiertas"].astype(int)
+    df_s["slots_libres"]      = (MAX_POS - df_s["pos_abiertas"]).clip(lower=0)
+    df_s["capital_invertido"] = df_s["capital_invertido"].fillna(0).astype(float)
+    df_s["capital_disponible"]= (CAP_SECTOR - df_s["capital_invertido"]).clip(lower=0)
+    df_s["ocupacion_pct"]     = df_s["pos_abiertas"] / MAX_POS * 100
+
+    df_show = pd.DataFrame()
+    df_show["Sector"]           = df_s["sector"]
+    df_show["Pos. Abiertas"]    = df_s["pos_abiertas"].astype(str) + " / " + str(MAX_POS)
+    df_show["Slots Libres"]     = df_s["slots_libres"].astype(str)
+    df_show["Capital Invertido"]= df_s["capital_invertido"].map(lambda v: f"${v:,.2f}")
+    df_show["Capital Disponible"]= df_s["capital_disponible"].map(lambda v: f"${v:,.2f}")
+    df_show["Ocupacion %"]      = df_s["ocupacion_pct"].map(lambda v: f"{v:.0f}%")
+
+    st.dataframe(
+        df_show,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Sector":            st.column_config.TextColumn(width=185),
+            "Pos. Abiertas":     st.column_config.TextColumn(width=110),
+            "Slots Libres":      st.column_config.TextColumn(width=105,
+                                 help="Posiciones disponibles hasta el maximo de 5"),
+            "Capital Invertido": st.column_config.TextColumn(width=145,
+                                 help="Capital actualmente comprometido en el sector"),
+            "Capital Disponible":st.column_config.TextColumn(width=155,
+                                 help="Margen disponible sobre los $11,111.11 asignados al sector"),
+            "Ocupacion %":       st.column_config.TextColumn(width=100),
+        },
+    )
+
+    # Totales
+    total_pos  = int(df_s["pos_abiertas"].sum())
+    total_inv  = float(df_s["capital_invertido"].sum())
+    total_disp = float(df_s["capital_disponible"].sum())
+    n_sectores = len(df_s)
+    n_full     = int((df_s["pos_abiertas"] >= MAX_POS).sum())
+    n_libre    = int((df_s["slots_libres"] > 0).sum())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total posiciones", f"{total_pos} / {n_sectores * MAX_POS}")
+    c2.metric("Sectores llenos", f"{n_full} / {n_sectores}")
+    c3.metric("Capital invertido", f"${total_inv:,.2f}")
+    c4.metric("Margen disponible", f"${total_disp:,.2f}",
+              help="Capital sin desplegar en sectores con slots libres")
+
+
 def _sec_retornos_op(df, show_charts):
     st.markdown("#### 3. Retornos vs Tiempo (Contrafactual)")
     st.caption(
@@ -423,7 +501,7 @@ def _render_posiciones_abiertas(query_fn, eid, fecha):
 
 # ─── Sub-tab: Oportunidades NO Abiertas ──────────────────────────────────────
 
-def _render_oportunidades_no_abiertas(query_fn, eid, fecha):
+def _render_oportunidades_no_abiertas(query_fn, eid, fecha):  # noqa: C901
     sql = """
         WITH precios_5d AS (
             SELECT
@@ -496,6 +574,8 @@ def _render_oportunidades_no_abiertas(query_fn, eid, fecha):
     _sec_laterales_op(df, show_charts)
     st.divider()
     _sec_retornos_op(df, show_charts)
+    st.divider()
+    _sec_distribucion_sectorial(query_fn, eid, fecha)
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
