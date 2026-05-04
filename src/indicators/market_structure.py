@@ -335,11 +335,19 @@ def upsert_features_ms(df: pd.DataFrame):
         ON CONFLICT (ticker, fecha) DO UPDATE SET
             {updates}
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_batch(cur, sql, records, page_size=500)
+    # Chunking: evita transacciones de 195k filas que agotan la conexion a Railway.
+    CHUNK = 5_000
+    total = len(records)
+    insertados = 0
+    for i in range(0, total, CHUNK):
+        chunk = records[i: i + CHUNK]
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                psycopg2.extras.execute_batch(cur, sql, chunk, page_size=500)
+        insertados += len(chunk)
+        print(f"    MS upsert: {insertados:,}/{total:,} filas...", flush=True)
 
-    print(f"    Upsert completado: {len(records):,} filas en features_market_structure.")
+    print(f"    Upsert completado: {insertados:,} filas en features_market_structure.")
 
 
 # ─────────────────────────────────────────────────────────────

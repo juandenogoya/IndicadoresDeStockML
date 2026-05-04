@@ -128,12 +128,15 @@ def paso_actualizar_datos() -> dict:
         return {"ok": 0, "error": 0}
 
     # Descarga en lotes para evitar YFRateLimitError con 200 tickers en una sola llamada.
-    # 50 tickers/lote, 8s entre lotes, reintento de 90s si hay rate limit.
+    # NOTA: en yfinance 0.2.x el YFRateLimitError NO lanza excepcion — imprime
+    # el error internamente y devuelve DataFrame vacio. Por eso el retry se basa
+    # en detectar raw.empty, no en except Exception.
+    # BATCH_SIZE=10 para no superar el umbral actual de Yahoo Finance (mayo 2026).
     import time
 
-    BATCH_SIZE   = 50
-    BATCH_DELAY  = 8    # segundos entre lotes (evita rate limit proactivo)
-    RETRY_DELAY  = 90   # segundos de espera si el lote falla con rate limit
+    BATCH_SIZE        = 10   # reducido de 50 — Yahoo Finance bloquea lotes grandes
+    BATCH_DELAY       = 10   # segundos entre lotes exitosos
+    RATELIMIT_DELAY   = 90   # segundos de espera cuando un lote devuelve vacio
 
     batches = [tickers_db[i:i + BATCH_SIZE]
                for i in range(0, len(tickers_db), BATCH_SIZE)]
@@ -156,19 +159,19 @@ def paso_actualizar_datos() -> dict:
                     group_by="ticker",
                     threads=False,
                 )
-                break   # descarga OK
             except Exception as e:
-                err_s = str(e)
-                if attempt == 1 and "RateLimit" in err_s:
-                    log(f"    [WARN] Rate limit en lote {b_idx}, reintentando en {RETRY_DELAY}s...")
-                    time.sleep(RETRY_DELAY)
-                else:
-                    log(f"    [ERROR] Lote {b_idx} fallo: {err_s[:80]}")
-                    raw = None
-                    break
+                log(f"    [ERROR] Lote {b_idx} excepcion: {str(e)[:80]}")
+                raw = None
+
+            if raw is not None and not raw.empty:
+                break  # descarga OK
+
+            if attempt == 1:
+                log(f"    [WARN] Lote {b_idx}: sin datos (rate limit?). Reintentando en {RATELIMIT_DELAY}s...")
+                time.sleep(RATELIMIT_DELAY)
 
         if raw is None or raw.empty:
-            log(f"    [WARN] Lote {b_idx}: sin datos.")
+            log(f"    [WARN] Lote {b_idx}: sin datos tras reintento.")
         else:
             # Extraer DataFrame por ticker del lote
             for ticker in batch:

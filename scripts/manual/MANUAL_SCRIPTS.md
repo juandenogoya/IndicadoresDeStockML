@@ -14,14 +14,38 @@ Ubicacion de los archivos: `scripts/manual/` y `scripts/`
 
 ---
 
+### `check_yfinance.bat`
+- **Tarea:** Verifica si `yf.download()` esta disponible y que fechas retorna. No escribe nada en DB. Resultado: `[OK]` / `[PARCIAL]` / `[FALLO]`.
+- **Cuando ejecutar:** Antes de lanzar el pipeline si hay dudas de conectividad con Yahoo Finance, o para confirmar que el rate limit se limpió despues de ejecutar `limpiar_cookies_yfinance.bat`.
+- **Prerequisito:** Ninguno.
+
+---
+
+### `limpiar_cookies_yfinance.bat`
+- **Tarea:** Elimina `cookies.db` y `yfinance.cache` del directorio local de yfinance. Fuerza una sesion nueva sin la cookie de rate-limit.
+- **Cuando ejecutar:** Cuando `check_yfinance.bat` da `[FALLO]` desde una IP residencial (PC o celular). La cookie de rate-limit queda guardada en disco y bloquea todas las requests siguientes sin importar la red.
+- **Prerequisito:** Ninguno.
+- **Paso siguiente:** Cambiar de red (WiFi -> 4G o viceversa) y correr `check_yfinance.bat` para verificar.
+
+---
+
 ## PIPELINE DIARIO (Scanner) — Pasos individuales
 
 Usar estos bats cuando el cron automatico de GitHub Actions falla en un paso especifico y se necesita re-correr solo ese paso sin repetir todo el proceso.
 
-### `cron_paso1_precios.bat`
-- **Tarea:** Descarga precios de cierre (EOD) desde yfinance para los 199 tickers, actualiza la tabla `precios_diarios`, recalcula los indicadores tecnicos (SMA, RSI, MACD, ATR, BB, OBV, ADX, etc.) y actualiza los futuros de indices (ES, YM, NQ, RTY).
-- **Cuando ejecutar:** Despues de las 21:00 UTC de un dia habil, cuando el Paso 1 del cron automatico fallo o no corrio. Evitar entre 00:00 y 12:00 UTC (mantenimiento Yahoo Finance).
-- **Prerequisito:** Ninguno. Es el primer paso del pipeline.
+### `precios_paso1_fast_info.bat` *(PREFERIDO para uso diario normal)*
+- **Tarea:** Igual que `cron_paso1_precios.bat` pero usa el endpoint de cotizaciones (`/v8/finance/quote/`) en lugar del historico OHLCV (`/v8/finance/chart/`). Funciona en GH Actions y desde IPs residenciales sin disparar el rate limit agresivo de Yahoo Finance.
+- **Cuando ejecutar:** Uso diario normal post-cierre NYSE (despues 21:00 UTC). Captura la sesion mas reciente cerrada (hoy si es dia habil, viernes si es fin de semana).
+- **Limitacion:** No sirve para backfill de multiples dias atrasados. Para eso usar `cron_paso1_precios.bat`.
+- **Prerequisito:** Ninguno. Despues de las 21:00 UTC.
+- **Paso siguiente:** `cron_paso2_features.bat`
+
+---
+
+### `cron_paso1_precios.bat` *(FALLBACK — backfill de multiples dias)*
+- **Tarea:** Descarga precios de cierre (EOD) desde yfinance para los 199 tickers via endpoint historico OHLCV. Recalcula indicadores tecnicos y actualiza futuros. Sujeto a rate limit de Yahoo Finance en IPs cloud.
+- **Cuando ejecutar:** Cuando faltan MULTIPLES dias de datos (backfill). Para uso diario normal preferir `precios_paso1_fast_info.bat`.
+- **Prerequisito:** Ninguno.
 - **Paso siguiente:** `cron_paso2_features.bat`
 
 ---
@@ -139,3 +163,28 @@ GREGAS AR   →  opciones_ar_snapshot.bat  (DURANTE horario BCBA: 10:30-17:00 AR
 
 Si solo fallo un paso especifico del cron, correr solo ese paso y los que le siguen.
 Usar `status.bat` para confirmar el estado antes y despues de cada ejecucion.
+
+---
+
+## TROUBLESHOOTING: YFRateLimitError en IP residencial
+
+Sintoma: `yf.download()` devuelve `YFRateLimitError('Too Many Requests...')` desde
+la PC o el celular, incluso cambiando de red.
+
+Causa: yfinance 0.2.x guarda las cookies de Yahoo Finance en disco
+(`%LOCALAPPDATA%\py-yfinance\cookies.db`). Cuando Yahoo devuelve un error 429,
+guarda una cookie de rate-limit que bloquea todas las requests siguientes
+independientemente de la red o la IP.
+
+Solucion:
+
+```
+PASO 1  ->  limpiar_cookies_yfinance.bat
+PASO 2  ->  Cambiar de red (WiFi -> 4G o viceversa)
+PASO 3  ->  check_yfinance.bat  (verificar [OK])
+PASO 4  ->  Lanzar el pipeline normalmente
+```
+
+Nota: este fix aplica solo a IPs residenciales. Para IPs de cloud providers
+(GH Actions = Microsoft Azure, Railway = Amazon AWS) el bloqueo es permanente
+a nivel de red por parte de Yahoo Finance y no tiene fix local.

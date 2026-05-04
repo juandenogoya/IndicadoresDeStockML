@@ -49,4 +49,10 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 echo ----------------------------------------
 echo.
-pause
+echo Estado post-ejecucion:
+"%PYTHON%" "%ROOT%scripts\manual\db_status.py"
+echo.
+echo ============================================================
+echo   Paso 2 finalizado. Presiona cualquier tecla para cerrar.
+echo ============================================================
+pause > nul
