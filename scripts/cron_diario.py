@@ -559,11 +559,19 @@ def cmd_precios():
     log("\n[1e] Z-scores de volumen de acciones...")
     try:
         from datetime import date as _date
+        from sqlalchemy import text as _text
         from src.utils.zscore_pipeline import calcular_zscore_tickers, init_tablas
         from src.data.database import get_engine as _get_engine
         _engine = _get_engine()
         init_tablas(_engine)   # crea tabla si no existe (idempotente)
-        _fecha_hoy = _date.today()
+        # Usar la fecha real de precios en DB (no date.today(), que puede ser
+        # anterior al cierre cuando el pipeline corre durante la sesion)
+        with _engine.connect() as _conn:
+            _fecha_precios = _conn.execute(
+                _text("SELECT MAX(fecha) FROM precios_diarios")
+            ).scalar()
+        _fecha_hoy = _fecha_precios if _fecha_precios else _date.today()
+        log(f"  Fecha precios en DB: {_fecha_hoy}")
         _n_z = calcular_zscore_tickers(_fecha_hoy, _engine)
         log(f"  Z-scores tickers: {_n_z} filas -> ticker_zscore_diario")
     except Exception:
