@@ -45,7 +45,10 @@ from src.indicators.technical import procesar_indicadores_ticker
 from src.utils.trading_calendar import is_trading_day, prev_trading_day
 
 SEP = "=" * 62
-TICKER_DELAY = 1.0   # segundos entre tickers (anti rate-limit por volumen)
+TICKER_DELAY   = 1.0    # segundos entre tickers (anti rate-limit por volumen)
+RATELIMIT_WAIT = 300    # segundos de espera cuando se detecta rate limit (5 min)
+MAX_CONSEC_RL  = 5      # rate limits consecutivos para disparar pausa
+MAX_PAUSES     = 3      # maximo de pausas por run (si sigue fallando, abortar)
 
 
 def log(msg: str):
@@ -68,17 +71,19 @@ def obtener_tickers() -> list[str]:
     return df["ticker"].tolist() if not df.empty else []
 
 
-def descargar_fast_info(ticker: str) -> dict | None:
+def descargar_fast_info(ticker: str) -> tuple:
     """
     Obtiene OHLCV de la ultima sesion via fast_info.
-    Retorna dict con campos o None si el ticker no tiene datos validos.
+    Retorna (dict, is_rate_limited):
+      - dict con campos OHLCV si OK, None si fallo
+      - True si el fallo es por rate limit (Too Many Requests)
     """
     try:
         fi = yf.Ticker(ticker).fast_info
 
         close = fi.last_price
         if close is None or close <= 0:
-            return None
+            return None, False
 
         open_  = fi.open
         high   = fi.day_high
@@ -93,11 +98,13 @@ def descargar_fast_info(ticker: str) -> dict | None:
             "low":    float(low)    if low   is not None else None,
             "close":  float(close),
             "volume": int(float(vol)) if vol is not None and vol > 0 else None,
-        }
+        }, False
 
     except Exception as e:
-        log(f"    fast_info error: {str(e)[:80]}")
-        return None
+        err = str(e)
+        is_rl = ("Too Many Requests" in err or "Rate limited" in err or "429" in err)
+        log(f"    fast_info error: {err[:80]}")
+        return None, is_rl
 
 
 def procesar_ticker(ticker: str, fecha: date, data: dict, dry_run: bool) -> bool:
@@ -161,17 +168,35 @@ def main():
     log(f"  {len(tickers)} tickers | delay entre tickers: {TICKER_DELAY}s")
     print()
 
-    n_ok   = 0
-    n_warn = 0
-    n_err  = 0
+    n_ok         = 0
+    n_warn       = 0
+    n_err        = 0
+    consec_rl    = 0   # rate limits consecutivos acumulados
+    total_pauses = 0   # cuantas veces pausamos por rate limit en este run
 
     for i, ticker in enumerate(tickers, 1):
-        data = descargar_fast_info(ticker)
+        data, is_rl = descargar_fast_info(ticker)
 
         if data is None:
             log(f"  [{i:03d}/{len(tickers)}] {ticker:<8s} WARN  sin datos fast_info")
             n_warn += 1
+
+            if is_rl:
+                consec_rl += 1
+                # Disparar pausa cuando se acumulan MAX_CONSEC_RL fallos seguidos
+                if consec_rl >= MAX_CONSEC_RL and total_pauses < MAX_PAUSES:
+                    total_pauses += 1
+                    log("")
+                    log(f"  [RATELIMIT] {MAX_CONSEC_RL} rate limits consecutivos (pausa {total_pauses}/{MAX_PAUSES}).")
+                    log(f"  [RATELIMIT] Esperando {RATELIMIT_WAIT}s para recuperar acceso...")
+                    time.sleep(RATELIMIT_WAIT)
+                    consec_rl = 0
+                    log(f"  [RATELIMIT] Reanudando...")
+                    log("")
+            else:
+                consec_rl = 0
         else:
+            consec_rl = 0
             try:
                 procesar_ticker(ticker, fecha_sesion, data, dry_run)
                 suffix = "DRY" if dry_run else "OK"
@@ -191,6 +216,8 @@ def main():
     print(f"  OK    : {n_ok:3d} / {len(tickers)}")
     print(f"  WARN  : {n_warn:3d}")
     print(f"  ERROR : {n_err:3d}")
+    if total_pauses:
+        print(f"  Pausas por rate limit: {total_pauses}")
     print(SEP)
     print()
 
