@@ -4,7 +4,7 @@
 #  Pipeline diario secuencial: precios -> features -> scanner
 #  Disenado para cron en Oracle Cloud (Ubuntu 22.04).
 #
-#  Horario cron: L-V 13:00 UTC = 10:00 ART
+#  Horario cron: L-V 22:00 UTC = 19:00 ART (2hs post-cierre NYSE)
 #  Duracion estimada: ~95 minutos
 #  Log: /tmp/cron_pipeline_diario.log
 # =============================================================
