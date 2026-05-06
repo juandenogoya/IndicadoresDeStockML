@@ -122,6 +122,49 @@ ESTRATEGIAS = [
             "riesgo_por_trade":   0.15,
         },
     },
+    {
+        "nombre":      "FT_TECH_SECTOR_v2",
+        "descripcion": "TECH_SECTOR_v1 con retencion condicional y rotacion intrasectorial. "
+                       "Cierre solo si score=0 AND candle<0 AND up_vol<2. "
+                       "Rotacion si delta_score >= 1.0 en sector lleno.",
+        "logica":      "tecnico_sectorial_v2",
+        "parametros":  {
+            "sectores":                 SECTORES_ACTIVOS,
+            "n_sectores":               len(SECTORES_ACTIVOS),
+            "score_entrada":            4.0,
+            "atr_mult_sl":              2.0,
+            "atr_mult_tp":              4.0,
+            "max_pos_sector":           5,
+            "position_pct":             0.20,
+            "retencion_candle_min":     0,
+            "retencion_up_vol_min":     2,
+            "retencion_logica":         "OR",
+            "rotacion_delta_score":     1.0,
+        },
+    },
+    {
+        "nombre":      "FT_SMC_v2",
+        "descripcion": "SMC_v1 con filtro de contexto en entrada (OR: lateral>1 OR candle>0) "
+                       "y salida por agotamiento (AND: up_vol=0 AND candle<-2 AND lateral<0.5). "
+                       "Time stop eliminado.",
+        "logica":      "smc_estructura_v2",
+        "parametros":  {
+            "score_entrada_min":            1,
+            "score_maximo":                 3,
+            "lookback_dias":                12,
+            "min_sl_dist_pct":              1.0,
+            "max_sl_dist_pct":              8.0,
+            "max_posiciones":               5,
+            "riesgo_por_trade":             0.15,
+            "filtro_lateral_ratio_min":     1.0,
+            "filtro_candle_score_min":      0,
+            "filtro_logica":                "OR",
+            "agotamiento_up_vol_max":       0,
+            "agotamiento_candle_max":       -2,
+            "agotamiento_lateral_max":      0.5,
+            "agotamiento_logica":           "AND",
+        },
+    },
 ]
 
 

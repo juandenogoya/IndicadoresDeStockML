@@ -3,50 +3,32 @@ chcp 65001 > nul
 REM ============================================================
 REM  pipeline_automatico.bat
 REM  Pipeline diario completo SIN confirmaciones.
-REM  Disenado para Windows Task Scheduler (ejecucion desatendida).
+REM  Disenado para Windows Task Scheduler.
 REM
-REM  DB destino       : Railway (DATABASE_URL cargado desde .env.local)
-REM  Horario Task     : L-V 10:00 ART (13:00 UTC) -- antes de apertura NYSE
-REM  Duracion estimada: ~105 minutos
-REM  Secuencia        :
-REM    0. Verifica dia habil NYSE
-REM    1. Limpia cookies yfinance (anti rate-limit)
-REM    2. Paso 1 -- Precios + Futuros + Indicadores + Z-scores (~35 min)
-REM               cron_diario.py --step precios
-REM               Incluye: yf.download batch (backfill automatico), futuros,
-REM               indicadores tecnicos futuros, regimen macro, z-scores tickers
-REM    3. Paso 2 -- Features PA + Market Structure (~5 min)
-REM    4. Paso 3 -- Scanner ML + Telegram (~60 min)
-REM    5. Paso 4 -- Verificacion post-facto retornos (~2 min)
-REM
-REM  Replica exactamente el pipeline de Oracle Cloud (oracle_pipeline_diario.sh)
-REM  Ventaja vs Oracle: sin rate limit de yfinance en IP residencial/corporativa
-REM  Ventaja vs fast_info: recupera automaticamente dias perdidos (period=1mo)
+REM  Horario: L-V 10:00 ART (13:00 UTC)
+REM  Duracion estimada: ~110 minutos
 REM ============================================================
 
-SET ROOT=%~dp0..\
-SET PYTHON=%ROOT%venv\Scripts\python.exe
-SET LOGDIR=%ROOT%logs\pipeline_auto
+SET "ROOT=%~dp0..\"
+SET "PYTHON=%ROOT%venv\Scripts\python.exe"
+SET "LOGDIR=%ROOT%logs\pipeline_auto"
 
-REM Cargar DATABASE_URL y otras variables desde .env.local
-for /f "usebackq tokens=1,* delims==" %%a in ("%ROOT%.env.local") DO set %%a=%%b
+REM Cargar DATABASE_URL desde .env.local
+for /f "usebackq tokens=1,* delims==" %%a in ("%ROOT%.env.local") DO set "%%a=%%b"
 
 REM Crear directorio de logs si no existe
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-REM Nombre del log con fecha y hora
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set DT=%%I
-SET LOGFILE=%LOGDIR%\pipeline_%DT:~0,8%_%DT:~8,4%.log
+REM Nombre del log con timestamp
+for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul') do set DT=%%I
+SET "LOGFILE=%LOGDIR%\pipeline_%DT:~0,8%_%DT:~8,4%.log"
 
 echo. >> "%LOGFILE%"
 echo ============================================================ >> "%LOGFILE%"
 echo   PIPELINE AUTOMATICO  %DATE%  %TIME% >> "%LOGFILE%"
 echo ============================================================ >> "%LOGFILE%"
-echo. >> "%LOGFILE%"
 
-echo [%TIME%] Iniciando pipeline automatico... >> "%LOGFILE%"
-
-REM ── PASO 0: Verificar dia habil ──────────────────────────────
+REM PASO 0: Verificar dia habil
 echo [%TIME%] Verificando dia habil NYSE... >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\manual\check_fecha.py" >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
@@ -55,46 +37,44 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 echo [%TIME%] Dia habil confirmado. >> "%LOGFILE%"
 
-REM ── PASO 1: Limpiar cookies yfinance ─────────────────────────
+REM PASO 1: Limpiar cookies yfinance
 echo [%TIME%] Limpiando cookies yfinance... >> "%LOGFILE%"
-del /f /q "%LOCALAPPDATA%\py-yfinance\cookies.db" >> "%LOGFILE%" 2>&1
-del /f /q "%TEMP%\yfinance.cache" >> "%LOGFILE%" 2>&1
+if exist "%LOCALAPPDATA%\py-yfinance\cookies.db" del /f /q "%LOCALAPPDATA%\py-yfinance\cookies.db"
+if exist "%TEMP%\yfinance.cache" del /f /q "%TEMP%\yfinance.cache"
 echo [%TIME%] Cookies limpias. >> "%LOGFILE%"
 
-REM ── PASO 2: Precios + Futuros + Indicadores + Z-scores ───────
-echo [%TIME%] Paso 1 - Precios + Futuros + Z-scores (199 tickers)... >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\cron_diario.py" --step precios >> "%LOGFILE%" 2>&1
+REM PASO 2: Precios via fast_info
+echo [%TIME%] Paso 1 - Precios fast_info (199 tickers)... >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\actualizar_precios_fast_info.py" >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo [%TIME%] [ERROR] Paso 1 fallo. Abortando pipeline. >> "%LOGFILE%"
+    echo [%TIME%] ERROR en Paso 1. Abortando. >> "%LOGFILE%"
     exit /b 1
 )
-echo [%TIME%] Paso 1 completado. >> "%LOGFILE%"
+echo [%TIME%] Paso 1 OK. >> "%LOGFILE%"
 
-REM ── PASO 3: Features PA + Market Structure ───────────────────
+REM PASO 3: Futuros de indices
+echo [%TIME%] Paso 1b - Futuros... >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\34_futuros_indices.py" >> "%LOGFILE%" 2>&1
+echo [%TIME%] Futuros OK. >> "%LOGFILE%"
+
+REM PASO 4: Features
 echo [%TIME%] Paso 2 - Features PA + Market Structure... >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\cron_diario.py" --step features >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo [%TIME%] [ERROR] Paso 2 fallo. Abortando pipeline. >> "%LOGFILE%"
+    echo [%TIME%] ERROR en Paso 2. Abortando. >> "%LOGFILE%"
     exit /b 1
 )
-echo [%TIME%] Paso 2 completado. >> "%LOGFILE%"
+echo [%TIME%] Paso 2 OK. >> "%LOGFILE%"
 
-REM ── PASO 4: Scanner ML + Telegram ────────────────────────────
+REM PASO 5: Scanner ML
 echo [%TIME%] Paso 3 - Scanner ML + Telegram... >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\cron_diario.py" --step scanner >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo [%TIME%] [ERROR] Paso 3 fallo. >> "%LOGFILE%"
+    echo [%TIME%] ERROR en Paso 3. >> "%LOGFILE%"
     exit /b 1
 )
-echo [%TIME%] Paso 3 completado. >> "%LOGFILE%"
+echo [%TIME%] Paso 3 OK. >> "%LOGFILE%"
 
-REM ── PASO 5: Verificacion post-facto ──────────────────────────
-echo [%TIME%] Paso 4 - Verificacion retornos post-facto... >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\cron_diario.py" --step verificar >> "%LOGFILE%" 2>&1
-echo [%TIME%] Paso 4 completado. >> "%LOGFILE%"
-
-REM ── FIN ──────────────────────────────────────────────────────
-echo. >> "%LOGFILE%"
 echo [%TIME%] Pipeline completado exitosamente. >> "%LOGFILE%"
 echo ============================================================ >> "%LOGFILE%"
 exit /b 0
