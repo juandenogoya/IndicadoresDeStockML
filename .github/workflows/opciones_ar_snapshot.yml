@@ -1,14 +1,7 @@
 name: Opciones AR Snapshot (Greeks + PCR)
 
 on:
-  schedule:
-    # ── Snapshot 1: mid-session — 13:30 ART = 16:30 UTC ──────────────────────
-    # Captura IV y Greeks en horario punta de actividad.
-    - cron: '30 16 * * 1-5'
-    # ── Snapshot 2: cierre — 16:45 ART = 19:45 UTC ───────────────────────────
-    # Captura el volumen acumulado del dia completo (15 min antes del cierre).
-    # Este snapshot es el clave para PCR y analisis de intenciones del mercado.
-    - cron: '45 19 * * 1-5'
+  # Schedule desactivado -- migrado a Oracle Cloud VM (cron job Linux).
   workflow_dispatch:
 
 jobs:

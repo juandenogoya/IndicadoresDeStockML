@@ -1,10 +1,7 @@
 name: Scanner AR Diario
 
 on:
-  schedule:
-    # L-V 20:30 UTC = 17:30 ART (30 min post-cierre BCBA 17:00 ART)
-    # IOL REST API usa datos del cierre de ese mismo dia.
-    - cron: '30 20 * * 1-5'
+  # Schedule desactivado -- migrado a Oracle Cloud VM (cron job Linux).
   workflow_dispatch:
 
 jobs:

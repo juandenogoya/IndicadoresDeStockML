@@ -1,22 +1,8 @@
 name: Opciones Snapshot Diario
 
 on:
-  schedule:
-    # 3 intentos diarios para resistir rate limiting de yfinance post-cierre.
-    # Cada intento verifica si ya hay datos en DB antes de correr.
-    # Si los datos existen -> Telegram "ya disponible" -> exit 0 (skip).
-    # Si 0 contratos (rate limit) -> Telegram "proximo intento HH:MM" -> exit 0.
-    # Solo el intento 3 fallido genera exit 1 (error critico).
-    #
-    # Intento 1 -- 23:00 UTC L-V  (3hs post-cierre, mismo dia)
-    # Intento 2 -- 02:00 UTC Ma-Sa (madrugada, dia siguiente)
-    # Intento 3 -- 11:00 UTC Ma-Sa (2.5hs antes apertura, dia siguiente)
-    #
-    # --fecha: intento 1 usa la fecha del mismo dia;
-    #          intentos 2 y 3 usan la fecha de ayer (prev trading day).
-    - cron: '0 23 * * 1-5'
-    - cron: '0  2 * * 2-6'
-    - cron: '0 11 * * 2-6'
+  # Schedule desactivado -- migrado a Oracle Cloud VM (cron job Linux).
+  # Oracle corre 33_opciones_snapshot.py directo sin bloqueos de IP.
   workflow_dispatch:
 
 jobs:
