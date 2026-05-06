@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "proyecto-tools": {
+      "command": "python",
+      "args": ["agents/mcp_proyecto.py"]
+    }
+  }
+}
