@@ -637,7 +637,7 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones, intent
             return
 
         # Rate limit de yfinance
-        _proximos = {1: "02:00 UTC", 2: "11:00 UTC", 3: None}
+        _proximos = {1: "02:00 UTC", 2: "06:00 UTC", 3: None}
         proximo   = _proximos.get(intento)
         log(f"  [POST-CHECK] Rate limit yfinance (intento {intento}/3). 0 filas escritas.")
         if proximo:
