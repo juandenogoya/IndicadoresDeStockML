@@ -801,9 +801,10 @@ def _render_drill(df_snap, tipo, dte_max, top_n, atm_pct, fecha):
             grp = grp.nlargest(top_n, "volumen")
 
         for _, r in grp.iterrows():
-            iv_str = f"{r['iv_filt']*100:.1f}%" if r["iv_filt"] else "-"
-            hv = float(r["hv_20d"]) if r["hv_20d"] and r["hv_20d"] > 0 else None
-            ivhv = f"{r['iv_filt']/hv:.2f}x" if (r["iv_filt"] and hv) else "-"
+            iv_ok  = pd.notna(r["iv_filt"])
+            iv_str = f"{r['iv_filt']*100:.1f}%" if iv_ok else "-"
+            hv     = float(r["hv_20d"]) if pd.notna(r["hv_20d"]) and r["hv_20d"] > 0 else None
+            ivhv   = f"{r['iv_filt']/hv:.2f}x" if (iv_ok and hv) else "-"
             voi_str = f"{r['voi']:.2f}" if r["voi"] else "-"
             all_rows.append({
                 "Venc":    str(venc)[:10],
