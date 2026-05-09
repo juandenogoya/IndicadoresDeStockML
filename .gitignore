@@ -57,3 +57,8 @@ desktop.ini
 
 # ── Google Sheets credentials (NUNCA versionar) ───────────────
 secrets/
+
+# ── Scripts de prueba / notas locales (no versionar) ─────────
+.cursorrules
+scripts/manual/4G
+scripts/manual/check_yfinance_download_v2*.py
