@@ -31,6 +31,7 @@ from datetime import datetime, date
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
+import math
 import pandas as pd
 import psycopg2
 import psycopg2.extras
@@ -307,6 +308,268 @@ def sync_tabla_nueva(rail_eng, local_eng, tabla: str, col_fecha: str, dry_run: b
     return len(df)
 
 
+# ── Sync: opciones ───────────────────────────────────────────────────────────
+
+def _opciones_local_conn(local_env: dict):
+    """Conexion psycopg2 directa a local (para inserts con ON CONFLICT)."""
+    return psycopg2.connect(
+        host=local_env.get("DB_HOST", "localhost"),
+        port=int(local_env.get("DB_PORT", 5432)),
+        dbname=local_env.get("DB_NAME", "activos_ml"),
+        user=local_env.get("DB_USER", "postgres"),
+        password=local_env.get("DB_PASSWORD", ""),
+    )
+
+
+def _get_local_sqlalchemy_engine(local_env: dict):
+    """SQLAlchemy engine para local construido desde el dict del .env (sin tocar os.environ)."""
+    host = local_env.get("DB_HOST", "localhost")
+    port = local_env.get("DB_PORT", "5432")
+    name = local_env.get("DB_NAME", "activos_ml")
+    user = local_env.get("DB_USER", "postgres")
+    pwd  = local_env.get("DB_PASSWORD", "")
+    url  = f"postgresql+psycopg2://{user}:{pwd}@{host}:{port}/{name}"
+    return create_engine(url)
+
+
+def _create_opciones_tables_local(local_eng):
+    """Crea las tres tablas de opciones en local si no existen."""
+    ddl_statements = [
+        # opciones_snapshot
+        """
+        CREATE TABLE IF NOT EXISTS opciones_snapshot (
+            id               SERIAL PRIMARY KEY,
+            fecha_snapshot   DATE          NOT NULL,
+            ticker           VARCHAR(20)   NOT NULL,
+            vencimiento      DATE          NOT NULL,
+            tipo             VARCHAR(4)    NOT NULL,
+            strike           NUMERIC(12,2) NOT NULL,
+            volumen          INTEGER,
+            open_interest    INTEGER,
+            iv               NUMERIC(8,4),
+            bid              NUMERIC(10,4),
+            ask              NUMERIC(10,4),
+            precio_subyacente NUMERIC(12,4),
+            hv_20d           NUMERIC(8,4),
+            created_at       TIMESTAMP DEFAULT NOW(),
+            CONSTRAINT opciones_snapshot_uniq
+                UNIQUE (fecha_snapshot, ticker, vencimiento, tipo, strike)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_opciones_fecha      ON opciones_snapshot (fecha_snapshot)",
+        "CREATE INDEX IF NOT EXISTS idx_opciones_ticker     ON opciones_snapshot (ticker)",
+        "CREATE INDEX IF NOT EXISTS idx_opciones_tipo       ON opciones_snapshot (tipo)",
+        "CREATE INDEX IF NOT EXISTS idx_opciones_vencimiento ON opciones_snapshot (vencimiento)",
+
+        # opciones_resumen_diario
+        """
+        CREATE TABLE IF NOT EXISTS opciones_resumen_diario (
+            id           SERIAL PRIMARY KEY,
+            fecha        DATE          NOT NULL,
+            ticker       VARCHAR(20)   NOT NULL,
+            call_vol     BIGINT,
+            put_vol      BIGINT,
+            pcr_vol      NUMERIC(8,4),
+            call_oi      BIGINT,
+            put_oi       BIGINT,
+            pcr_oi       NUMERIC(8,4),
+            iv_call_avg  NUMERIC(8,4),
+            iv_put_avg   NUMERIC(8,4),
+            n_contratos  INTEGER,
+            max_oi_strike NUMERIC(12,2),
+            max_oi_venc  DATE,
+            precio_sub   NUMERIC(12,4),
+            created_at   TIMESTAMP DEFAULT NOW(),
+            CONSTRAINT opciones_resumen_diario_uniq UNIQUE (fecha, ticker)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_resumen_fecha  ON opciones_resumen_diario (fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_resumen_ticker ON opciones_resumen_diario (ticker)",
+
+        # opciones_zscore_diario
+        """
+        CREATE TABLE IF NOT EXISTS opciones_zscore_diario (
+            id               SERIAL PRIMARY KEY,
+            ticker           VARCHAR(20)   NOT NULL,
+            fecha            DATE          NOT NULL,
+            sector           VARCHAR(100),
+            industry         VARCHAR(100),
+            vol_calls        BIGINT,
+            vol_puts         BIGINT,
+            vol_total        BIGINT,
+            pcr_vol          NUMERIC(8,4),
+            iv_avg           NUMERIC(8,4),
+            vol_calls_zscore NUMERIC(8,4),
+            vol_puts_zscore  NUMERIC(8,4),
+            vol_total_zscore NUMERIC(8,4),
+            pcr_vol_zscore   NUMERIC(8,4),
+            iv_zscore        NUMERIC(8,4),
+            vol_relativo     NUMERIC(8,4),
+            percentil_vol    INTEGER,
+            ventana_dias     INTEGER,
+            vol_media        NUMERIC(12,2),
+            vol_std          NUMERIC(12,2),
+            created_at       TIMESTAMP DEFAULT NOW(),
+            CONSTRAINT opciones_zscore_diario_uniq UNIQUE (ticker, fecha)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_opciones_zscore_fecha   ON opciones_zscore_diario (fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_opciones_zscore_ticker  ON opciones_zscore_diario (ticker)",
+        "CREATE INDEX IF NOT EXISTS idx_opciones_zscore_sector  ON opciones_zscore_diario (sector)",
+    ]
+    with local_eng.connect() as conn:
+        for stmt in ddl_statements:
+            conn.execute(text(stmt.strip()))
+        conn.commit()
+    log("  Tablas opciones creadas/verificadas en local")
+
+
+def _sync_opciones_incremental(
+    rail_eng, local_env: dict, tabla: str,
+    col_fecha: str, unique_cols: list,
+    dry_run: bool, chunksize: int = 1000
+) -> int:
+    """
+    Sync incremental de una tabla de opciones:
+    - Detecta max fecha en local
+    - Descarga desde Railway todo lo posterior
+    - INSERT con ON CONFLICT DO NOTHING usando psycopg2 directo
+    """
+    # Max fecha local (si la tabla no existe aun, max_local = None)
+    max_local = None
+    conn_check = _opciones_local_conn(local_env)
+    try:
+        cur = conn_check.cursor()
+        cur.execute(f"SELECT MAX({col_fecha}) FROM {tabla}")
+        max_local = cur.fetchone()[0]
+    except Exception:
+        pass  # tabla no existe todavia (primera vez o dry-run)
+    finally:
+        conn_check.close()
+
+    log(f"  Max {col_fecha} local: {max_local}")
+    where = f"{col_fecha} > '{max_local}'" if max_local else "1=1"
+
+    # Contar filas a traer
+    total = pd.read_sql(f"SELECT COUNT(*) as n FROM {tabla} WHERE {where}", rail_eng).iloc[0]["n"]
+    log(f"  Filas a insertar: {total}")
+
+    if total == 0:
+        log("  OK - sin datos nuevos")
+        return 0
+
+    if dry_run:
+        log(f"  DRY-RUN: insertaria {total} filas en {tabla}")
+        return int(total)
+
+    if max_local is None:
+        # ── CARGA INICIAL: tabla vacia ────────────────────────────────────────
+        # Usamos pandas to_sql que convierte NaN -> NULL automaticamente via
+        # SQLAlchemy, evitando problemas de tipos con columnas int/smallint.
+        log(f"  Carga inicial via to_sql (NaN->NULL automatico)...")
+        local_eng_obj = _get_local_sqlalchemy_engine(local_env)
+        df_full = pd.read_sql(
+            f"SELECT * FROM {tabla} WHERE {where} ORDER BY {col_fecha}",
+            rail_eng
+        )
+        if "id" in df_full.columns:
+            df_full = df_full.drop(columns=["id"])
+        df_full.to_sql(
+            tabla, local_eng_obj,
+            if_exists="append", index=False,
+            method="multi", chunksize=chunksize
+        )
+        log(f"  OK - {len(df_full)} filas insertadas en {tabla}")
+        return len(df_full)
+
+    # ── INCREMENTAL: tabla con datos, solo filas nuevas ───────────────────────
+    # Usamos execute_batch con ON CONFLICT DO NOTHING.
+    # NaN en columnas float se limpia manualmente via math.isnan().
+    inserted = 0
+    offset = 0
+    while offset < total:
+        df_chunk = pd.read_sql(
+            f"SELECT * FROM {tabla} WHERE {where} ORDER BY {col_fecha} LIMIT {chunksize} OFFSET {offset}",
+            rail_eng
+        )
+        if df_chunk.empty:
+            break
+
+        if "id" in df_chunk.columns:
+            df_chunk = df_chunk.drop(columns=["id"])
+
+        cols = list(df_chunk.columns)
+        cols_str = ", ".join(cols)
+        placeholders = ", ".join([f"%({c})s" for c in cols])
+        sql = (
+            f"INSERT INTO {tabla} ({cols_str}) "
+            f"VALUES ({placeholders}) "
+            f"ON CONFLICT DO NOTHING"
+        )
+
+        # Limpiar NaN/inf -> None en todos los valores del dict
+        # (pandas guarda None como NaN en columnas float al hacer to_dict)
+        raw_records = df_chunk.to_dict("records")
+        records = [
+            {k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+             for k, v in rec.items()}
+            for rec in raw_records
+        ]
+
+        conn = _opciones_local_conn(local_env)
+        try:
+            cur = conn.cursor()
+            psycopg2.extras.execute_batch(cur, sql, records, page_size=500)
+            inserted += cur.rowcount if cur.rowcount > 0 else 0
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        offset += chunksize
+        log(f"    chunk {offset}/{total} ...")
+
+    log(f"  OK - {inserted} filas insertadas en {tabla}")
+    return inserted
+
+
+def sync_opciones(rail_eng, local_eng, dry_run: bool):
+    """Crea tablas de opciones en local si no existen y sincroniza desde Railway."""
+    log("opciones -- creando tablas si no existen...")
+    if not dry_run:
+        _create_opciones_tables_local(local_eng)
+
+    local_env = _parse_env_file(os.path.join(ROOT, ".env"))
+
+    # opciones_resumen_diario (pequena, ~2600 filas)
+    log("opciones_resumen_diario...")
+    n1 = _sync_opciones_incremental(
+        rail_eng, local_env, "opciones_resumen_diario", "fecha",
+        ["fecha", "ticker"], dry_run
+    )
+
+    # opciones_zscore_diario (pequena, ~2600 filas)
+    log("opciones_zscore_diario...")
+    n2 = _sync_opciones_incremental(
+        rail_eng, local_env, "opciones_zscore_diario", "fecha",
+        ["ticker", "fecha"], dry_run
+    )
+
+    # opciones_snapshot (grande, ~1.2M filas) — chunks de 5000
+    log("opciones_snapshot (puede tardar varios minutos)...")
+    n3 = _sync_opciones_incremental(
+        rail_eng, local_env, "opciones_snapshot", "fecha_snapshot",
+        ["fecha_snapshot", "ticker", "vencimiento", "tipo", "strike"],
+        dry_run, chunksize=5000
+    )
+
+    total = n1 + n2 + n3
+    log(f"  opciones total: resumen={n1} zscore={n2} snapshot={n3}")
+    return total
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TABLAS_DISPONIBLES = [
@@ -317,6 +580,7 @@ TABLAS_DISPONIBLES = [
     "alertas_scanner",
     "ticker_zscore_diario",
     "futuros_diarios",
+    "opciones",
 ]
 
 
@@ -388,6 +652,9 @@ def main():
     correr("futuros_diarios", lambda: sync_tabla_nueva(
         rail_eng, local_eng, "futuros_diarios", "fecha", dry_run, dias=365
     ))
+
+    # 8. opciones (3 tablas: resumen_diario + zscore_diario + snapshot)
+    correr("opciones", lambda: sync_opciones(rail_eng, local_eng, dry_run))
 
     # ── Resumen ──
     print()
