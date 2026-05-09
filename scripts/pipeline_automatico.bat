@@ -5,15 +5,23 @@ REM  pipeline_automatico.bat
 REM  Pipeline diario completo SIN confirmaciones.
 REM  Disenado para Windows Task Scheduler (ejecucion desatendida).
 REM
-REM  Horario recomendado: L-V 10:00 ART (13:00 UTC)
-REM  Duracion estimada  : ~110 minutos
-REM  Secuencia          :
+REM  DB destino       : Railway (DATABASE_URL cargado desde .env.local)
+REM  Horario Task     : L-V 10:00 ART (13:00 UTC) -- antes de apertura NYSE
+REM  Duracion estimada: ~105 minutos
+REM  Secuencia        :
 REM    0. Verifica dia habil NYSE
 REM    1. Limpia cookies yfinance (anti rate-limit)
-REM    2. Paso 1 — Precios via fast_info (45 min)
-REM    3. Paso 1b — Futuros de indices (1 min)
-REM    4. Paso 2 — Features PA + Market Structure (5 min)
-REM    5. Paso 3 — Scanner ML + Telegram (60 min)
+REM    2. Paso 1 -- Precios + Futuros + Indicadores + Z-scores (~35 min)
+REM               cron_diario.py --step precios
+REM               Incluye: yf.download batch (backfill automatico), futuros,
+REM               indicadores tecnicos futuros, regimen macro, z-scores tickers
+REM    3. Paso 2 -- Features PA + Market Structure (~5 min)
+REM    4. Paso 3 -- Scanner ML + Telegram (~60 min)
+REM    5. Paso 4 -- Verificacion post-facto retornos (~2 min)
+REM
+REM  Replica exactamente el pipeline de Oracle Cloud (oracle_pipeline_diario.sh)
+REM  Ventaja vs Oracle: sin rate limit de yfinance en IP residencial/corporativa
+REM  Ventaja vs fast_info: recupera automaticamente dias perdidos (period=1mo)
 REM ============================================================
 
 SET ROOT=%~dp0..\
@@ -53,21 +61,16 @@ del /f /q "%LOCALAPPDATA%\py-yfinance\cookies.db" >> "%LOGFILE%" 2>&1
 del /f /q "%TEMP%\yfinance.cache" >> "%LOGFILE%" 2>&1
 echo [%TIME%] Cookies limpias. >> "%LOGFILE%"
 
-REM ── PASO 2: Precios via fast_info ────────────────────────────
-echo [%TIME%] Paso 1 - Precios fast_info (199 tickers)... >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\actualizar_precios_fast_info.py" >> "%LOGFILE%" 2>&1
+REM ── PASO 2: Precios + Futuros + Indicadores + Z-scores ───────
+echo [%TIME%] Paso 1 - Precios + Futuros + Z-scores (199 tickers)... >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\cron_diario.py" --step precios >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [%TIME%] [ERROR] Paso 1 fallo. Abortando pipeline. >> "%LOGFILE%"
     exit /b 1
 )
 echo [%TIME%] Paso 1 completado. >> "%LOGFILE%"
 
-REM ── PASO 3: Futuros de indices ───────────────────────────────
-echo [%TIME%] Paso 1b - Futuros de indices... >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\34_futuros_indices.py" >> "%LOGFILE%" 2>&1
-echo [%TIME%] Futuros completado. >> "%LOGFILE%"
-
-REM ── PASO 4: Features PA + Market Structure ───────────────────
+REM ── PASO 3: Features PA + Market Structure ───────────────────
 echo [%TIME%] Paso 2 - Features PA + Market Structure... >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\cron_diario.py" --step features >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
@@ -76,7 +79,7 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 echo [%TIME%] Paso 2 completado. >> "%LOGFILE%"
 
-REM ── PASO 5: Scanner ML + Telegram ───────────────────────────
+REM ── PASO 4: Scanner ML + Telegram ────────────────────────────
 echo [%TIME%] Paso 3 - Scanner ML + Telegram... >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\cron_diario.py" --step scanner >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
@@ -84,6 +87,11 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 echo [%TIME%] Paso 3 completado. >> "%LOGFILE%"
+
+REM ── PASO 5: Verificacion post-facto ──────────────────────────
+echo [%TIME%] Paso 4 - Verificacion retornos post-facto... >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\cron_diario.py" --step verificar >> "%LOGFILE%" 2>&1
+echo [%TIME%] Paso 4 completado. >> "%LOGFILE%"
 
 REM ── FIN ──────────────────────────────────────────────────────
 echo. >> "%LOGFILE%"
