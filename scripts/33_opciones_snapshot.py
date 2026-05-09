@@ -824,47 +824,49 @@ def cmd_backfill_resumen():
 def cmd_status():
     """Muestra metricas rapidas de ambas tablas."""
     engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            # opciones_snapshot
+            snap = conn.execute(text("""
+                SELECT MIN(fecha_snapshot) AS desde,
+                       MAX(fecha_snapshot) AS hasta,
+                       COUNT(*)            AS total_filas,
+                       COUNT(DISTINCT fecha_snapshot) AS dias
+                FROM opciones_snapshot
+            """)).fetchone()
 
-    with engine.connect() as conn:
-        # opciones_snapshot
-        snap = conn.execute(text("""
-            SELECT MIN(fecha_snapshot) AS desde,
-                   MAX(fecha_snapshot) AS hasta,
-                   COUNT(*)            AS total_filas,
-                   COUNT(DISTINCT fecha_snapshot) AS dias
-            FROM opciones_snapshot
-        """)).fetchone()
+            # opciones_resumen_diario — ultimos 5 dias, top PCR_oi
+            resumen_rows = conn.execute(text("""
+                SELECT fecha, ticker, pcr_vol, pcr_oi, call_oi, put_oi, n_contratos
+                FROM   opciones_resumen_diario
+                WHERE  fecha = (SELECT MAX(fecha) FROM opciones_resumen_diario)
+                ORDER  BY pcr_oi DESC NULLS LAST
+                LIMIT  10
+            """)).fetchall()
 
-        # opciones_resumen_diario — ultimos 5 dias, top PCR_oi
-        resumen_rows = conn.execute(text("""
-            SELECT fecha, ticker, pcr_vol, pcr_oi, call_oi, put_oi, n_contratos
-            FROM   opciones_resumen_diario
-            WHERE  fecha = (SELECT MAX(fecha) FROM opciones_resumen_diario)
-            ORDER  BY pcr_oi DESC NULLS LAST
-            LIMIT  10
-        """)).fetchall()
+        if snap and snap[2]:
+            print()
+            print(f"  opciones_snapshot:")
+            print(f"    Rango   : {snap[0]} -> {snap[1]}")
+            print(f"    Dias    : {snap[3]}")
+            print(f"    Total   : {snap[2]:,} filas")
+            print()
 
-    if snap and snap[2]:
-        print()
-        print(f"  opciones_snapshot:")
-        print(f"    Rango   : {snap[0]} -> {snap[1]}")
-        print(f"    Dias    : {snap[3]}")
-        print(f"    Total   : {snap[2]:,} filas")
-        print()
-
-    if resumen_rows:
-        fecha_res = resumen_rows[0][0]
-        print(f"  opciones_resumen_diario | {fecha_res}  (top 10 por PCR_oi):")
-        print(f"  {'TICKER':<8s}  {'PCR_vol':>7s}  {'PCR_oi':>7s}  "
-              f"{'CALL_OI':>10s}  {'PUT_OI':>10s}  {'N':>6s}")
-        print("  " + "-" * 58)
-        for r in resumen_rows:
-            pcr_v = f"{float(r[2]):.2f}" if r[2] else " N/A "
-            pcr_o = f"{float(r[3]):.2f}" if r[3] else " N/A "
-            print(f"  {r[1]:<8s}  {pcr_v:>7s}  {pcr_o:>7s}  "
-                  f"{(r[4] or 0):>10,d}  {(r[5] or 0):>10,d}  {(r[6] or 0):>6d}")
-    else:
-        print("  Sin datos en opciones_resumen_diario.")
+        if resumen_rows:
+            fecha_res = resumen_rows[0][0]
+            print(f"  opciones_resumen_diario | {fecha_res}  (top 10 por PCR_oi):")
+            print(f"  {'TICKER':<8s}  {'PCR_vol':>7s}  {'PCR_oi':>7s}  "
+                  f"{'CALL_OI':>10s}  {'PUT_OI':>10s}  {'N':>6s}")
+            print("  " + "-" * 58)
+            for r in resumen_rows:
+                pcr_v = f"{float(r[2]):.2f}" if r[2] else " N/A "
+                pcr_o = f"{float(r[3]):.2f}" if r[3] else " N/A "
+                print(f"  {r[1]:<8s}  {pcr_v:>7s}  {pcr_o:>7s}  "
+                      f"{(r[4] or 0):>10,d}  {(r[5] or 0):>10,d}  {(r[6] or 0):>6d}")
+        else:
+            print("  Sin datos en opciones_resumen_diario.")
+    except Exception as e:
+        print(f"ERROR en cmd_status: {e}")
 
 
 # ── Validacion intraday ──────────────────────────────────────────────────────
