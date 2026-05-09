@@ -31,6 +31,7 @@ from datetime import datetime, date
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 
+import json
 import math
 import pandas as pd
 import psycopg2
@@ -282,16 +283,18 @@ def sync_alertas(rail_eng, local_eng, dry_run: bool):
 def sync_tabla_nueva(rail_eng, local_eng, tabla: str, col_fecha: str, dry_run: bool, dias: int = None):
     """
     Trae una tabla completa de Railway que no existe en local.
+    Si col_fecha es None, trae todo sin ORDER BY.
     Si dias != None, limita a los ultimos N dias.
     """
     log(f"{tabla} -- tabla nueva en local...")
 
     where = "1=1"
-    if dias:
+    if dias and col_fecha:
         where = f"{col_fecha} >= CURRENT_DATE - INTERVAL '{dias} days'"
         log(f"  Limitando a ultimos {dias} dias")
 
-    df = pd.read_sql(f"SELECT * FROM {tabla} WHERE {where} ORDER BY {col_fecha}", rail_eng)
+    order = f"ORDER BY {col_fecha}" if col_fecha else ""
+    df = pd.read_sql(f"SELECT * FROM {tabla} WHERE {where} {order}", rail_eng)
     log(f"  Filas disponibles: {len(df)}")
 
     if df.empty:
@@ -302,10 +305,37 @@ def sync_tabla_nueva(rail_eng, local_eng, tabla: str, col_fecha: str, dry_run: b
         log(f"  DRY-RUN: crearia tabla y cargaria {len(df)} filas")
         return len(df)
 
-    # Crear tabla + insertar (pandas infiere schema basico)
+    # Serializar columnas JSONB (dict/list) a string JSON para compatibilidad local
+    for col in df.columns:
+        if df[col].dtype == object:
+            sample = df[col].dropna()
+            if not sample.empty and isinstance(sample.iloc[0], (dict, list)):
+                df[col] = df[col].apply(
+                    lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x
+                )
+                log(f"    columna '{col}' serializada como JSON string")
+
+    # Crear tabla + insertar (pandas infiere schema basico; NaN->NULL automatico)
     df.to_sql(tabla, local_eng, if_exists="replace", index=False, method="multi", chunksize=500)
     log(f"  OK - tabla {tabla} creada con {len(df)} filas")
     return len(df)
+
+
+def sync_grupo(rail_eng, local_eng, tablas_conf: list, dry_run: bool) -> int:
+    """
+    Sincroniza un grupo de tablas nuevas en bloque.
+    tablas_conf: lista de (tabla, col_fecha) donde col_fecha puede ser None.
+    Retorna total de filas insertadas.
+    """
+    total = 0
+    for tabla, col_fecha in tablas_conf:
+        try:
+            n = sync_tabla_nueva(rail_eng, local_eng, tabla, col_fecha, dry_run)
+            total += n
+        except Exception as e:
+            log(f"  ERROR en {tabla}: {e}")
+            raise
+    return total
 
 
 # ── Sync: opciones ───────────────────────────────────────────────────────────
@@ -581,6 +611,9 @@ TABLAS_DISPONIBLES = [
     "ticker_zscore_diario",
     "futuros_diarios",
     "opciones",
+    "forward_testing",
+    "bt_historico",
+    "features_ml",
 ]
 
 
@@ -655,6 +688,31 @@ def main():
 
     # 8. opciones (3 tablas: resumen_diario + zscore_diario + snapshot)
     correr("opciones", lambda: sync_opciones(rail_eng, local_eng, dry_run))
+
+    # 9. forward_testing (5 tablas FT — Railway es fuente de verdad)
+    correr("forward_testing", lambda: sync_grupo(rail_eng, local_eng, [
+        ("ft_estrategias",       "creado_en"),
+        ("ft_candidatos_diarios","fecha"),
+        ("ft_operaciones",       "fecha_entrada"),
+        ("ft_posiciones_diarias","fecha"),
+        ("ft_metricas_diarias",  "fecha"),
+    ], dry_run))
+
+    # 10. bt_historico (4 tablas — resultados de backtesting historico)
+    correr("bt_historico", lambda: sync_grupo(rail_eng, local_eng, [
+        ("bt_hist_estrategias",     "ejecutado_en"),
+        ("bt_hist_candidatos",      "fecha"),
+        ("bt_hist_operaciones",     "fecha_entrada"),
+        ("bt_hist_metricas_diarias","fecha"),
+    ], dry_run))
+
+    # 11. features_ml (4 tablas — entrenamiento ML + regimen macro + futuros)
+    correr("features_ml", lambda: sync_grupo(rail_eng, local_eng, [
+        ("features_ml",                "fecha"),
+        ("features_sector",            "fecha"),
+        ("features_regimen_macro",     "fecha"),
+        ("indicadores_tecnicos_futuros","fecha"),
+    ], dry_run))
 
     # ── Resumen ──
     print()
