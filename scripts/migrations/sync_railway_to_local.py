@@ -280,44 +280,94 @@ def sync_alertas(rail_eng, local_eng, dry_run: bool):
 
 # ── Sync: tablas que no existen en local (crear + poblar) ────────────────────
 
-def sync_tabla_nueva(rail_eng, local_eng, tabla: str, col_fecha: str, dry_run: bool, dias: int = None):
-    """
-    Trae una tabla completa de Railway que no existe en local.
-    Si col_fecha es None, trae todo sin ORDER BY.
-    Si dias != None, limita a los ultimos N dias.
-    """
-    log(f"{tabla} -- tabla nueva en local...")
-
-    where = "1=1"
-    if dias and col_fecha:
-        where = f"{col_fecha} >= CURRENT_DATE - INTERVAL '{dias} days'"
-        log(f"  Limitando a ultimos {dias} dias")
-
-    order = f"ORDER BY {col_fecha}" if col_fecha else ""
-    df = pd.read_sql(f"SELECT * FROM {tabla} WHERE {where} {order}", rail_eng)
-    log(f"  Filas disponibles: {len(df)}")
-
-    if df.empty:
-        log(f"  Sin datos en Railway para {tabla}")
-        return 0
-
-    if dry_run:
-        log(f"  DRY-RUN: crearia tabla y cargaria {len(df)} filas")
-        return len(df)
-
-    # Serializar columnas JSONB (dict/list) a string JSON para compatibilidad local
+def _serializar_jsonb(df: pd.DataFrame) -> pd.DataFrame:
+    """Convierte columnas JSONB (dict/list) a JSON string para compatibilidad con psycopg2."""
     for col in df.columns:
         if df[col].dtype == object:
             sample = df[col].dropna()
             if not sample.empty and isinstance(sample.iloc[0], (dict, list)):
+                df = df.copy()
                 df[col] = df[col].apply(
                     lambda x: json.dumps(x) if isinstance(x, (dict, list)) else x
                 )
                 log(f"    columna '{col}' serializada como JSON string")
+    return df
 
-    # Crear tabla + insertar (pandas infiere schema basico; NaN->NULL automatico)
-    df.to_sql(tabla, local_eng, if_exists="replace", index=False, method="multi", chunksize=500)
-    log(f"  OK - tabla {tabla} creada con {len(df)} filas")
+
+def sync_tabla_nueva(rail_eng, local_eng, tabla: str, col_fecha, dry_run: bool, dias: int = None):
+    """
+    Sincroniza una tabla desde Railway hacia local.
+
+    Estrategia automatica:
+      - col_fecha=None  -> SIEMPRE reemplaza (tablas pequeñas / cabeceras, ej ft_estrategias)
+      - col_fecha=str   -> INCREMENTAL si tabla local ya tiene datos (append desde max fecha)
+                           CARGA INICIAL si tabla local esta vacia o no existe (replace)
+
+    Si dias != None, limita la carga inicial a los ultimos N dias.
+    """
+    log(f"{tabla}...")
+
+    # Detectar estado local
+    count_local = 0
+    max_local   = None
+    try:
+        with local_eng.connect() as conn:
+            if col_fecha:
+                r = conn.execute(
+                    text(f"SELECT COUNT(*), MAX({col_fecha}) FROM {tabla}")
+                ).fetchone()
+                count_local, max_local = int(r[0]), r[1]
+            else:
+                count_local = int(conn.execute(
+                    text(f"SELECT COUNT(*) FROM {tabla}")
+                ).scalar() or 0)
+    except Exception:
+        count_local = 0  # tabla no existe todavia
+
+    # Decidir modo
+    if col_fecha is None:
+        # Siempre reemplaza (tabla de referencia pequena)
+        where        = "1=1"
+        if_exists    = "replace"
+        log(f"  Modo: replace completo ({count_local} filas locales actuales)")
+    elif count_local == 0:
+        # Carga inicial
+        where = "1=1"
+        if dias:
+            where = f"{col_fecha} >= CURRENT_DATE - INTERVAL '{dias} days'"
+            log(f"  Modo: carga inicial (ultimos {dias} dias)")
+        else:
+            log(f"  Modo: carga inicial (tabla vacia o no existe)")
+        if_exists = "replace"
+    else:
+        # Incremental: solo filas nuevas
+        if max_local:
+            where     = f"{col_fecha} > '{max_local}'"
+            if_exists = "append"
+            log(f"  Modo: incremental desde {max_local} ({count_local:,} filas locales)")
+        else:
+            # col_fecha existe pero todos los valores son NULL -> replace
+            where     = "1=1"
+            if_exists = "replace"
+            log(f"  Modo: replace (max fecha local es NULL)")
+
+    order = f"ORDER BY {col_fecha}" if col_fecha else ""
+    df = pd.read_sql(f"SELECT * FROM {tabla} WHERE {where} {order}", rail_eng)
+    log(f"  Filas a insertar: {len(df)}")
+
+    if df.empty:
+        log(f"  OK - sin datos nuevos")
+        return 0
+
+    if dry_run:
+        log(f"  DRY-RUN: {if_exists} {len(df)} filas en {tabla}")
+        return len(df)
+
+    df = _serializar_jsonb(df)
+
+    df.to_sql(tabla, local_eng, if_exists=if_exists, index=False, method="multi", chunksize=500)
+    accion = "insertadas" if if_exists == "append" else "cargadas"
+    log(f"  OK - {len(df):,} filas {accion}")
     return len(df)
 
 
@@ -676,12 +726,12 @@ def main():
     # 5. alertas_scanner (incremental por fecha — Railway tiene hasta May 6)
     correr("alertas_scanner", lambda: sync_alertas(rail_eng, local_eng, dry_run))
 
-    # 6. ticker_zscore_diario (no existe en local — crear + sync completo)
+    # 6. ticker_zscore_diario (incremental por fecha)
     correr("ticker_zscore_diario", lambda: sync_tabla_nueva(
         rail_eng, local_eng, "ticker_zscore_diario", "fecha", dry_run
     ))
 
-    # 7. futuros_diarios (no existe en local — crear + sync, ultimos 365 dias)
+    # 7. futuros_diarios (incremental; carga inicial limitada a 365 dias)
     correr("futuros_diarios", lambda: sync_tabla_nueva(
         rail_eng, local_eng, "futuros_diarios", "fecha", dry_run, dias=365
     ))
@@ -690,20 +740,22 @@ def main():
     correr("opciones", lambda: sync_opciones(rail_eng, local_eng, dry_run))
 
     # 9. forward_testing (5 tablas FT — Railway es fuente de verdad)
+    #    ft_estrategias: col_fecha=None -> siempre replace (capital cambia cada dia)
     correr("forward_testing", lambda: sync_grupo(rail_eng, local_eng, [
-        ("ft_estrategias",       "creado_en"),
-        ("ft_candidatos_diarios","fecha"),
-        ("ft_operaciones",       "fecha_entrada"),
-        ("ft_posiciones_diarias","fecha"),
-        ("ft_metricas_diarias",  "fecha"),
+        ("ft_estrategias",       None),           # replace: capital_actual cambia diario
+        ("ft_candidatos_diarios","fecha"),         # incremental
+        ("ft_operaciones",       "fecha_entrada"), # incremental
+        ("ft_posiciones_diarias","fecha"),         # incremental
+        ("ft_metricas_diarias",  "fecha"),         # incremental
     ], dry_run))
 
     # 10. bt_historico (4 tablas — resultados de backtesting historico)
+    #     bt_hist_estrategias: col_fecha=None -> replace (pequeña, estatica)
     correr("bt_historico", lambda: sync_grupo(rail_eng, local_eng, [
-        ("bt_hist_estrategias",     "ejecutado_en"),
-        ("bt_hist_candidatos",      "fecha"),
-        ("bt_hist_operaciones",     "fecha_entrada"),
-        ("bt_hist_metricas_diarias","fecha"),
+        ("bt_hist_estrategias",     None),         # replace: 6 filas, estatica
+        ("bt_hist_candidatos",      "fecha"),       # incremental
+        ("bt_hist_operaciones",     "fecha_entrada"), # incremental
+        ("bt_hist_metricas_diarias","fecha"),       # incremental
     ], dry_run))
 
     # 11. features_ml (4 tablas — entrenamiento ML + regimen macro + futuros)
@@ -715,14 +767,20 @@ def main():
     ], dry_run))
 
     # ── Resumen ──
+    errores = [t for t, (e, _) in resultados.items() if e == "ERROR"]
     print()
     print(SEP)
     print("  RESUMEN:")
     for tabla, (estado, detalle) in resultados.items():
-        sufijo = f"{detalle} filas" if isinstance(detalle, int) else detalle
-        print(f"  {tabla:<35} {estado}  {sufijo}")
+        sufijo = f"{detalle:,} filas" if isinstance(detalle, int) else str(detalle)[:80]
+        marca  = "OK  " if estado == "OK" else "FAIL"
+        print(f"  [{marca}] {tabla:<35} {sufijo}")
     print(SEP)
+    if errores:
+        print(f"  {len(errores)} tabla(s) con error: {', '.join(errores)}")
+        print(SEP)
     print()
+    sys.exit(1 if errores else 0)
 
 
 if __name__ == "__main__":
