@@ -7,7 +7,12 @@ Uso:
 """
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import Tool
+
+from mcp_server.tools.calendar import (
+    CALENDAR_ANNOTATIONS,
+    check_trading_day,
+    get_last_trading_day,
+)
 
 __version__ = "0.1.0"
 
@@ -22,6 +27,7 @@ mcp = FastMCP(
     ),
 )
 
+# ── Herramienta de diagnostico ────────────────────────────────────────────────
 
 @mcp.tool(
     annotations={
@@ -42,6 +48,12 @@ def ping() -> dict:
         dict con status y version. Ej: {"status": "ok", "version": "0.1.0"}
     """
     return {"status": "ok", "version": __version__}
+
+
+# ── Calendario bursatil NYSE ──────────────────────────────────────────────────
+
+mcp.tool(annotations=CALENDAR_ANNOTATIONS)(check_trading_day)
+mcp.tool(annotations=CALENDAR_ANNOTATIONS)(get_last_trading_day)
 
 
 if __name__ == "__main__":
