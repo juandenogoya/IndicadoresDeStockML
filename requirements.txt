@@ -38,3 +38,10 @@ alpaca-py==0.43.2
 
 # ── Notebooks (VS Code maneja Jupyter nativamente) ───────────
 ipykernel==6.29.5
+
+# ── MCP Server ───────────────────────────────────────────────
+mcp
+sqlglot
+asyncpg
+structlog
+pydantic-settings
