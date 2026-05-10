@@ -13,6 +13,12 @@ from mcp_server.tools.calendar import (
     check_trading_day,
     get_last_trading_day,
 )
+from mcp_server.tools.exploration import (
+    EXPLORATION_ANNOTATIONS,
+    describe_table,
+    list_tables,
+    list_tickers,
+)
 
 __version__ = "0.1.0"
 
@@ -54,6 +60,12 @@ def ping() -> dict:
 
 mcp.tool(annotations=CALENDAR_ANNOTATIONS)(check_trading_day)
 mcp.tool(annotations=CALENDAR_ANNOTATIONS)(get_last_trading_day)
+
+# ── Exploracion DB ────────────────────────────────────────────────────────────
+
+mcp.tool(annotations=EXPLORATION_ANNOTATIONS)(list_tables)
+mcp.tool(annotations=EXPLORATION_ANNOTATIONS)(describe_table)
+mcp.tool(annotations=EXPLORATION_ANNOTATIONS)(list_tickers)
 
 
 if __name__ == "__main__":
