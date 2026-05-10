@@ -9,9 +9,10 @@ Uso:
 from mcp.server.fastmcp import FastMCP
 from mcp.types import Tool
 
+__version__ = "0.1.0"
+
 mcp = FastMCP(
     name="db-consultor",
-    version="0.1.0",
     instructions=(
         "Servidor MCP consultivo del proyecto IndicadoresDeStockML. "
         "Lee datos de la DB PostgreSQL local (activos_ml): precios, "
@@ -40,7 +41,7 @@ def ping() -> dict:
     Returns:
         dict con status y version. Ej: {"status": "ok", "version": "0.1.0"}
     """
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": __version__}
 
 
 if __name__ == "__main__":
