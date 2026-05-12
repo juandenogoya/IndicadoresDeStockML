@@ -1,10 +1,16 @@
 """
 db_status.py
-Estado de todas las tablas de datos — diagnostico rapido.
+Estado de todas las tablas de datos -- diagnostico rapido.
 
 Uso:
-    python scripts/manual/db_status.py
+    python scripts/manual/db_status.py                    (Railway, default)
+    python scripts/manual/db_status.py --target railway   (idem)
+    python scripts/manual/db_status.py --target local     (PostgreSQL local)
     python scripts/manual/db_status.py --dias 20
+
+Target:
+    railway : usa DATABASE_URL de .env.local (Railway prod)
+    local   : usa DB_HOST/PORT/NAME/USER/PASSWORD de .env (PostgreSQL local)
 """
 
 import os
@@ -27,7 +33,22 @@ except ImportError:
 from sqlalchemy import create_engine, text
 
 
-def get_engine():
+def get_engine(target: str = "railway"):
+    """
+    Retorna el engine SQLAlchemy correspondiente al target solicitado.
+
+    target='railway' : DATABASE_URL (definida en .env.local)
+    target='local'   : compone DSN desde DB_HOST/PORT/NAME/USER/PASSWORD (.env)
+    """
+    if target == "local":
+        host = os.environ.get("DB_HOST", "localhost")
+        port = os.environ.get("DB_PORT", "5432")
+        name = os.environ.get("DB_NAME", "activos_ml")
+        user = os.environ.get("DB_USER", "postgres")
+        pwd  = os.environ.get("DB_PASSWORD", "")
+        url  = f"postgresql+psycopg2://{user}:{pwd}@{host}:{port}/{name}"
+        return create_engine(url)
+    # default: railway
     return create_engine(os.environ["DATABASE_URL"])
 
 
@@ -55,6 +76,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dias", type=int, default=14,
                         help="Ventana de dias a revisar (default: 14)")
+    parser.add_argument("--target", choices=["railway", "local"], default="railway",
+                        help="DB a consultar: 'railway' (default) o 'local'")
     args = parser.parse_args()
 
     hoy   = date.today()
@@ -62,10 +85,10 @@ def main():
 
     print()
     print("=" * 60)
-    print(f"  DB STATUS  |  {hoy}  |  {datetime.now().strftime('%H:%M')}")
+    print(f"  DB STATUS  |  TARGET: {args.target.upper():<8} |  {hoy}  |  {datetime.now().strftime('%H:%M')}")
     print("=" * 60)
 
-    engine = get_engine()
+    engine = get_engine(args.target)
     habiles = dias_habiles(desde, hoy - timedelta(days=1))
     habiles_recientes = habiles[-10:]   # ultimos 10 dias habiles
 
