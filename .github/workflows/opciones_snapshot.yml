@@ -1,12 +1,30 @@
-name: Opciones Snapshot Diario
+name: Opciones Snapshot - GH Backup (Intento 3)
+
+# ============================================================
+# Workflow de BACKUP para el snapshot de opciones US.
+# Oracle Cloud corre intentos 1 (23:00 UTC), 2 (02:00 UTC) y
+# 4 (06:00 UTC). Este workflow agrega el INTENTO 3 a las 04:00
+# UTC con la IP de GitHub Actions (Azure) -- distinta a Oracle,
+# por lo que mitiga rate limits especificos de IP en yfinance.
+#
+# Comportamiento del script (idempotente):
+#   - Si los datos del dia ya estan en Railway -> Telegram "ya
+#     disponible" + exit 0 (skip).
+#   - Si yfinance rate-limita -> Telegram "sin datos, proximo
+#     intento" + exit 0.
+#   - Solo el intento 4 (Oracle 06:00) considera "todos los
+#     intentos fallaron" si llega sin datos.
+# ============================================================
 
 on:
-  # Schedule desactivado -- migrado a Oracle Cloud VM (cron job Linux).
-  # Oracle corre 33_opciones_snapshot.py directo sin bloqueos de IP.
+  schedule:
+    # 04:00 UTC Ma-Sa -- entre intento 2 Oracle (02:00) e intento 4 Oracle (06:00)
+    # 04:00 UTC = 01:00 ART = 00:00 ET (madrugada, IP fria)
+    - cron: '0 4 * * 2-6'
   workflow_dispatch:
 
 jobs:
-  opciones:
+  opciones_backup:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -23,31 +41,14 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Snapshot opciones -- Intento 1 (23:00 UTC)
-        if: github.event.schedule == '0 23 * * 1-5' || github.event_name == 'workflow_dispatch'
+      - name: Snapshot opciones -- Intento 3 (04:00 UTC GH backup)
         env:
           DATABASE_URL:        ${{ secrets.DATABASE_URL }}
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONPATH: ${{ github.workspace }}
-        run: python scripts/33_opciones_snapshot.py --intento 1 --fecha $(date +%Y-%m-%d)
-
-      - name: Snapshot opciones -- Intento 2 (02:00 UTC)
-        if: github.event.schedule == '0  2 * * 2-6'
-        env:
-          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
-          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
-          PYTHONPATH: ${{ github.workspace }}
-        run: python scripts/33_opciones_snapshot.py --intento 2 --fecha $(date -d 'yesterday' +%Y-%m-%d)
-
-      - name: Snapshot opciones -- Intento 3 (11:00 UTC)
-        if: github.event.schedule == '0 11 * * 2-6'
-        env:
-          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
-          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:    ${{ secrets.TELEGRAM_CHAT_ID }}
-          PYTHONPATH: ${{ github.workspace }}
+        # --fecha: usa la fecha de ayer (el dia habil cuyo cierre buscamos).
+        # El cron arranca Ma-Sa porque procesa el cierre de L-V.
         run: python scripts/33_opciones_snapshot.py --intento 3 --fecha $(date -d 'yesterday' +%Y-%m-%d)
 
       - name: Notificar fallo en Telegram
@@ -59,4 +60,4 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             -d parse_mode="HTML" \
-            -d text="<b>ERROR -- Opciones Snapshot</b>%0AWorkflow fallido (3 intentos sin datos).%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            -d text="<b>ERROR -- Opciones Snapshot GH backup</b>%0AWorkflow intento 3 fallido.%0ARevisa: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"

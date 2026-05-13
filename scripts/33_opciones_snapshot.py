@@ -485,7 +485,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
     log(f"  MAX_DTE   : {MAX_DTE} dias")
     log(f"  MIN_OI    : {MIN_OI} (umbral sin volumen)")
     log(f"  Modo      : {'DRY RUN' if dry_run else 'REAL'}")
-    log(f"  Intento   : {intento}/3")
+    log(f"  Intento   : {intento}/4")
     log("=" * 60)
 
     # ── Check previo: datos ya existentes ────────────────────────────────────
@@ -501,7 +501,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
                     _tg_send(
                         f"INFO Opciones snapshot -- datos ya disponibles{nl}"
                         f"<i>{fecha_hoy} | {ts}</i>{nl}"
-                        f"Intento {intento}/3 omitido: ya existen {filas_existentes:,} contratos en DB."
+                        f"Intento {intento}/4 omitido: ya existen {filas_existentes:,} contratos en DB."
                     )
                 except Exception as tg_err:
                     log(f"  [WARN] Telegram no disponible: {tg_err}")
@@ -633,18 +633,23 @@ def _post_run_check(fecha, total_filas, n_tickers, errores, sin_opciones, intent
         nl = "\n"
         if filas_db >= _MIN_FILAS:
             log(f"  [POST-CHECK] Datos ya existentes: {filas_db:,} filas para {fecha}.")
-            _tg(f"INFO Opciones snapshot -- datos ya disponibles{nl}<i>{fecha} | {ts}</i>{nl}Intento {intento}/3: ya existen {filas_db:,} contratos en DB.")
+            _tg(f"INFO Opciones snapshot -- datos ya disponibles{nl}<i>{fecha} | {ts}</i>{nl}Intento {intento}/4: ya existen {filas_db:,} contratos en DB.")
             return
 
-        # Rate limit de yfinance
-        _proximos = {1: "02:00 UTC", 2: "06:00 UTC", 3: None}
+        # Rate limit de yfinance.
+        # Cronograma de intentos:
+        #   1 = 23:00 UTC  (Oracle, mismo dia, 3h post-cierre)
+        #   2 = 02:00 UTC  (Oracle, Ma-Sa madrugada)
+        #   3 = 04:00 UTC  (GH Actions backup, Ma-Sa) -- IP distinta
+        #   4 = 06:00 UTC  (Oracle, ultimo intento)
+        _proximos = {1: "02:00 UTC (Oracle)", 2: "04:00 UTC (GH backup)", 3: "06:00 UTC (Oracle)", 4: None}
         proximo   = _proximos.get(intento)
-        log(f"  [POST-CHECK] Rate limit yfinance (intento {intento}/3). 0 filas escritas.")
+        log(f"  [POST-CHECK] Rate limit yfinance (intento {intento}/4). 0 filas escritas.")
         if proximo:
-            _tg(f"WARN Opciones snapshot -- sin datos (intento {intento}/3){nl}<i>{fecha} | {ts}</i>{nl}yfinance sin contratos (rate limit).{nl}Proximo intento: <b>{proximo}</b>")
+            _tg(f"WARN Opciones snapshot -- sin datos (intento {intento}/4){nl}<i>{fecha} | {ts}</i>{nl}yfinance sin contratos (rate limit).{nl}Proximo intento: <b>{proximo}</b>")
         else:
-            _tg(f"ERROR Opciones snapshot -- todos los intentos fallaron{nl}<i>{fecha} | {ts}</i>{nl}3 intentos sin datos (23:00 / 02:00 / 11:00 UTC).{nl}Requiere revision manual.")
-        if intento < 3:
+            _tg(f"ERROR Opciones snapshot -- todos los intentos fallaron{nl}<i>{fecha} | {ts}</i>{nl}4 intentos sin datos (23:00 Oracle / 02:00 Oracle / 04:00 GH / 06:00 Oracle).{nl}Requiere revision manual.")
+        if intento < 4:
             return
 
     issues   = []
@@ -1064,8 +1069,9 @@ def main():
                         help="Fecha del snapshot YYYY-MM-DD (default: hoy). "
                              "Usar para backfill de dias perdidos.",
                         default=None)
-    parser.add_argument("--intento", type=int, default=1, choices=[1, 2, 3],
-                        help="Numero de intento del dia (1=23UTC, 2=02UTC, 3=11UTC)")
+    parser.add_argument("--intento", type=int, default=1, choices=[1, 2, 3, 4],
+                        help="Numero de intento del dia (1=23UTC Oracle, 2=02UTC Oracle, "
+                             "3=04UTC GH backup, 4=06UTC Oracle)")
     args = parser.parse_args()
 
     if args.init:
