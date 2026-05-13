@@ -192,26 +192,40 @@ def agrupar_por_rango(pendientes: dict, target_date: date) -> dict:
 def download_batch(tickers: list, start: date, end: date) -> dict:
     """
     Descarga OHLCV via yf.download() en batch. Retorna {ticker: DataFrame}.
-    Levanta RateLimitDetected si hay rate limit.
+    Levanta RateLimitDetected si hay rate limit (yfinance lo imprime a
+    stdout/stderr en lugar de lanzar excepcion).
     """
+    import io
+    import sys
+    from contextlib import redirect_stdout, redirect_stderr
+
     import yfinance as yf
     import pandas as pd
 
+    out_buf = io.StringIO()
+    err_buf = io.StringIO()
+
     try:
-        df = yf.download(
-            tickers,
-            start=start.strftime("%Y-%m-%d"),
-            end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
-            group_by="ticker",
-            progress=False,
-            auto_adjust=False,
-            threads=False,
-        )
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            df = yf.download(
+                tickers,
+                start=start.strftime("%Y-%m-%d"),
+                end=(end + timedelta(days=1)).strftime("%Y-%m-%d"),
+                group_by="ticker",
+                progress=False,
+                auto_adjust=False,
+                threads=False,
+            )
     except Exception as e:
         if _is_ratelimit_msg(str(e)):
             raise RateLimitDetected(str(e))
         log(f"  yf.download EXCEPCION: {str(e)[:120]}")
         return {}
+
+    # yfinance escribe los rate limit a stdout/stderr en lugar de lanzar
+    captured = (out_buf.getvalue() + " " + err_buf.getvalue()).strip()
+    if captured and _is_ratelimit_msg(captured):
+        raise RateLimitDetected(captured[:200])
 
     if df is None or df.empty:
         return {}
@@ -385,6 +399,10 @@ def recover_precios(engine, target_date: date, args) -> dict:
         if rate_limited:
             log(f"Durmiendo {PAUSE_AFTER_RATELIMIT_S}s antes de proximo ciclo...")
             time.sleep(PAUSE_AFTER_RATELIMIT_S)
+        elif ok_cycle == 0 and len(pendientes) > 0:
+            # Salvaguardia: ningun ticker se actualizo. Sospechoso de rate limit silencioso.
+            log(f"Ciclo sin exitos. Pausa {PAUSE_AFTER_RATELIMIT_S}s antes de reintentar...")
+            time.sleep(PAUSE_AFTER_RATELIMIT_S)
 
     pendientes_final = get_pendientes_precios(engine, target_date)
     return pendientes_final
@@ -447,6 +465,9 @@ def recover_futuros(engine, target_date: date, args) -> dict:
         log(f"\nResumen ciclo {cycle}: OK={ok_cycle}  FAIL={fail_cycle}")
 
         if rate_limited:
+            time.sleep(PAUSE_AFTER_RATELIMIT_S)
+        elif ok_cycle == 0 and len(pendientes) > 0:
+            log(f"Ciclo sin exitos. Pausa {PAUSE_AFTER_RATELIMIT_S}s antes de reintentar...")
             time.sleep(PAUSE_AFTER_RATELIMIT_S)
 
     pendientes_final = get_pendientes_futuros(engine, target_date)
