@@ -489,7 +489,9 @@ def backfill_zscore_tickers(engine=None, desde: date = None) -> int:
     """
     eng = engine or get_engine()
 
-    filtro_desde = "AND p.fecha >= :desde" if desde else ""
+    # Bug fix: el WHERE final esta sobre `stats s`, no sobre `prices p`.
+    # Antes decia "AND p.fecha >= :desde" y daba "falta entrada para tabla p".
+    filtro_desde = "AND s.fecha >= :desde" if desde else ""
 
     SQL = f"""
         WITH prices AS (
