@@ -22,13 +22,21 @@ def get_engine():
         db_url = db_url.replace("postgres://", "postgresql://", 1)
         if "postgresql+psycopg2" not in db_url:
             db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
-        return create_engine(db_url, connect_args={"sslmode": "require"})
+        # pool_pre_ping=True: envia un SELECT 1 mini antes de cada query para
+        # detectar conexiones cerradas por Railway (idle timeout ~5min) y
+        # reabrir transparentemente. Previene "server closed connection
+        # unexpectedly" en scripts largos como el snapshot de opciones.
+        return create_engine(
+            db_url,
+            connect_args={"sslmode": "require"},
+            pool_pre_ping=True,
+        )
     else:
         url = (
             f"postgresql+psycopg2://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
             f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
         )
-        return create_engine(url)
+        return create_engine(url, pool_pre_ping=True)
 
 
 # ── Conexión psycopg2 (para operaciones directas) ─────────────
