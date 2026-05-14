@@ -106,6 +106,11 @@ def paso_actualizar_datos() -> dict:
     evitar rate-limiting en GitHub Actions. Luego procesa cada ticker con los
     datos recibidos y recalcula indicadores desde el historico completo en DB.
     """
+    # Lock yfinance global: si otro script esta corriendo, abortar antes de
+    # tocar la API (evita doble carga sobre la misma IP).
+    from src.utils.yfinance_lock import acquire as acquire_yf_lock
+    acquire_yf_lock("cron_diario --step precios")
+
     import yfinance as yf
     import pandas as pd
     from src.pipeline.data_manager import cargar_precios_db
@@ -127,70 +132,91 @@ def paso_actualizar_datos() -> dict:
         log("  [WARN] Lista de tickers vacia, saltando actualizacion.")
         return {"ok": 0, "error": 0}
 
-    # Descarga en lotes para evitar YFRateLimitError con 200 tickers en una sola llamada.
-    # NOTA: en yfinance 0.2.x el YFRateLimitError NO lanza excepcion — imprime
-    # el error internamente y devuelve DataFrame vacio. Por eso el retry se basa
-    # en detectar raw.empty, no en except Exception.
-    # BATCH_SIZE=10 para no superar el umbral actual de Yahoo Finance (mayo 2026).
+    # Descarga en lotes. NOTA: en yfinance 0.2.x el YFRateLimitError NO lanza
+    # excepcion — imprime el error internamente y devuelve DataFrame vacio.
+    # Por eso detectamos rate-limit via raw.empty, no via except.
+    #
+    # ESTRATEGIA DE RETRY (refactorizado abril 2026):
+    #   - Pasada 1: todos los lotes, una sola vez. Lotes que devuelven vacio
+    #     se marcan como "failed" y se SIGUE adelante (no reintento inmediato:
+    #     reintentar el mismo lote con la IP caliente raramente funciona y
+    #     amplifica la carga).
+    #   - Pasada 2: si quedaron lotes failed, pausa 5 min (para que la IP
+    #     enfrie) y reintenta SOLO esos. Una unica retry.
     import time
 
-    BATCH_SIZE        = 10   # reducido de 50 — Yahoo Finance bloquea lotes grandes
+    BATCH_SIZE        = 10   # Yahoo Finance bloquea lotes mas grandes
     BATCH_DELAY       = 10   # segundos entre lotes exitosos
-    RATELIMIT_DELAY   = 90   # segundos de espera cuando un lote devuelve vacio
+    COOLING_PAUSE     = 300  # 5 min antes de la pasada 2 (failed batches)
 
     batches = [tickers_db[i:i + BATCH_SIZE]
                for i in range(0, len(tickers_db), BATCH_SIZE)]
     log(f"  {len(tickers_db)} tickers | {len(batches)} lotes de hasta {BATCH_SIZE}...")
 
-    # ticker -> DataFrame raw (sin procesar) del lote
+    # ticker -> DataFrame raw del lote
     ticker_raw = {}
+    failed_batches = []  # lotes que vinieron vacios -> retry al final
 
+    def _intentar_batch(b_idx, batch):
+        """Descarga un lote y devuelve el DataFrame raw (o None si fallo)."""
+        try:
+            raw = yf.download(
+                tickers=batch,
+                period="1mo",
+                auto_adjust=True,
+                progress=False,
+                group_by="ticker",
+                threads=False,
+            )
+        except Exception as e:
+            log(f"    [ERROR] Lote {b_idx} excepcion: {str(e)[:80]}")
+            return None
+        return raw if (raw is not None and not raw.empty) else None
+
+    def _extraer_tickers(raw, batch):
+        """Extrae DataFrames por ticker del raw multi-index y los almacena."""
+        for ticker in batch:
+            try:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    lvl0 = raw.columns.get_level_values(0).unique().tolist()
+                    lvl1 = raw.columns.get_level_values(1).unique().tolist()
+                    if ticker in lvl0:
+                        ticker_raw[ticker] = raw[ticker].copy()
+                    elif ticker in lvl1:
+                        ticker_raw[ticker] = raw.xs(ticker, axis=1, level=1).copy()
+                else:
+                    ticker_raw[ticker] = raw.copy()
+            except Exception:
+                pass
+
+    # ── Pasada 1: una vuelta completa, sin retry inmediato ────────────────────
     for b_idx, batch in enumerate(batches, 1):
         log(f"  Lote {b_idx}/{len(batches)} ({len(batch)} tickers)...")
-        raw = None
+        raw = _intentar_batch(b_idx, batch)
 
-        for attempt in (1, 2):
-            try:
-                raw = yf.download(
-                    tickers=batch,
-                    period="1mo",
-                    auto_adjust=True,
-                    progress=False,
-                    group_by="ticker",
-                    threads=False,
-                )
-            except Exception as e:
-                log(f"    [ERROR] Lote {b_idx} excepcion: {str(e)[:80]}")
-                raw = None
-
-            if raw is not None and not raw.empty:
-                break  # descarga OK
-
-            if attempt == 1:
-                log(f"    [WARN] Lote {b_idx}: sin datos (rate limit?). Reintentando en {RATELIMIT_DELAY}s...")
-                time.sleep(RATELIMIT_DELAY)
-
-        if raw is None or raw.empty:
-            log(f"    [WARN] Lote {b_idx}: sin datos tras reintento.")
+        if raw is None:
+            log(f"    [WARN] Lote {b_idx}: sin datos. Lo reintento al final del ciclo.")
+            failed_batches.append((b_idx, batch))
         else:
-            # Extraer DataFrame por ticker del lote
-            for ticker in batch:
-                try:
-                    if isinstance(raw.columns, pd.MultiIndex):
-                        lvl0 = raw.columns.get_level_values(0).unique().tolist()
-                        lvl1 = raw.columns.get_level_values(1).unique().tolist()
-                        if ticker in lvl0:
-                            ticker_raw[ticker] = raw[ticker].copy()
-                        elif ticker in lvl1:
-                            ticker_raw[ticker] = raw.xs(ticker, axis=1, level=1).copy()
-                    else:
-                        # Lote de un solo ticker (sin MultiIndex)
-                        ticker_raw[ticker] = raw.copy()
-                except Exception:
-                    pass
+            _extraer_tickers(raw, batch)
             log(f"    Lote {b_idx} OK: {raw.shape[0]} filas.")
 
         if b_idx < len(batches):
+            time.sleep(BATCH_DELAY)
+
+    # ── Pasada 2: retry final de lotes que fallaron ───────────────────────────
+    if failed_batches:
+        log(f"  Pasada 2: {len(failed_batches)} lotes fallaron. Pausa {COOLING_PAUSE}s para enfriar IP...")
+        time.sleep(COOLING_PAUSE)
+
+        for b_idx, batch in failed_batches:
+            log(f"  RETRY Lote {b_idx}/{len(batches)} ({len(batch)} tickers)...")
+            raw = _intentar_batch(b_idx, batch)
+            if raw is None:
+                log(f"    [FAIL] Lote {b_idx} sigue sin datos tras retry final.")
+            else:
+                _extraer_tickers(raw, batch)
+                log(f"    Lote {b_idx} OK en retry: {raw.shape[0]} filas.")
             time.sleep(BATCH_DELAY)
 
     log(f"  Descarga completada: {len(ticker_raw)}/{len(tickers_db)} tickers con datos.")

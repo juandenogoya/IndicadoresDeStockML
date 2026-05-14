@@ -517,6 +517,12 @@ def main():
 
     # Imports DESPUES de setup_target_env (modulos pueden leer DATABASE_URL al importar)
     from src.data.database import get_engine
+    from src.utils.yfinance_lock import acquire as acquire_yf_lock
+
+    # Lock yfinance global: si otro script esta corriendo, abortar antes de
+    # tocar la API (evita doble carga sobre la misma IP). En dry-run no lockea.
+    if not args.dry_run:
+        acquire_yf_lock(f"recovery_incremental --target {args.target}")
 
     engine = get_engine()
     target_date = calcular_target_date()

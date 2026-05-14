@@ -477,6 +477,15 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
     fecha_hoy      = fecha_override or date.today()
     _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
 
+    # Lock yfinance: evita que otro script (cron_diario, recovery) corra en
+    # paralelo y duplique la carga sobre la misma IP. No lockea en dry-run.
+    if not dry_run:
+        try:
+            from src.utils.yfinance_lock import acquire as acquire_yf_lock
+            acquire_yf_lock(f"33_opciones_snapshot --intento {intento}")
+        except ImportError:
+            pass  # backward-compat si el helper no existe en cierta version
+
     log("=" * 60)
     log(f"  OPCIONES SNAPSHOT  |  {fecha_hoy}")
     if fecha_override:
@@ -528,7 +537,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
             if not filas:
                 log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  sin opciones activas")
                 sin_opciones += 1
-                time.sleep(0.2)
+                time.sleep(1.0)   # pausa inter-ticker aumentada (era 0.2) -- suaviza burst
                 continue
 
             # Agregar resumen en memoria (sin calls adicionales)
@@ -546,7 +555,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
                     f"{n:5d} filas  PCR_vol={pcr_v}")
                 total_filas += n
 
-            time.sleep(0.3)
+            time.sleep(1.0)   # pausa inter-ticker aumentada (era 0.3) -- suaviza burst
 
         except Exception as e:
             log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  ERROR: {e}")
