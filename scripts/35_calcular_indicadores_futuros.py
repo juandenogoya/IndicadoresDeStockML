@@ -20,14 +20,35 @@ from datetime import date, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-try:
-    from dotenv import load_dotenv
-    if os.path.exists(os.path.join(ROOT, ".env")):
-        load_dotenv(os.path.join(ROOT, ".env"))
-    if os.path.exists(os.path.join(ROOT, ".env.local")):
-        load_dotenv(os.path.join(ROOT, ".env.local"), override=True)
-except ImportError:
-    pass
+
+
+def _setup_target_env(target: str):
+    """
+    Configura os.environ para que get_engine() apunte al target deseado.
+    DEBE correr ANTES de importar src.data.database: config.py construye
+    DB_CONFIG al momento del import segun DATABASE_URL en os.environ.
+      target='local'   -> elimina DATABASE_URL -> get_engine usa DB_CONFIG local
+      target='railway' -> carga DATABASE_URL desde .env.local (Oracle/produccion)
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    env_path = os.path.join(ROOT, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+    if target == "railway":
+        envlocal = os.path.join(ROOT, ".env.local")
+        if os.path.exists(envlocal):
+            load_dotenv(envlocal, override=True)
+    else:
+        os.environ.pop("DATABASE_URL", None)
+
+
+# Resolver --target ANTES de importar modulos que tocan la DB
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument("--target", choices=["local", "railway"], default="local")
+_setup_target_env(_pre.parse_known_args()[0].target)
 
 import pandas as pd
 import psycopg2.extras
@@ -274,6 +295,8 @@ def main():
                         help="Crea tabla y calcula indicadores sobre historial completo")
     parser.add_argument("--status", action="store_true",
                         help="Muestra resumen de datos en DB")
+    parser.add_argument("--target", choices=["local", "railway"], default="local",
+                        help="DB destino: local (default) o railway (Oracle/produccion)")
     args = parser.parse_args()
 
     if args.init:
