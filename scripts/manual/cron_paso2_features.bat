@@ -6,6 +6,9 @@ REM  Contingencia manual: Paso 2 del pipeline diario.
 REM  Calcula features de precio-accion y market structure
 REM  para los 199 tickers y hace upsert en DB.
 REM
+REM  TARGET: PostgreSQL LOCAL (Plan C). NO carga .env.local, por lo
+REM  que DATABASE_URL no se setea y get_engine() usa DB_CONFIG local.
+REM
 REM  Tiempo estimado : ~4-5 minutos
 REM  Prerequisito    : Paso 1 (precios) debe haber corrido hoy
 REM  El Paso 3 (scanner ML) depende de este paso.
@@ -14,17 +17,17 @@ REM ============================================================
 SET ROOT=%~dp0..\..\
 SET PYTHON=%ROOT%venv\Scripts\python.exe
 
-REM Cargar DATABASE_URL y otras variables desde .env.local
-for /f "usebackq tokens=1,* delims==" %%a in ("%ROOT%.env.local") DO set %%a=%%b
+REM Posicionarse en la raiz para que config.py:load_dotenv() encuentre .env
+cd /d "%ROOT%"
 
 echo.
 echo ============================================================
 echo   PASO 2 - Features PA + Market Structure
-echo   Fecha : %DATE%  Hora: %TIME%
+echo   TARGET: LOCAL  ^|  Fecha : %DATE%  Hora: %TIME%
 echo ============================================================
 echo.
-echo Estado actual de la DB:
-"%PYTHON%" "%ROOT%scripts\manual\db_status.py"
+echo Estado actual de la DB LOCAL:
+"%PYTHON%" "%ROOT%scripts\manual\db_status.py" --target local
 echo.
 echo PREREQUISITO: el Paso 1 (precios) debe haber corrido hoy.
 echo Si los precios no estan actualizados, correr cron_paso1_precios.bat primero.
@@ -49,8 +52,8 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 echo ----------------------------------------
 echo.
-echo Estado post-ejecucion:
-"%PYTHON%" "%ROOT%scripts\manual\db_status.py"
+echo Estado post-ejecucion (LOCAL):
+"%PYTHON%" "%ROOT%scripts\manual\db_status.py" --target local
 echo.
 echo ============================================================
 echo   Paso 2 finalizado. Presiona cualquier tecla para cerrar.

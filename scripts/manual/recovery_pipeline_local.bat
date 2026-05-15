@@ -28,11 +28,10 @@ SET "ROOT=%~dp0..\..\"
 SET "PYTHON=%ROOT%venv\Scripts\python.exe"
 SET "LOGDIR=%ROOT%logs"
 
-REM Cargar variables de entorno (.env.local define DATABASE_URL para
-REM otros scripts; cron_diario.py usa internamente DB_HOST/etc del .env
-REM via dotenv, asi que termina escribiendo al LOCAL -- comprobado en
-REM la recuperacion de May 5-8).
-for /f "usebackq tokens=1,* delims==" %%a in ("%ROOT%.env.local") DO set "%%a=%%b"
+REM TARGET LOCAL: NO se carga .env.local. Asi DATABASE_URL no se setea y
+REM get_engine() (src/data/database.py) cae a DB_CONFIG = PostgreSQL local.
+REM El cd a la raiz garantiza que config.py:load_dotenv() encuentre .env.
+cd /d "%ROOT%"
 
 REM Crear directorio de logs si no existe
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
@@ -59,8 +58,8 @@ echo.
 echo Duracion estimada: ~95 minutos.
 echo.
 echo PREREQUISITOS:
-echo   - El Task Scheduler de Windows NO debe estar corriendo
-echo     pipeline_automatico.bat al mismo tiempo (rate limit).
+echo   - Ningun otro script yfinance corriendo en paralelo (rate limit
+echo     es por IP). El yfinance_lock.py aborta si detecta concurrencia.
 echo   - Si fallo Yahoo Finance hace poco, esperar 30 min antes.
 echo.
 set /p CONFIRM="Iniciar recovery? (s/n): "
