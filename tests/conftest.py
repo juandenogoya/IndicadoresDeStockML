@@ -18,9 +18,37 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mcp_server.config import get_settings
+import mcp_server.db.pool as _pool_module
 
 
 # ── Cache de settings ─────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def reset_db_pool():
+    """
+    Cierra y resetea el singleton del pool de asyncpg despues de cada test.
+
+    pytest-asyncio (strict, function scope) crea un nuevo event loop por test.
+    Si el pool fue creado en el loop del test anterior, el siguiente test falla
+    con "Event loop is closed" o "connection was closed in the middle of operation".
+
+    Estrategia:
+      1. Captura la referencia al pool actual (puede ser None en unit tests).
+      2. Resetea _pool = None ANTES de cerrar, para que cualquier llamada
+         concurrente no vea el pool a medio cerrar.
+      3. Intenta cerrar el pool con asyncio.run() (crea un event loop nuevo
+         solo para el cleanup). Best-effort: si falla, el GC lo limpia.
+    """
+    yield
+    import asyncio
+    pool = _pool_module._pool
+    _pool_module._pool = None
+    if pool is not None:
+        try:
+            asyncio.run(pool.close())
+        except Exception:
+            pass  # best-effort: el GC cerrara los sockets eventualmente
+
 
 @pytest.fixture(autouse=True)
 def clear_settings_cache():

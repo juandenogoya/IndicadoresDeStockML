@@ -1,5 +1,5 @@
 # MCP Server -- Servidor de consulta para activos_ml
-# Ultima actualizacion: 2026-05-09
+# Ultima actualizacion: 2026-05-15
 
 ## Que es
 
@@ -16,6 +16,64 @@ en consola; manana via Telegram para consultas remotas.
 **How to apply:** este archivo se carga al inicio de cualquier sesion de
 implementacion o mantenimiento del MCP server. Es la fuente de verdad del
 diseno; cualquier cambio de arquitectura se refleja aca primero.
+
+---
+
+## Estado de implementacion (2026-05-15) -- FASE 1 COMPLETA
+
+14 tools registradas y validadas contra la DB local via Gemini CLI.
+El resto de esta seccion describe el DISEÑO; abajo se aclara que se
+construyo realmente y donde se desvio del plan original.
+
+### Tools en produccion (14)
+
+| Tool | Fase | Estado |
+|---|---|---|
+| ping | 0 | OK |
+| check_trading_day, get_last_trading_day | 1A | OK |
+| list_tables, describe_table, list_tickers | 1B | OK |
+| get_price_history, get_technical_indicators, get_price_action, get_market_structure | 1C | OK |
+| get_options_analysis | 1D | OK |
+| get_ticker_overview | 1F | OK |
+| screen_tickers | extra | OK |
+| get_ml_alert_history | 1E | OK |
+
+### Desviaciones del diseño original
+
+1. **Opciones: 1 tool en vez de 2.** El plan tenia `get_options_summary`
+   y `get_options_zscore` separadas. Se implemento una sola
+   `get_options_analysis` que combina resumen diario, z-scores, PCR por
+   vencimiento y delta de OI por contrato en el periodo.
+
+2. **screen_tickers: tool nueva no planeada.** Screener multi-criterio
+   sobre los 199 tickers (opcion B: 17 parametros nullable, cada filtro
+   usa el patron `$N IS NULL OR condicion`). Cubre las consultas
+   cross-ticker que originalmente se pensaba resolver con `run_select`.
+
+3. **get_ticker_overview sin `days_back`.** Ancla siempre en el ultimo
+   dato disponible por tabla. Un solo parametro: `ticker`.
+
+4. **get_ml_alert_history con filtros ampliados.** En vez de
+   `(ticker, days_back)` toma `ticker, desde, hasta, alert_nivel,
+   alert_score_min, solo_verificados, limit`. Incluye retornos
+   post-facto (retorno_Nd_real) para evaluar performance del modelo.
+
+5. **run_select y safety.py: postergados.** `screen_tickers` cubre la
+   mayoria de los casos cross-ticker. `run_select` con validacion
+   sqlglot queda pendiente; mientras no exista, safety.py tampoco.
+
+### Lecciones tecnicas de Fase 1
+
+- **Columnas flag boolean vs smallint:** choch_*, bos_*, patron_*,
+  es_alcista, vol_spike pueden estar tipadas como smallint(0/1) o boolean
+  segun version de la DB. En expresiones CASE de SQL usar `::int != 0`
+  para normalizar. PostgreSQL valida el tipo de retorno del CASE en
+  parse-time, antes de evaluar que parametros son NULL -- por eso un CASE
+  mal tipado falla aunque su filtro este inactivo.
+- **Sintesis para el LLM:** las tools deben convertir columnas booleanas
+  crudas en campos legibles (patron_activo, señal_smc, señal_reciente) y
+  NO devolver las columnas 0/1 originales. Los modelos basicos
+  (gemini-2.5-flash) vuelcan los datos crudos sin interpretarlos.
 
 ---
 

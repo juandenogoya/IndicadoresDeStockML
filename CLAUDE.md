@@ -3,20 +3,20 @@
 Este repositorio contiene un sistema de analisis tecnico/ML sobre 199 tickers
 con DB PostgreSQL, pipeline diario, scanner ML y backtest historico.
 
-## Documentos de memoria por dominio
+## Documentos de dominio
 
-Antes de trabajar en un dominio, leer el .md correspondiente:
+Documentacion que existe hoy en docs/:
 
-- memory/MEMORY.md            : indice general, estado del sistema
-- memory/AGENDA.md             : tareas activas
-- memory/opciones.md           : opciones, PCR, IV, Z-scores
-- memory/ml_modelos.md         : Random Forest V3, scoring ML
-- memory/datos_pipeline.md     : pipeline diario, cron, 1W
-- memory/indicadores_tecnicos.md
-- memory/estructuras_velas.md  : SMC, patrones de vela
-- memory/scanner_alertas.md
-- memory/bt_postgresql_local.md
-- memory/mcp_server.md         : servidor MCP consultivo (NUEVO)
+- docs/mcp_server.md      : servidor MCP consultivo (diseno + estado)
+- docs/estrategias_ft.md  : estrategias de forward testing
+- docs/forward_testing/   : detalle de forward testing
+
+Politica de documentacion: un doc de dominio se crea SOLO cuando hay
+conocimiento real que no se puede derivar leyendo el codigo (ej.
+thresholds no obvios, convenciones de columnas, decisiones historicas).
+No crear placeholders vacios. El estado general del sistema vive en
+este CLAUDE.md; el codigo es la fuente de verdad para arquitectura,
+rutas y estructura.
 
 ## Reglas no negociables
 
@@ -62,27 +62,48 @@ postgresql://<user>:<password>@<host>:<port>/<db>
 Diseno completo: docs/mcp_server.md
 Reglas de uso del propio server: mcp_server/INSTRUCTIONS.md
 
+FASE 1 COMPLETA (15/05/2026). 14 tools registradas y validadas contra
+la DB local via Gemini CLI.
+
 Fases completadas:
 - Fase 0: skeleton + tool ping
 - Fase 1A: calendar tools (check_trading_day, get_last_trading_day)
 - Fase 1B: exploration tools (list_tables, describe_table, list_tickers)
+- Fase 1C: stocks tools (price_history, technical_indicators,
+  price_action, market_structure)
+- Fase 1D: opciones (get_options_analysis -- una sola tool en vez de las
+  dos planeadas; combina resumen, zscore, PCR por vencimiento, delta OI)
+- Fase 1E: alertas ML (get_ml_alert_history)
+- Fase 1F: composicion (get_ticker_overview)
+- Extra: screener multi-criterio (screen_tickers, opcion B con 17
+  parametros nullable) -- no estaba en el plan original de 12 tools
 
-Tools registradas hasta hoy (6):
+Tools registradas hasta hoy (14):
 - ping
-- check_trading_day
-- get_last_trading_day
-- list_tables
-- describe_table
-- list_tickers
+- check_trading_day, get_last_trading_day
+- list_tables, describe_table, list_tickers
+- get_price_history, get_technical_indicators, get_price_action,
+  get_market_structure
+- get_options_analysis
+- get_ticker_overview
+- screen_tickers
+- get_ml_alert_history
 
 Fases pendientes:
-- Fase 1C: tools de datos sobre acciones (price_history, technical_indicators,
-  price_action, market_structure)
-- Fase 1D: tools de opciones (options_summary, options_zscore)
-- Fase 1E: tool de alertas (ml_alert_history)
-- Fase 1F: composicion (ticker_overview) + run_select con validacion sqlglot
+- run_select con validacion sqlglot (postergado: screen_tickers cubre
+  la mayoria de las consultas cross-ticker; ver regla 7)
+- safety.py (validacion SQL) -- pendiente, depende de run_select
 - Fase 2: catalogo de queries (save_query, list_saved, recall_query)
 - Fase 3: cliente custom + bot Telegram en Oracle Cloud
+
+Patrones aprendidos en Fase 1 (importantes para futuras tools):
+- Columnas flag (choch_*, bos_*, patron_*, es_alcista, vol_spike) pueden
+  ser smallint(0/1) o boolean segun version de la DB. En CASE de SQL usar
+  ::int != 0 para normalizar ambos tipos. PostgreSQL valida tipos de CASE
+  en parse-time, antes de evaluar parametros NULL.
+- Tools que devuelven al LLM deben sintetizar columnas booleanas crudas
+  en campos legibles (patron_activo, señal_smc) y NO incluir las columnas
+  0/1 originales -- los modelos basicos las vuelcan sin interpretar.
 
 ## Patrones decididos para el MCP server
 
