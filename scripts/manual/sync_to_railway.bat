@@ -18,7 +18,7 @@ REM                         + ticker_zscore_diario)
 REM    4. Scanner          (alertas_scanner)
 REM ============================================================
 
-SET ROOT=%~dp0..\
+SET ROOT=%~dp0..\..\
 SET PYTHON=%ROOT%venv\Scripts\python.exe
 SET SCRIPT=%ROOT%scripts\migrations\sync_local_to_railway.py
 

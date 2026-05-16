@@ -7,7 +7,7 @@
 set PYTHONPATH=C:\Users\juand\OneDrive\Escritorio\Indicadores y Machine Learning
 
 :: Cargar variables desde .env.local
-for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0..\.env.local") do set %%a=%%b
+for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0..\..\.env.local") do set %%a=%%b
 
 cd /d "C:\Users\juand\OneDrive\Escritorio\Indicadores y Machine Learning"
 

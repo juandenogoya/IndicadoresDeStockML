@@ -14,7 +14,7 @@ REM    Doble clic en este archivo, o desde CMD.
 REM    Parametro opcional --dry-run para simular sin escribir.
 REM ============================================================
 
-SET ROOT=%~dp0..\
+SET ROOT=%~dp0..\..\
 SET PYTHON=%ROOT%venv\Scripts\python.exe
 SET SCRIPT=%ROOT%scripts\migrations\sync_railway_to_local.py
 SET DRY_RUN=%~1

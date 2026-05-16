@@ -19,7 +19,7 @@ REM  Se puede correr en cualquier momento, incluso en paralelo
 REM  con un recovery de precios.
 REM ============================================================
 
-SET ROOT=%~dp0..\
+SET ROOT=%~dp0..\..\
 SET PYTHON=%ROOT%venv\Scripts\python.exe
 
 echo.
