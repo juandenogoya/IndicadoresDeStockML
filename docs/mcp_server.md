@@ -661,15 +661,60 @@ implementar todas de una vez: cada una se justifica con un caso de uso real.
    estructura de directorios, formato de metadata .md, convencion de naming.
 3. Promover queries utiles de fase 1 al catalogo.
 
-### Fase 3 -- Cliente custom + Telegram (~1 semana)
+### Fase 3 -- Bot de Telegram (MVP local primero)
 
-1. Implementar `mcp_server/server.py` con flag `--transport http` para SSE.
-2. Crear `mcp_client/` (puede ser proyecto separado): cliente con
-   `google-genai` SDK que consume el server MCP.
-3. Implementar `cli.py` (interfaz consola) y `telegram_bot.py`.
-4. Whitelist de chat_id de Telegram en `.env`.
-5. Desplegar server en Oracle Cloud VM (donde ya corre el pipeline).
-6. Configurar el cliente Telegram para consumir el server remoto via HTTP.
+REVISADO 16/05/2026. El plan original (desplegar en Oracle Cloud contra
+Railway) quedo obsoleto con el Plan C: la DB local de Windows es la fuente
+de verdad para todo menos opciones_snapshot. Un MCP server en Oracle contra
+Railway solo veria opciones -- no precios, indicadores, features ni scanner.
+
+Se adopta un enfoque MVP local primero.
+
+**Concepto clave:** hoy Gemini CLI hace de cliente MCP -- recibe el mensaje,
+llama al LLM, orquesta las tool calls contra el server y devuelve la
+respuesta. Para Telegram hay que CONSTRUIR ese cliente/orquestador; el LLM
+nunca usa el MCP directamente, solo pide "llamar tool X" y el orquestador
+ejecuta.
+
+#### MVP -- alcance (Fase 3a)
+
+Todo local en Windows, sin IP publica ni infraestructura cloud:
+
+- Bot de Telegram con long polling (sin webhook, sin nginx, sin tunel).
+- Corre en la notebook Windows (debe estar encendida).
+- MCP server por stdio: el bot lo lanza como subproceso, igual que Gemini CLI.
+- DB local directa (la fuente de verdad del Plan C).
+- Whitelist estricta de chat_id -- solo la cuenta del usuario; sin whitelist
+  el bot ni responde a /start.
+- Loop agentico: mensaje -> LLM -> tool calls -> MCP -> LLM -> respuesta.
+- Sin memoria de conversacion (cada mensaje fresco -- mas simple y barato).
+
+Componentes a construir:
+
+| Componente | Funcion | Herramienta |
+|---|---|---|
+| Bot Telegram | Recibe/envia mensajes | python-telegram-bot (long polling) |
+| Cliente LLM | Llama a Gemini con tool-calling | SDK google-genai |
+| Cliente MCP | Conecta al server, ejecuta tool calls | MCP Python SDK (lado cliente) |
+| Orquestador | Loop agentico mensaje->LLM->MCP->LLM | codigo propio |
+
+Decision de diseño pendiente: **formato del mensaje de salida**. Telegram no
+es una consola -- las tablas densas no se ven bien en movil, hay limite de
+4096 caracteres por mensaje, soporta Markdown/HTML limitado. Definir si la
+respuesta es narrativa corta, bullets, o mensajes partidos. Afecta como se
+instruye al LLM.
+
+El costo en tokens NO cambia respecto a Gemini CLI: cada mensaje sigue siendo
+un round-trip (o varios, por el loop agentico). El trabajo de reduccion de
+tokens en las tools sigue valiendo.
+
+#### Fuera del MVP (Fase 3b, segun necesidad)
+
+- Server siempre-online: requiere resolver el acceso a la DB local desde un
+  host remoto (tunel Tailscale / SSH reverse, o mover el bot a un host con
+  linea de vista a la DB). NO desplegar contra Railway -- no tiene los datos.
+- Memoria de conversacion multi-turno.
+- Transporte HTTP/SSE (el MVP usa stdio; long polling no necesita IP publica).
 
 ---
 
@@ -733,49 +778,48 @@ YYYY-MM-DD por <quien>
 
 ---
 
-## Despliegue cloud (fase 3)
+## Despliegue (fase 3)
 
-### Donde
-Oracle Cloud VM `pipeline-ml` (141.148.57.58, Always Free), donde ya corre
-el cron diario del proyecto. Razones:
-- Mismo entorno que el pipeline; cero overhead de despliegue nuevo.
-- Repo ya clonado, venv ya configurado.
-- Acceso directo a Railway por DSN (ya configurado).
+OBSOLETO el plan original de desplegar en Oracle Cloud contra Railway.
+Razon: Plan C (14/5/2026) hizo de la DB local de Windows la fuente de
+verdad. Un MCP server en Oracle contra Railway solo veria opciones_snapshot
+-- no precios, indicadores, features, scanner ni alertas ML. El MCP server
+DEBE correr donde la DB local sea alcanzable.
 
-### Como
-1. Clonar branch `mcp-server` en la VM si no esta.
-2. Crear `~/.config/systemd/user/mcp-server.service` para correr el server
-   como daemon de usuario:
+### MVP -- local en Windows (Fase 3a)
 
-```ini
-[Unit]
-Description=MCP Server activos_ml
-After=network.target
+Sin infraestructura cloud. El bot, el orquestador y el MCP server corren en
+la notebook Windows; la notebook debe estar encendida para que el bot
+responda.
 
-[Service]
-Type=simple
-WorkingDirectory=/home/ubuntu/IndicadoresDeStockML
-ExecStart=/home/ubuntu/IndicadoresDeStockML/venv/bin/python -m mcp_server.server --transport http --port 8765
-Restart=on-failure
-EnvironmentFile=/home/ubuntu/IndicadoresDeStockML/.env.production
+- Bot Telegram con long polling -- no necesita IP publica, ni nginx, ni
+  puertos abiertos, ni tunel.
+- MCP server por stdio: el orquestador lo lanza como subproceso (igual que
+  Gemini CLI hoy). No hace falta `--transport http`.
+- DB local directa via el DSN del rol mcp_reader.
+- Whitelist de chat_id en variable de entorno.
 
-[Install]
-WantedBy=default.target
-```
+### Server siempre-online (Fase 3b -- futuro, segun necesidad)
 
-3. Habilitar: `systemctl --user enable --now mcp-server.service`.
-4. El server escucha en `http://141.148.57.58:8765/sse` (o lo que se
-   configure).
-5. Cliente custom (Telegram bot) corre en local o en otra VM, apunta a la URL
-   del server.
+Si se quiere que el bot responda sin depender de la notebook encendida,
+el problema a resolver es el acceso a la DB local desde un host remoto:
 
-### Seguridad cloud
-- No exponer puerto 8765 a la internet abierta. Acceso via:
-  - VPN propia (Tailscale es trivial de instalar).
-  - Reverse proxy nginx con auth basica.
-  - SSH tunnel (mas simple si solo el bot Telegram lo consume desde otra VM).
+- Opcion A: tunel (Tailscale o SSH reverse) entre el host del bot y la DB
+  local de Windows. El MCP server corre remoto pero consulta la DB local
+  por el tunel.
+- Opcion B: mover la DB / replicar -- fuera de alcance por ahora.
+
+NO desplegar el MCP server contra Railway: Railway no tiene los datos
+(solo opciones). Esa era la premisa del plan viejo y es la que quedo mal.
+
+### Seguridad (aplica a cualquier despliegue)
+
 - Bot Telegram con whitelist estricta de `chat_id`. Sin whitelist el bot no
-  responde, ni siquiera con `/start`.
+  responde, ni siquiera a `/start`.
+- Rol PostgreSQL `mcp_reader` SELECT-only (primera linea de defensa, ya
+  vigente).
+- Si en Fase 3b se expone un puerto: nunca a internet abierta -- VPN
+  (Tailscale), reverse proxy con auth, o SSH tunnel.
 - Logs estructurados a archivo, rotados.
 
 ---
