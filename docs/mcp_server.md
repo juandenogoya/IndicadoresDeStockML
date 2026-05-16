@@ -954,18 +954,6 @@ en `mcp_server/tools/__init__.py` cuando se implemente.
 
 ---
 
-## Tareas pendientes para iniciar
-
-1. Generar password robusto para rol `mcp_reader` (usar `openssl rand -hex 16`).
-2. Decidir si el server vive en branch `mcp-server` o se merguea a main desde
-   el inicio.
-3. Confirmar nombre del server en Gemini CLI (`db-consultor` propuesto, podes
-   cambiarlo).
-4. Listar las 10 preguntas de evaluacion finales (las del Anexo C son
-   sugerencias, podes ajustarlas a casos que te interesen).
-
----
-
 ## Backup
 - Versiones anteriores de este archivo: ninguna (primera version).
 - Documento padre del diseno: conversacion teorica del 2026-05-09.
