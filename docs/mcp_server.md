@@ -19,7 +19,7 @@ diseno; cualquier cambio de arquitectura se refleja aca primero.
 
 ---
 
-## Estado de implementacion (2026-05-15) -- FASE 1 COMPLETA
+## Estado de implementacion (2026-05-16) -- FASE 1 COMPLETA
 
 14 tools registradas y validadas contra la DB local via Gemini CLI.
 El resto de esta seccion describe el DISEÑO; abajo se aclara que se
@@ -44,6 +44,16 @@ construyo realmente y donde se desvio del plan original.
    y `get_options_zscore` separadas. Se implemento una sola
    `get_options_analysis` que combina resumen diario, z-scores, PCR por
    vencimiento y delta de OI por contrato en el periodo.
+
+   Rediseñada 16/05/2026 (commit 0d92516) para reducir consumo de tokens
+   ~8.900 por llamada. Las 3 secciones devuelven metricas computadas en
+   Python en vez de series crudas:
+   - tendencia_diaria -> {actual, serie}: ultimo dia completo + serie
+     diaria recortada (conserva la trayectoria, recorta campos redundantes).
+   - pcr_por_vencimiento -> resumen por vencimiento: PCR OI inicio/actual,
+     delta call/put OI, sesgo y tendencia. Ya NO devuelve la serie diaria.
+   - acumulacion_oi -> top 10 calls + 10 puts, sin precio_subyacente ni
+     oi_inicio por fila (redundantes/derivables).
 
 2. **screen_tickers: tool nueva no planeada.** Screener multi-criterio
    sobre los 199 tickers (opcion B: 17 parametros nullable, cada filtro
@@ -74,6 +84,13 @@ construyo realmente y donde se desvio del plan original.
   crudas en campos legibles (patron_activo, señal_smc, señal_reciente) y
   NO devolver las columnas 0/1 originales. Los modelos basicos
   (gemini-2.5-flash) vuelcan los datos crudos sin interpretarlos.
+- **Eficiencia de tokens:** el LLM paga tokens por cada fila de entrada y
+  razona peor que una formula. Computar conclusiones en Python (gratis,
+  local) y enviar resumenes, no data cruda voluminosa. Excepcion critica:
+  si el dato ES una serie temporal, preservar la trayectoria -- un
+  min/max/promedio es ciego a la direccion (subida sostenida vs zigzag dan
+  el mismo resumen). Resumir la conclusion, no aplanar la serie. Caso de
+  referencia: rediseño de get_options_analysis (commit 0d92516).
 
 ---
 

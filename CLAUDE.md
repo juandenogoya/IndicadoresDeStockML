@@ -73,6 +73,8 @@ Fases completadas:
   price_action, market_structure)
 - Fase 1D: opciones (get_options_analysis -- una sola tool en vez de las
   dos planeadas; combina resumen, zscore, PCR por vencimiento, delta OI)
+  Rediseñada 16/05/2026: las 3 secciones devuelven metricas computadas en
+  vez de series crudas -- ~8.900 tokens menos por llamada (ver docs).
 - Fase 1E: alertas ML (get_ml_alert_history)
 - Fase 1F: composicion (get_ticker_overview)
 - Extra: screener multi-criterio (screen_tickers, opcion B con 17
@@ -104,6 +106,12 @@ Patrones aprendidos en Fase 1 (importantes para futuras tools):
 - Tools que devuelven al LLM deben sintetizar columnas booleanas crudas
   en campos legibles (patron_activo, señal_smc) y NO incluir las columnas
   0/1 originales -- los modelos basicos las vuelcan sin interpretar.
+- Eficiencia de tokens: computar conclusiones en Python (gratis, local) y
+  enviar al LLM resumenes, no data cruda voluminosa. El LLM paga tokens por
+  cada fila de entrada y razona peor que una formula. PERO: si el dato ES
+  una serie temporal, preservar la trayectoria -- un min/max/promedio es
+  ciego a la direccion. Resumir la conclusion, no aplanar la serie.
+  Caso de referencia: rediseño de get_options_analysis (commit 0d92516).
 
 ## Patrones decididos para el MCP server
 
