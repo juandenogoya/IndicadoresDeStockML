@@ -14,15 +14,26 @@ Reglas:
     BLOQUEO  : si earnings_date <= hoy + DIAS_BUFFER_ENTRADA dias habiles
                -> no abrir posicion nueva en ese ticker.
 
+Fuente de datos:
+    obtener_earnings_map() lee de la tabla earnings_calendar via get_engine().
+    Esa tabla la pobla semanalmente scripts/refresh_earnings_calendar.py
+    (unico componente que llama a yfinance para earnings).
+
+    earnings_filter NO llama a yfinance en linea: hacerlo en cada corrida de
+    cada bot generaba ~1.500+ llamadas/dia y rate limit por IP.
+
 Casos de borde manejados automaticamente:
     - Earnings lunes  -> cerrar viernes
     - Earnings post-feriado -> cerrar ultimo dia habil antes del feriado
-    - Error yfinance (sin datos) -> no cerrar (fail-safe, no falso positivo)
+    - earnings_date NULL / ticker ausente -> omitido del map (fail-safe:
+      la estrategia no aplica filtro de earnings a ese ticker)
+    - earnings_calendar vacia / inaccesible -> map vacio + WARNING: los bots
+      corren igual, sin filtro de earnings, no se cortan.
 """
 
 import os
 import yfinance as yf
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 
 
@@ -30,6 +41,9 @@ from functools import lru_cache
 DIAS_BUFFER_ENTRADA = int(os.getenv("BOT_EARNINGS_BUFFER_DIAS", "1"))
 # 1 = bloquear si earnings es manana o hoy
 # 2 = bloquear si earnings es en 2 dias habiles o menos
+
+DIAS_STALE_WARNING = 10
+# Si earnings_calendar no se refresca hace mas de N dias -> WARNING (se usa igual)
 
 
 # ── Calendario NYSE ──────────────────────────────────────────
@@ -115,12 +129,16 @@ def dias_habiles_hasta(desde: date, hasta: date) -> int:
     return count
 
 
-# ── Datos de earnings (yfinance) ─────────────────────────────
+# ── Datos de earnings ────────────────────────────────────────
 
 def _obtener_earnings_fecha(ticker: str) -> date | None:
     """
     Consulta yfinance para la proxima fecha de earnings de un ticker.
     Retorna None si no hay dato o falla la consulta (fail-safe).
+
+    NOTA: la usa scripts/refresh_earnings_calendar.py para poblar la tabla
+    earnings_calendar. Los bots NO la llaman directamente: consumen la tabla
+    via obtener_earnings_map().
     """
     try:
         cal = yf.Ticker(ticker).calendar
@@ -141,16 +159,53 @@ def _obtener_earnings_fecha(ticker: str) -> date | None:
 
 def obtener_earnings_map(tickers: list[str]) -> dict[str, date]:
     """
-    Retorna {ticker: earnings_date} para los tickers que tienen
-    fecha de earnings proxima disponible en yfinance.
-    Tickers sin dato son omitidos (comportamiento fail-safe).
+    Retorna {ticker: earnings_date} leyendo de la tabla earnings_calendar.
+
+    Lee de la DB a la que apunte get_engine() (local para bots FT, Railway
+    para bots Alpaca). NUNCA llama a yfinance.
+
+    Comportamiento fail-safe:
+        - Ticker con earnings_date NULL o ausente de la tabla -> omitido
+          del map. La estrategia no le aplica filtro de earnings.
+        - Tabla vacia, inexistente o inaccesible -> map vacio + WARNING.
+          Los bots corren igual, sin filtro de earnings (no se cortan).
+        - Tabla con datos viejos (> DIAS_STALE_WARNING dias) -> se usa
+          igual + WARNING para que se refresque.
     """
-    resultado = {}
-    for ticker in tickers:
-        fecha = _obtener_earnings_fecha(ticker)
-        if fecha:
-            resultado[ticker] = fecha
-    return resultado
+    if not tickers:
+        return {}
+
+    from sqlalchemy import text
+    from src.data.database import get_engine
+
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT ticker, earnings_date, fecha_actualizacion
+                FROM earnings_calendar
+                WHERE ticker = ANY(:tickers)
+                  AND earnings_date IS NOT NULL
+            """), {"tickers": list(tickers)}).fetchall()
+    except Exception as e:
+        print(f"  [earnings_filter] WARNING: no se pudo leer earnings_calendar "
+              f"({type(e).__name__}). Filtro de earnings INACTIVO esta corrida.")
+        return {}
+
+    if not rows:
+        print("  [earnings_filter] WARNING: earnings_calendar sin fechas para "
+              "estos tickers. Filtro de earnings INACTIVO esta corrida.")
+        return {}
+
+    # Aviso de staleness (la data se usa igual)
+    actualizaciones = [r.fecha_actualizacion for r in rows if r.fecha_actualizacion]
+    if actualizaciones:
+        dias = (datetime.now() - max(actualizaciones)).days
+        if dias > DIAS_STALE_WARNING:
+            print(f"  [earnings_filter] WARNING: earnings_calendar desactualizada "
+                  f"({dias} dias). Conviene correr refresh_earnings_calendar.py.")
+
+    return {r.ticker: r.earnings_date for r in rows}
 
 
 # ── Logica de filtrado ────────────────────────────────────────

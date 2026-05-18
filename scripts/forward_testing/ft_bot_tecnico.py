@@ -31,14 +31,10 @@ from datetime import date
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-try:
-    from dotenv import load_dotenv
-    if os.path.exists(os.path.join(ROOT, ".env")):
-        load_dotenv(os.path.join(ROOT, ".env"))
-    if os.path.exists(os.path.join(ROOT, ".env.local")):
-        load_dotenv(os.path.join(ROOT, ".env.local"), override=True)
-except ImportError:
-    pass
+
+# Entorno FT: forzar conexion a la DB LOCAL (ver scripts/forward_testing/ft_env.py)
+from scripts.forward_testing.ft_env import configurar_entorno_local
+configurar_entorno_local()
 
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 from scripts.forward_testing.ft_scoring import calcular_score_tecnico, obtener_indicadores_hoy

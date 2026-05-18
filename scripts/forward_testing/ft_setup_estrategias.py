@@ -16,14 +16,10 @@ from datetime import date
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-try:
-    from dotenv import load_dotenv
-    if os.path.exists(os.path.join(ROOT, ".env")):
-        load_dotenv(os.path.join(ROOT, ".env"))
-    if os.path.exists(os.path.join(ROOT, ".env.local")):
-        load_dotenv(os.path.join(ROOT, ".env.local"), override=True)
-except ImportError:
-    pass
+
+# Entorno FT: forzar conexion a la DB LOCAL (ver scripts/forward_testing/ft_env.py)
+from scripts.forward_testing.ft_env import configurar_entorno_local
+configurar_entorno_local()
 
 from sqlalchemy import text
 from src.data.database import get_engine
@@ -163,6 +159,65 @@ ESTRATEGIAS = [
             "agotamiento_candle_max":       -2,
             "agotamiento_lateral_max":      0.5,
             "agotamiento_logica":           "AND",
+        },
+    },
+    {
+        "nombre":      "FT_TECH_SECTOR_OPTIONS_v1",
+        "descripcion": "TECH_SECTOR_v1 + confirmacion PCR_OI de opciones por ventana. "
+                       "Gate1: tech_score>=4.0. Gate2: pcr_score>=2 (min 2/3 ventanas alcistas). "
+                       "Cierre: score<=3.5 AND pcr_score=0. Retencion: score<=3.5 AND pcr_score>=1. "
+                       "Min OI por ventana: 500. Ventanas: corto 1-14d, medio 15-45d, largo 46-90d.",
+        "logica":      "tecnico_sectorial_options_v1",
+        "parametros":  {
+            "sectores":                 SECTORES_ACTIVOS,
+            "n_sectores":               len(SECTORES_ACTIVOS),
+            "tech_score_entrada_min":   4.0,
+            "pcr_score_entrada_min":    2,
+            "ventana_corto_min":        1,
+            "ventana_corto_max":        14,
+            "ventana_medio_min":        15,
+            "ventana_medio_max":        45,
+            "ventana_largo_min":        46,
+            "ventana_largo_max":        90,
+            "pcr_oi_umbral_alcista":    1.0,
+            "min_oi_por_ventana":       500,
+            "tech_score_salida_max":    3.5,
+            "pcr_score_salida_max":     0,
+            "pcr_score_retencion_min":  1,
+            "atr_mult_sl":              2.0,
+            "atr_mult_tp":              4.0,
+            "max_pos_sector":           5,
+            "position_pct":             0.20,
+        },
+    },
+    {
+        "nombre":      "FT_TECH_SECTOR_OPTIONS_v2",
+        "descripcion": "TECH_SECTOR_OPTIONS_v1 con PCR sobre VOLUMEN diario en vez de "
+                       "open interest. Gate1: tech_score>=4.0. Gate2: pcr_score>=2. "
+                       "Cierre: score<=3.5 AND pcr_score=0. Retencion: score<=3.5 AND "
+                       "pcr_score>=1. Min VOL/ventana: 500. Ventanas corto 1-14d, "
+                       "medio 15-45d, largo 46-90d. Identica a v1 salvo OI->VOL.",
+        "logica":      "tecnico_sectorial_options_v2",
+        "parametros":  {
+            "sectores":                 SECTORES_ACTIVOS,
+            "n_sectores":               len(SECTORES_ACTIVOS),
+            "tech_score_entrada_min":   4.0,
+            "pcr_score_entrada_min":    2,
+            "ventana_corto_min":        1,
+            "ventana_corto_max":        14,
+            "ventana_medio_min":        15,
+            "ventana_medio_max":        45,
+            "ventana_largo_min":        46,
+            "ventana_largo_max":        90,
+            "pcr_vol_umbral_alcista":   1.0,
+            "min_vol_por_ventana":      500,
+            "tech_score_salida_max":    3.5,
+            "pcr_score_salida_max":     0,
+            "pcr_score_retencion_min":  1,
+            "atr_mult_sl":              2.0,
+            "atr_mult_tp":              4.0,
+            "max_pos_sector":           5,
+            "position_pct":             0.20,
         },
     },
 ]

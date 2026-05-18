@@ -13,8 +13,14 @@ Estrategia por tabla:
 
 NO sincroniza:
   - features_1w        : Railway esta vacia, local tiene datos reales -> skip
-  - opciones_*         : arquitectura separada, pendiente decision
+  - forward_testing    : FT corre 100% en local (Plan C). Local es la fuente
+                         de verdad de ft_*. Sincronizar desde Railway pisaria
+                         datos vivos con datos viejos. Migracion puntual:
+                         scripts/migrations/migrate_ft_railway_to_local.py
   - tablas de backtest : son locales por diseno
+
+SI sincroniza earnings_calendar (replace completo): tabla de estado actual
+poblada en Railway por scripts/refresh_earnings_calendar.py.
 
 Uso:
     python scripts/migrations/sync_railway_to_local.py
@@ -650,6 +656,81 @@ def sync_opciones(rail_eng, local_eng, dry_run: bool):
     return total
 
 
+# ── Sync: earnings_calendar ──────────────────────────────────────────────────
+
+def sync_earnings_calendar(rail_eng, local_eng, dry_run: bool):
+    """
+    Sincroniza earnings_calendar Railway -> local en modo REPLACE.
+
+    earnings_calendar es una tabla de ESTADO ACTUAL (una fila por ticker con
+    su proxima fecha de earnings). No acumula historico: se pisa entera cada
+    vez. Se usa TRUNCATE + INSERT para preservar el schema local (PK, indice,
+    tipos) -- a diferencia de to_sql(if_exists='replace') que lo degrada.
+    """
+    log("earnings_calendar -- replace completo Railway -> local...")
+
+    ddl_tabla = """
+        CREATE TABLE IF NOT EXISTS earnings_calendar (
+            ticker              VARCHAR(20) PRIMARY KEY,
+            earnings_date       DATE,
+            fecha_actualizacion TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+    """
+    ddl_idx = ("CREATE INDEX IF NOT EXISTS idx_earnings_calendar_date "
+               "ON earnings_calendar (earnings_date)")
+
+    df = pd.read_sql(
+        "SELECT ticker, earnings_date, fecha_actualizacion FROM earnings_calendar",
+        rail_eng
+    )
+    log(f"  Railway: {len(df)} filas")
+
+    if dry_run:
+        log(f"  DRY-RUN: reemplazaria la tabla local con {len(df)} filas")
+        return len(df)
+
+    with local_eng.connect() as conn:
+        conn.execute(text(ddl_tabla.strip()))
+        conn.execute(text(ddl_idx))
+        conn.execute(text("TRUNCATE earnings_calendar"))
+        if not df.empty:
+            sql = text("""
+                INSERT INTO earnings_calendar
+                    (ticker, earnings_date, fecha_actualizacion)
+                VALUES (:ticker, :earnings_date, :fecha_actualizacion)
+            """)
+            registros = []
+            for _, row in df.iterrows():
+                ed = row["earnings_date"]
+                fa = row["fecha_actualizacion"]
+                registros.append({
+                    "ticker":              row["ticker"],
+                    "earnings_date":       None if pd.isna(ed) else ed,
+                    "fecha_actualizacion": None if pd.isna(fa) else fa,
+                })
+            conn.execute(sql, registros)
+        conn.commit()
+
+    log(f"  OK - {len(df)} filas (local reemplazado)")
+    return len(df)
+
+
+# ── Sync: forward_testing (guard) ─────────────────────────────────────────────
+
+def sync_forward_testing_guard(dry_run: bool):
+    """
+    Forward Testing corre 100% en LOCAL (Plan C). La DB local es la fuente de
+    verdad de las tablas ft_*. Sincronizarlas desde Railway las pisaria con
+    datos congelados -> se omite a proposito.
+
+    Para una migracion puntual Railway -> local usar:
+        scripts/migrations/migrate_ft_railway_to_local.py
+    """
+    log("forward_testing -- SKIP: FT corre en local, no se sincroniza desde Railway.")
+    log("  (migracion puntual: scripts/migrations/migrate_ft_railway_to_local.py)")
+    return 0
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 TABLAS_DISPONIBLES = [
@@ -661,6 +742,7 @@ TABLAS_DISPONIBLES = [
     "ticker_zscore_diario",
     "futuros_diarios",
     "opciones",
+    "earnings_calendar",
     "forward_testing",
     "bt_historico",
     "features_ml",
@@ -739,15 +821,12 @@ def main():
     # 8. opciones (3 tablas: resumen_diario + zscore_diario + snapshot)
     correr("opciones", lambda: sync_opciones(rail_eng, local_eng, dry_run))
 
-    # 9. forward_testing (5 tablas FT — Railway es fuente de verdad)
-    #    ft_estrategias: col_fecha=None -> siempre replace (capital cambia cada dia)
-    correr("forward_testing", lambda: sync_grupo(rail_eng, local_eng, [
-        ("ft_estrategias",       None),           # replace: capital_actual cambia diario
-        ("ft_candidatos_diarios","fecha"),         # incremental
-        ("ft_operaciones",       "fecha_entrada"), # incremental
-        ("ft_posiciones_diarias","fecha"),         # incremental
-        ("ft_metricas_diarias",  "fecha"),         # incremental
-    ], dry_run))
+    # 8b. earnings_calendar (replace completo — tabla de estado actual)
+    correr("earnings_calendar",
+           lambda: sync_earnings_calendar(rail_eng, local_eng, dry_run))
+
+    # 9. forward_testing — NO se sincroniza: FT corre en local (ver guard)
+    correr("forward_testing", lambda: sync_forward_testing_guard(dry_run))
 
     # 10. bt_historico (4 tablas — resultados de backtesting historico)
     #     bt_hist_estrategias: col_fecha=None -> replace (pequeña, estatica)

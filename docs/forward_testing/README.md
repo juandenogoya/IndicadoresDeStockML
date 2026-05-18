@@ -18,20 +18,29 @@ explorar y parametrizar de la mejor manera posible.
 | [estrategias/SMC_v1.md](estrategias/SMC_v1.md) | Bot SMC — estructura BOS/CHoCH |
 | [estrategias/TECH_SECTOR_v1.md](estrategias/TECH_SECTOR_v1.md) | Bot Sectorial — tech score con diversificacion sectorial |
 | [estrategias/COMBO_v1.md](estrategias/COMBO_v1.md) | Bot Combo — sectorial + candle score desempate |
+| **En desarrollo** | |
+| [estrategias/TECH_SECTOR_v2.md](estrategias/TECH_SECTOR_v2.md) | Sectorial + retencion condicional + rotacion |
+| [estrategias/SMC_v2.md](estrategias/SMC_v2.md) | SMC + filtro contexto entrada + salida agotamiento |
+| [estrategias/TECH_SECTOR_OPTIONS_v1.md](estrategias/TECH_SECTOR_OPTIONS_v1.md) | Sectorial + confirmacion PCR_OI opciones |
+| [estrategias/TECH_SECTOR_OPTIONS_v2.md](estrategias/TECH_SECTOR_OPTIONS_v2.md) | Sectorial + confirmacion PCR_VOL opciones |
 | **Templates** | |
 | [templates/ESTRATEGIA_TEMPLATE.md](templates/ESTRATEGIA_TEMPLATE.md) | Template para documentar nuevas versiones |
 
 ---
 
-## Estado actual (2026-05-05)
+## Estado actual (2026-05-17)
 
-| ID | Estrategia | Inicio | Retorno | Notas |
+| ID | Estrategia | Estado | Inicio | Notas |
 |----|---|---|---|---|
-| 1 | ML_SCANNER_v1 | 2026-04-28 | +0.04% | Benchmark Bot1 Alpaca |
-| 2 | TECH_v1 | 2026-04-28 | -2.65% | Benchmark Bot2 Alpaca |
-| 3 | SMC_v1 | 2026-04-28 | en seguimiento | Benchmark Bot3 Alpaca |
-| 4 | TECH_SECTOR_v1 | 2026-05-02 | +0.04% | Sectorial 9 sectores |
-| 5 | COMBO_v1 | 2026-04-28 | +0.41% | Sectorial + candle score |
+| 1 | ML_SCANNER_v1 | ACTIVA | 2026-04-28 | Benchmark Bot1 Alpaca |
+| 2 | TECH_v1 | ACTIVA | 2026-04-28 | Benchmark Bot2 Alpaca |
+| 3 | SMC_v1 | ACTIVA | 2026-04-28 | Benchmark Bot3 Alpaca |
+| 4 | TECH_SECTOR_v1 | ACTIVA | 2026-05-02 | Sectorial 9 sectores |
+| 5 | COMBO_v1 | ACTIVA | 2026-04-28 | Sectorial + candle score |
+| 6 | TECH_SECTOR_v2 | EN DESARROLLO | 2026-05-17 | Retencion + rotacion intrasectorial |
+| 7 | SMC_v2 | EN DESARROLLO | 2026-05-17 | Filtro contexto + salida agotamiento |
+| 8 | TECH_SECTOR_OPTIONS_v1 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_OI opciones |
+| 9 | TECH_SECTOR_OPTIONS_v2 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_VOL opciones |
 
 ---
 

@@ -62,3 +62,6 @@ secrets/
 .cursorrules
 scripts/manual/4G
 scripts/manual/check_yfinance_download_v2*.py
+
+# Backups locales de la migracion FT (descartables)
+scripts/migrations/backup_ft_local_*/
