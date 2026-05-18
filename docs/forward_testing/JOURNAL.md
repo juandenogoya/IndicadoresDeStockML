@@ -105,6 +105,52 @@ podrian mejorar las decisiones de salida y rotacion en:
 
 ---
 
+### 2026-05-17 — LANZAMIENTO
+**Estrategias #8 y #9 — TECH_SECTOR_OPTIONS v1 y v2**
+- TECH_SECTOR_OPTIONS_v1 (id=8): sectorial + confirmacion por PCR_OI de opciones.
+- TECH_SECTOR_OPTIONS_v2 (id=9): identica pero usa PCR_VOL (volumen diario) en
+  vez de PCR_OI (open interest acumulado).
+Gate de entrada doble: tech_score >= 4.0 AND pcr_score >= 2/3 ventanas alcistas.
+**Razon / Hipotesis**: el posicionamiento en opciones es una fuente de informacion
+independiente de la senal tecnica; su convergencia deberia reducir entradas en
+falsos breakouts. Correr v1 y v2 en paralelo aisla la variable OI (lento,
+acumulado) vs VOL (reactivo, diario) para comparar cual confirma mejor.
+**Resultado real**: (pendiente — primera corrida real via ft_run_diario.bat)
+**Ref**: estrategias/TECH_SECTOR_OPTIONS_v1.md y v2.md
+
+---
+
+### 2026-05-18 — DECISION
+**Forward Testing migra a DB local (Plan C)**
+Los bots FT escribian en Railway sin querer: cargaban .env.local con override,
+que setea DATABASE_URL=Railway. Plan C define que FT corre 100% en local.
+**Que se hizo**: helper ft_env.py fuerza get_engine() a local; los 9 bots y
+ft_setup lo usan en lugar de load_dotenv(.env.local). Migracion puntual de las
+5 tablas ft_* Railway->local (migrate_ft_railway_to_local.py, schema real +
+datos + secuencias). El sync ya no baja forward_testing — local es fuente de
+verdad. Railway nunca mas recibe escrituras de FT.
+**Efecto esperado**: FT autonomo y local, sin costo de procesamiento en Railway.
+**Ref**: commit 8652db5
+
+---
+
+### 2026-05-18 — DISENO
+**earnings_calendar — cache de fechas de earnings**
+earnings_filter.py consultaba yfinance por cada ticker en cada corrida de cada
+bot (~1.500+ llamadas/dia) -> rate limit por IP. Se crea la tabla
+earnings_calendar (Railway + local), refrescada semanalmente; earnings_filter
+pasa a leerla via get_engine() y ya no llama a yfinance.
+**Fuentes evaluadas**: yfinance (throttle por IP a mitad de corrida), FMP (el
+plan free solo cubre 54/199 tickers), Nasdaq earnings calendar (cobertura
+completa, gratis, indexado por fecha) -> se elige Nasdaq.
+**Fail-safe**: ticker sin fecha conocida -> earnings_date NULL -> sin filtro de
+earnings, los bots corren igual sin cortarse.
+**Efecto esperado**: cero rate limit en los bots; filtro de earnings preciso
+sobre fechas confirmadas.
+**Ref**: scripts/refresh_earnings_calendar.py | cron Oracle lunes 12:00 UTC
+
+---
+
 ## Template de entrada
 
 ```

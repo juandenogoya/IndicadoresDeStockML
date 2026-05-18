@@ -28,7 +28,10 @@ explorar y parametrizar de la mejor manera posible.
 
 ---
 
-## Estado actual (2026-05-17)
+## Estado actual (2026-05-18)
+
+> Forward Testing corre 100% en la DB **local** (Plan C). Los 9 bots se ejecutan
+> con `scripts/manual/ft_run_diario.bat`. Railway no recibe escrituras de FT.
 
 | ID | Estrategia | Estado | Inicio | Notas |
 |----|---|---|---|---|
@@ -79,4 +82,3 @@ de versiones anteriores son el registro historico de por que evolucionamos.
 - `docs/estrategias_ft.md` — especificacion original (abril 2026), supersedida
   por los archivos individuales en este directorio. Se mantiene como referencia.
 - `docs/backtesting_local_plan.md` — plan de backtesting historico
-- `memory/forward_testing.md` — notas de diseno del sistema (uso en sesiones Claude)

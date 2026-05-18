@@ -96,6 +96,10 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 2. **Patron setup_target_env()** (ver `scripts/recovery_incremental.py`):
    Parsea ambos .env files explicitamente, elimina DATABASE_URL de os.environ
    cuando --target=local.
+3. **Helper ft_env.py** (Forward Testing): `scripts/forward_testing/ft_env.py`
+   expone `configurar_entorno_local()`. Los 9 bots FT + ft_setup lo llaman al
+   inicio: carga solo `.env` y elimina DATABASE_URL -> get_engine() cae a local.
+   FT corre 100% en local (no escribe en Railway).
 
 ### yfinance rate limit
 - En yfinance 0.2.x, `YFRateLimitError` **NO se levanta como excepcion**.
@@ -143,6 +147,10 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/migrations/clean_railway_may12.py` | One-shot one-off |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
+| `scripts/manual/ft_run_diario.bat` | Corre los 9 bots de Forward Testing en local |
+| `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
+| `scripts/migrations/create_earnings_calendar.py` | Crea la tabla earnings_calendar (Railway + local) |
+| `scripts/migrations/migrate_ft_railway_to_local.py` | Migracion puntual de tablas ft_* Railway -> local |
 
 ## Tablas DB principales
 
@@ -155,6 +163,10 @@ Las criticas:
 - `opciones_snapshot` | `opciones_resumen_diario`
 - `futuros_diarios` | `indicadores_tecnicos_futuros`
 - `features_regimen_macro` | `features_ml` | `features_sector`
+- `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
+  desde Nasdaq por `refresh_earnings_calendar.py`)
+- `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
+  metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
 
 ## Flujo de recovery manual (caso comun: Oracle cron fallo)
 
