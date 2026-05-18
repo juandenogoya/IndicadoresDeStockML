@@ -1,5 +1,5 @@
 # MCP Server -- Servidor de consulta para activos_ml
-# Ultima actualizacion: 2026-05-09
+# Ultima actualizacion: 2026-05-15
 
 ## Que es
 
@@ -16,6 +16,81 @@ en consola; manana via Telegram para consultas remotas.
 **How to apply:** este archivo se carga al inicio de cualquier sesion de
 implementacion o mantenimiento del MCP server. Es la fuente de verdad del
 diseno; cualquier cambio de arquitectura se refleja aca primero.
+
+---
+
+## Estado de implementacion (2026-05-16) -- FASE 1 COMPLETA
+
+14 tools registradas y validadas contra la DB local via Gemini CLI.
+El resto de esta seccion describe el DISEÑO; abajo se aclara que se
+construyo realmente y donde se desvio del plan original.
+
+### Tools en produccion (14)
+
+| Tool | Fase | Estado |
+|---|---|---|
+| ping | 0 | OK |
+| check_trading_day, get_last_trading_day | 1A | OK |
+| list_tables, describe_table, list_tickers | 1B | OK |
+| get_price_history, get_technical_indicators, get_price_action, get_market_structure | 1C | OK |
+| get_options_analysis | 1D | OK |
+| get_ticker_overview | 1F | OK |
+| screen_tickers | extra | OK |
+| get_ml_alert_history | 1E | OK |
+
+### Desviaciones del diseño original
+
+1. **Opciones: 1 tool en vez de 2.** El plan tenia `get_options_summary`
+   y `get_options_zscore` separadas. Se implemento una sola
+   `get_options_analysis` que combina resumen diario, z-scores, PCR por
+   vencimiento y delta de OI por contrato en el periodo.
+
+   Rediseñada 16/05/2026 (commit 0d92516) para reducir consumo de tokens
+   ~8.900 por llamada. Las 3 secciones devuelven metricas computadas en
+   Python en vez de series crudas:
+   - tendencia_diaria -> {actual, serie}: ultimo dia completo + serie
+     diaria recortada (conserva la trayectoria, recorta campos redundantes).
+   - pcr_por_vencimiento -> resumen por vencimiento: PCR OI inicio/actual,
+     delta call/put OI, sesgo y tendencia. Ya NO devuelve la serie diaria.
+   - acumulacion_oi -> top 10 calls + 10 puts, sin precio_subyacente ni
+     oi_inicio por fila (redundantes/derivables).
+
+2. **screen_tickers: tool nueva no planeada.** Screener multi-criterio
+   sobre los 199 tickers (opcion B: 17 parametros nullable, cada filtro
+   usa el patron `$N IS NULL OR condicion`). Cubre las consultas
+   cross-ticker que originalmente se pensaba resolver con `run_select`.
+
+3. **get_ticker_overview sin `days_back`.** Ancla siempre en el ultimo
+   dato disponible por tabla. Un solo parametro: `ticker`.
+
+4. **get_ml_alert_history con filtros ampliados.** En vez de
+   `(ticker, days_back)` toma `ticker, desde, hasta, alert_nivel,
+   alert_score_min, solo_verificados, limit`. Incluye retornos
+   post-facto (retorno_Nd_real) para evaluar performance del modelo.
+
+5. **run_select y safety.py: postergados.** `screen_tickers` cubre la
+   mayoria de los casos cross-ticker. `run_select` con validacion
+   sqlglot queda pendiente; mientras no exista, safety.py tampoco.
+
+### Lecciones tecnicas de Fase 1
+
+- **Columnas flag boolean vs smallint:** choch_*, bos_*, patron_*,
+  es_alcista, vol_spike pueden estar tipadas como smallint(0/1) o boolean
+  segun version de la DB. En expresiones CASE de SQL usar `::int != 0`
+  para normalizar. PostgreSQL valida el tipo de retorno del CASE en
+  parse-time, antes de evaluar que parametros son NULL -- por eso un CASE
+  mal tipado falla aunque su filtro este inactivo.
+- **Sintesis para el LLM:** las tools deben convertir columnas booleanas
+  crudas en campos legibles (patron_activo, señal_smc, señal_reciente) y
+  NO devolver las columnas 0/1 originales. Los modelos basicos
+  (gemini-2.5-flash) vuelcan los datos crudos sin interpretarlos.
+- **Eficiencia de tokens:** el LLM paga tokens por cada fila de entrada y
+  razona peor que una formula. Computar conclusiones en Python (gratis,
+  local) y enviar resumenes, no data cruda voluminosa. Excepcion critica:
+  si el dato ES una serie temporal, preservar la trayectoria -- un
+  min/max/promedio es ciego a la direccion (subida sostenida vs zigzag dan
+  el mismo resumen). Resumir la conclusion, no aplanar la serie. Caso de
+  referencia: rediseño de get_options_analysis (commit 0d92516).
 
 ---
 
@@ -586,15 +661,60 @@ implementar todas de una vez: cada una se justifica con un caso de uso real.
    estructura de directorios, formato de metadata .md, convencion de naming.
 3. Promover queries utiles de fase 1 al catalogo.
 
-### Fase 3 -- Cliente custom + Telegram (~1 semana)
+### Fase 3 -- Bot de Telegram (MVP local primero)
 
-1. Implementar `mcp_server/server.py` con flag `--transport http` para SSE.
-2. Crear `mcp_client/` (puede ser proyecto separado): cliente con
-   `google-genai` SDK que consume el server MCP.
-3. Implementar `cli.py` (interfaz consola) y `telegram_bot.py`.
-4. Whitelist de chat_id de Telegram en `.env`.
-5. Desplegar server en Oracle Cloud VM (donde ya corre el pipeline).
-6. Configurar el cliente Telegram para consumir el server remoto via HTTP.
+REVISADO 16/05/2026. El plan original (desplegar en Oracle Cloud contra
+Railway) quedo obsoleto con el Plan C: la DB local de Windows es la fuente
+de verdad para todo menos opciones_snapshot. Un MCP server en Oracle contra
+Railway solo veria opciones -- no precios, indicadores, features ni scanner.
+
+Se adopta un enfoque MVP local primero.
+
+**Concepto clave:** hoy Gemini CLI hace de cliente MCP -- recibe el mensaje,
+llama al LLM, orquesta las tool calls contra el server y devuelve la
+respuesta. Para Telegram hay que CONSTRUIR ese cliente/orquestador; el LLM
+nunca usa el MCP directamente, solo pide "llamar tool X" y el orquestador
+ejecuta.
+
+#### MVP -- alcance (Fase 3a)
+
+Todo local en Windows, sin IP publica ni infraestructura cloud:
+
+- Bot de Telegram con long polling (sin webhook, sin nginx, sin tunel).
+- Corre en la notebook Windows (debe estar encendida).
+- MCP server por stdio: el bot lo lanza como subproceso, igual que Gemini CLI.
+- DB local directa (la fuente de verdad del Plan C).
+- Whitelist estricta de chat_id -- solo la cuenta del usuario; sin whitelist
+  el bot ni responde a /start.
+- Loop agentico: mensaje -> LLM -> tool calls -> MCP -> LLM -> respuesta.
+- Sin memoria de conversacion (cada mensaje fresco -- mas simple y barato).
+
+Componentes a construir:
+
+| Componente | Funcion | Herramienta |
+|---|---|---|
+| Bot Telegram | Recibe/envia mensajes | python-telegram-bot (long polling) |
+| Cliente LLM | Llama a Gemini con tool-calling | SDK google-genai |
+| Cliente MCP | Conecta al server, ejecuta tool calls | MCP Python SDK (lado cliente) |
+| Orquestador | Loop agentico mensaje->LLM->MCP->LLM | codigo propio |
+
+Decision de diseño pendiente: **formato del mensaje de salida**. Telegram no
+es una consola -- las tablas densas no se ven bien en movil, hay limite de
+4096 caracteres por mensaje, soporta Markdown/HTML limitado. Definir si la
+respuesta es narrativa corta, bullets, o mensajes partidos. Afecta como se
+instruye al LLM.
+
+El costo en tokens NO cambia respecto a Gemini CLI: cada mensaje sigue siendo
+un round-trip (o varios, por el loop agentico). El trabajo de reduccion de
+tokens en las tools sigue valiendo.
+
+#### Fuera del MVP (Fase 3b, segun necesidad)
+
+- Server siempre-online: requiere resolver el acceso a la DB local desde un
+  host remoto (tunel Tailscale / SSH reverse, o mover el bot a un host con
+  linea de vista a la DB). NO desplegar contra Railway -- no tiene los datos.
+- Memoria de conversacion multi-turno.
+- Transporte HTTP/SSE (el MVP usa stdio; long polling no necesita IP publica).
 
 ---
 
@@ -658,49 +778,48 @@ YYYY-MM-DD por <quien>
 
 ---
 
-## Despliegue cloud (fase 3)
+## Despliegue (fase 3)
 
-### Donde
-Oracle Cloud VM `pipeline-ml` (141.148.57.58, Always Free), donde ya corre
-el cron diario del proyecto. Razones:
-- Mismo entorno que el pipeline; cero overhead de despliegue nuevo.
-- Repo ya clonado, venv ya configurado.
-- Acceso directo a Railway por DSN (ya configurado).
+OBSOLETO el plan original de desplegar en Oracle Cloud contra Railway.
+Razon: Plan C (14/5/2026) hizo de la DB local de Windows la fuente de
+verdad. Un MCP server en Oracle contra Railway solo veria opciones_snapshot
+-- no precios, indicadores, features, scanner ni alertas ML. El MCP server
+DEBE correr donde la DB local sea alcanzable.
 
-### Como
-1. Clonar branch `mcp-server` en la VM si no esta.
-2. Crear `~/.config/systemd/user/mcp-server.service` para correr el server
-   como daemon de usuario:
+### MVP -- local en Windows (Fase 3a)
 
-```ini
-[Unit]
-Description=MCP Server activos_ml
-After=network.target
+Sin infraestructura cloud. El bot, el orquestador y el MCP server corren en
+la notebook Windows; la notebook debe estar encendida para que el bot
+responda.
 
-[Service]
-Type=simple
-WorkingDirectory=/home/ubuntu/IndicadoresDeStockML
-ExecStart=/home/ubuntu/IndicadoresDeStockML/venv/bin/python -m mcp_server.server --transport http --port 8765
-Restart=on-failure
-EnvironmentFile=/home/ubuntu/IndicadoresDeStockML/.env.production
+- Bot Telegram con long polling -- no necesita IP publica, ni nginx, ni
+  puertos abiertos, ni tunel.
+- MCP server por stdio: el orquestador lo lanza como subproceso (igual que
+  Gemini CLI hoy). No hace falta `--transport http`.
+- DB local directa via el DSN del rol mcp_reader.
+- Whitelist de chat_id en variable de entorno.
 
-[Install]
-WantedBy=default.target
-```
+### Server siempre-online (Fase 3b -- futuro, segun necesidad)
 
-3. Habilitar: `systemctl --user enable --now mcp-server.service`.
-4. El server escucha en `http://141.148.57.58:8765/sse` (o lo que se
-   configure).
-5. Cliente custom (Telegram bot) corre en local o en otra VM, apunta a la URL
-   del server.
+Si se quiere que el bot responda sin depender de la notebook encendida,
+el problema a resolver es el acceso a la DB local desde un host remoto:
 
-### Seguridad cloud
-- No exponer puerto 8765 a la internet abierta. Acceso via:
-  - VPN propia (Tailscale es trivial de instalar).
-  - Reverse proxy nginx con auth basica.
-  - SSH tunnel (mas simple si solo el bot Telegram lo consume desde otra VM).
+- Opcion A: tunel (Tailscale o SSH reverse) entre el host del bot y la DB
+  local de Windows. El MCP server corre remoto pero consulta la DB local
+  por el tunel.
+- Opcion B: mover la DB / replicar -- fuera de alcance por ahora.
+
+NO desplegar el MCP server contra Railway: Railway no tiene los datos
+(solo opciones). Esa era la premisa del plan viejo y es la que quedo mal.
+
+### Seguridad (aplica a cualquier despliegue)
+
 - Bot Telegram con whitelist estricta de `chat_id`. Sin whitelist el bot no
-  responde, ni siquiera con `/start`.
+  responde, ni siquiera a `/start`.
+- Rol PostgreSQL `mcp_reader` SELECT-only (primera linea de defensa, ya
+  vigente).
+- Si en Fase 3b se expone un puerto: nunca a internet abierta -- VPN
+  (Tailscale), reverse proxy con auth, o SSH tunnel.
 - Logs estructurados a archivo, rotados.
 
 ---
@@ -832,18 +951,6 @@ en `mcp_server/tools/__init__.py` cuando se implemente.
   fase 1.5 de backtest leen estas tablas.
 - **AGENDA.md:** este nuevo modulo se sumaria a la lista de tareas activas
   como "Tarea 10 -- MCP Server consultivo".
-
----
-
-## Tareas pendientes para iniciar
-
-1. Generar password robusto para rol `mcp_reader` (usar `openssl rand -hex 16`).
-2. Decidir si el server vive en branch `mcp-server` o se merguea a main desde
-   el inicio.
-3. Confirmar nombre del server en Gemini CLI (`db-consultor` propuesto, podes
-   cambiarlo).
-4. Listar las 10 preguntas de evaluacion finales (las del Anexo C son
-   sugerencias, podes ajustarlas a casos que te interesen).
 
 ---
 
