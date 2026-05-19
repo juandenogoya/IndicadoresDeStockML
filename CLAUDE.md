@@ -20,6 +20,8 @@ pipeline diario, scanner ML, snapshot de opciones US/AR y backtest historico.
 Documentacion que existe hoy en docs/:
 
 - docs/mcp_server.md      : servidor MCP consultivo (diseno + estado)
+- docs/parametros_mcp.md  : registro de umbrales/parametros de las tools MCP
+                            y su interpretacion (para re-tunear a futuro)
 - docs/estrategias_ft.md  : estrategias de forward testing
 - docs/forward_testing/   : detalle de forward testing
 - docs/checklist_recovery_manual.md : flujos de recovery manual
