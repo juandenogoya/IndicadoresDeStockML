@@ -23,6 +23,7 @@ from mcp_server.tools.options import (
     _iv_skew,
     _moneyness_label,
     _resumen_pcr_por_vencimiento,
+    _sesgo_iv_skew,
     _sesgo_pcr,
     _tend_actual,
     _tend_serie_row,
@@ -204,14 +205,40 @@ def _tend_row_completo(**overrides):
     return base
 
 
+class TestSesgoIvSkew:
+    def test_bajista_skew_positivo(self):
+        # skew > +0.05 -> puts mas caras -> bajista
+        assert _sesgo_iv_skew(0.19) == "bajista"
+
+    def test_alcista_skew_negativo(self):
+        # skew < -0.05 -> calls mas caras -> alcista
+        assert _sesgo_iv_skew(-0.12) == "alcista"
+
+    def test_neutro_dentro_de_banda(self):
+        assert _sesgo_iv_skew(0.03) == "neutro"
+        assert _sesgo_iv_skew(-0.04) == "neutro"
+        assert _sesgo_iv_skew(0.0) == "neutro"
+
+    def test_none_sin_datos(self):
+        assert _sesgo_iv_skew(None) == "sin datos"
+
+
 class TestTendSerieRow:
     def test_campos_recortados(self):
         result = _tend_serie_row(_tend_row_completo())
-        # Conserva los 7 campos del nuevo diseño
+        # 10 campos: los 7 recortados + sesgo_pcr_vol/oi + sesgo_iv_skew
         assert set(result.keys()) == {
-            "fecha", "pcr_vol", "pcr_oi", "iv_skew",
+            "fecha", "pcr_vol", "sesgo_pcr_vol", "pcr_oi", "sesgo_pcr_oi",
+            "iv_skew", "sesgo_iv_skew",
             "vol_total_zscore", "pcr_vol_zscore", "iv_zscore",
         }
+
+    def test_sesgo_iv_skew_etiquetado(self):
+        # iv_put 0.40 - iv_call 0.28 = 0.12 > 0.05 -> bajista
+        result = _tend_serie_row(
+            _tend_row_completo(iv_put_avg=Decimal("0.40"), iv_call_avg=Decimal("0.28"))
+        )
+        assert result["sesgo_iv_skew"] == "bajista"
 
     def test_campos_redundantes_fuera(self):
         result = _tend_serie_row(_tend_row_completo())
@@ -229,6 +256,20 @@ class TestTendSerieRow:
         assert result["fecha"] == "2026-05-15"
         assert isinstance(result["pcr_vol"], float)
 
+    def test_sesgo_pcr_etiquetado(self):
+        # pcr_vol y pcr_oi = 1.2 en el helper -> bajista (>1.0)
+        result = _tend_serie_row(_tend_row_completo())
+        assert result["sesgo_pcr_vol"] == "bajista"
+        assert result["sesgo_pcr_oi"]  == "bajista"
+
+    def test_sesgo_pcr_alcista(self):
+        # PCR 0.45 < 0.7 -> alcista (mas calls que puts)
+        result = _tend_serie_row(
+            _tend_row_completo(pcr_vol=Decimal("0.45"), pcr_oi=Decimal("0.45"))
+        )
+        assert result["sesgo_pcr_vol"] == "alcista"
+        assert result["sesgo_pcr_oi"]  == "alcista"
+
 
 class TestTendActual:
     def test_incluye_niveles_iv_y_contratos(self):
@@ -243,6 +284,16 @@ class TestTendActual:
             _tend_row_completo(iv_call_avg=None, iv_put_avg=None)
         )
         assert result["iv_skew"] is None
+
+    def test_sesgo_pcr_etiquetado(self):
+        result = _tend_actual(_tend_row_completo())
+        assert result["sesgo_pcr_vol"] == "bajista"
+        assert result["sesgo_pcr_oi"]  == "bajista"
+
+    def test_sesgo_iv_skew_presente(self):
+        # helper: skew 0.31-0.28 = 0.03 -> dentro de banda -> neutro
+        result = _tend_actual(_tend_row_completo())
+        assert result["sesgo_iv_skew"] == "neutro"
 
 
 class TestAcumRow:

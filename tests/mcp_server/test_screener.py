@@ -180,6 +180,28 @@ class TestResultadoRow:
         r = _resultado_row(_make_row(fecha_precio=date(2026, 5, 15)))
         assert r["fecha_precio"] == "2026-05-15"
 
+    def test_estructura_5_etiquetada(self):
+        assert _resultado_row(_make_row(estructura_5=1))["estructura_5"]  == "alcista"
+        assert _resultado_row(_make_row(estructura_5=0))["estructura_5"]  == "neutral"
+        assert _resultado_row(_make_row(estructura_5=-1))["estructura_5"] == "bajista"
+
+    def test_estructura_5_none(self):
+        r = _resultado_row(_make_row(estructura_5=None))
+        assert r["estructura_5"] == "sin datos"
+
+    def test_macd_direccion_agregado(self):
+        assert _resultado_row(_make_row(macd_hist=0.3))["macd_direccion"]  == "alcista"
+        assert _resultado_row(_make_row(macd_hist=-0.5))["macd_direccion"] == "bajista"
+
+    def test_es_alcista_vol_spike_a_bool(self):
+        r = _resultado_row(_make_row(es_alcista=True, vol_spike=False))
+        assert r["es_alcista"] is True
+        assert r["vol_spike"]  is False
+        # tambien funciona si la DB los da como 0/1
+        r2 = _resultado_row(_make_row(es_alcista=1, vol_spike=0))
+        assert r2["es_alcista"] is True
+        assert r2["vol_spike"]  is False
+
 
 # ── Tests de validacion de parametros ─────────────────────────────────────────
 
@@ -336,7 +358,7 @@ async def test_resultado_ticker_tiene_campos_requeridos():
     t = result["tickers"][0]
     for campo in ["ticker", "sector", "industry", "modelo_ml",
                   "fecha_precio", "close",
-                  "rsi14", "macd_hist", "adx", "vol_relativo",
+                  "rsi14", "macd_hist", "macd_direccion", "adx", "vol_relativo",
                   "estructura_5", "señal_smc",
                   "es_alcista", "vol_spike", "patron_activo",
                   "alert_score", "alert_nivel"]:

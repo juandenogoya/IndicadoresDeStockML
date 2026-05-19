@@ -90,13 +90,35 @@ _DETALLE_COLS = [
 ]
 
 
+def _estructura_label(val) -> str:
+    """
+    Convierte estructura_5 (int 1/0/-1) a texto.
+
+    Mismo criterio que overview y get_ml_alert_history -- consistencia
+    cross-tool: una columna etiquetada en una tool se etiqueta en todas,
+    para que el LLM no la interprete distinto segun de donde venga.
+    """
+    if val is None:
+        return "sin datos"
+    return {1: "alcista", 0: "neutral", -1: "bajista"}.get(int(val), str(val))
+
+
+def _macd_direccion(macd_hist) -> str:
+    """Direccion del MACD segun el histograma (positivo = alcista)."""
+    if macd_hist is None:
+        return "sin datos"
+    return "alcista" if macd_hist > 0 else "bajista"
+
+
 def _resultado_row(row) -> dict:
     """
     Convierte una fila del screener a dict limpio.
 
-    Agrega señal_smc y patron_activo como campos sintetizados.
-    Elimina columnas booleanas de detalle ya sintetizadas.
-    Renombra modelo_asignado -> modelo_ml.
+    - Sintetiza señal_smc y patron_activo desde columnas booleanas.
+    - Etiqueta estructura_5 (int -> texto) y agrega macd_direccion.
+    - Normaliza es_alcista y vol_spike a bool (la DB puede darlos 0/1).
+    - Renombra modelo_asignado -> modelo_ml.
+    - Elimina columnas booleanas de detalle ya sintetizadas.
     """
     r = _row_to_dict(row)
 
@@ -109,6 +131,12 @@ def _resultado_row(row) -> dict:
     r["patron_activo"] = next(
         (label for col, label in _PATRON_MAP if r.get(col)), None
     )
+
+    # Etiquetar/normalizar campos crudos (evita misread del LLM)
+    r["estructura_5"]   = _estructura_label(r.get("estructura_5"))
+    r["macd_direccion"] = _macd_direccion(r.get("macd_hist"))
+    r["es_alcista"]     = bool(r.get("es_alcista"))
+    r["vol_spike"]      = bool(r.get("vol_spike"))
 
     # Renombrar modelo_asignado
     r["modelo_ml"] = r.pop("modelo_asignado", None)

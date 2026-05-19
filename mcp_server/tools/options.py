@@ -90,6 +90,31 @@ def _iv_skew(iv_put, iv_call):
     return None
 
 
+# Banda neutra del IV skew. Default ajustable: skews dentro de +-0.05 se
+# consideran neutros. Fuera de esa banda el signo define el sesgo.
+_IV_SKEW_NEUTRAL = 0.05
+
+
+def _sesgo_iv_skew(skew) -> str:
+    """
+    Clasifica el IV skew (iv_put - iv_call) en sesgo legible.
+
+      skew >  +0.05 -> bajista  (puts mas caras = cobertura / miedo)
+      skew <  -0.05 -> alcista  (calls mas caras = demanda / optimismo)
+      entre medio   -> neutro
+
+    El signo es contraintuitivo: skew POSITIVO = sentimiento defensivo.
+    El umbral _IV_SKEW_NEUTRAL es un default a ajustar con la experiencia.
+    """
+    if skew is None:
+        return "sin datos"
+    if skew > _IV_SKEW_NEUTRAL:
+        return "bajista"
+    if skew < -_IV_SKEW_NEUTRAL:
+        return "alcista"
+    return "neutro"
+
+
 def _tend_serie_row(row) -> dict:
     """
     Fila de la serie diaria con campos recortados.
@@ -98,12 +123,21 @@ def _tend_serie_row(row) -> dict:
     redundantes: call_vol/put_vol/call_oi/put_oi (ya resumidos en pcr_*),
     iv_call_avg/iv_put_avg (resumidos en iv_skew), precio_sub (top-level),
     vol_relativo/percentil_vol (redundantes con vol_total_zscore).
+
+    Cada PCR lleva su sesgo computado (alcista/neutro/bajista) al lado: el
+    LLM interpreta mal el PCR crudo (PCR < 1 = mas calls, no mas puts).
     """
+    pcr_vol = _cvt(row["pcr_vol"])
+    pcr_oi  = _cvt(row["pcr_oi"])
+    skew    = _iv_skew(_cvt(row["iv_put_avg"]), _cvt(row["iv_call_avg"]))
     return {
         "fecha":            _cvt(row["fecha"]),
-        "pcr_vol":          _cvt(row["pcr_vol"]),
-        "pcr_oi":           _cvt(row["pcr_oi"]),
-        "iv_skew":          _iv_skew(_cvt(row["iv_put_avg"]), _cvt(row["iv_call_avg"])),
+        "pcr_vol":          pcr_vol,
+        "sesgo_pcr_vol":    _sesgo_pcr(pcr_vol),
+        "pcr_oi":           pcr_oi,
+        "sesgo_pcr_oi":     _sesgo_pcr(pcr_oi),
+        "iv_skew":          skew,
+        "sesgo_iv_skew":    _sesgo_iv_skew(skew),
         "vol_total_zscore": _cvt(row["vol_total_zscore"]),
         "pcr_vol_zscore":   _cvt(row["pcr_vol_zscore"]),
         "iv_zscore":        _cvt(row["iv_zscore"]),
@@ -114,14 +148,22 @@ def _tend_actual(row) -> dict:
     """
     Ultimo dia completo: incluye los niveles de IV (call/put) y n_contratos,
     que son utiles para el estado actual pero no para cada dia historico.
+
+    Cada PCR lleva su sesgo computado al lado (ver _tend_serie_row).
     """
+    pcr_vol = _cvt(row["pcr_vol"])
+    pcr_oi  = _cvt(row["pcr_oi"])
+    skew    = _iv_skew(_cvt(row["iv_put_avg"]), _cvt(row["iv_call_avg"]))
     return {
         "fecha":            _cvt(row["fecha"]),
-        "pcr_vol":          _cvt(row["pcr_vol"]),
-        "pcr_oi":           _cvt(row["pcr_oi"]),
+        "pcr_vol":          pcr_vol,
+        "sesgo_pcr_vol":    _sesgo_pcr(pcr_vol),
+        "pcr_oi":           pcr_oi,
+        "sesgo_pcr_oi":     _sesgo_pcr(pcr_oi),
         "iv_call_avg":      _cvt(row["iv_call_avg"]),
         "iv_put_avg":       _cvt(row["iv_put_avg"]),
-        "iv_skew":          _iv_skew(_cvt(row["iv_put_avg"]), _cvt(row["iv_call_avg"])),
+        "iv_skew":          skew,
+        "sesgo_iv_skew":    _sesgo_iv_skew(skew),
         "n_contratos":      _cvt(row["n_contratos"]),
         "vol_total_zscore": _cvt(row["vol_total_zscore"]),
         "pcr_vol_zscore":   _cvt(row["pcr_vol_zscore"]),
@@ -274,13 +316,15 @@ async def get_options_analysis(
     Retorna tres secciones:
 
     tendencia_diaria: {actual, serie}.
-      - actual: ultimo dia completo (PCR vol/OI, IV call/put, IV skew,
-        n_contratos, z-scores).
+      - actual: ultimo dia completo (PCR vol/OI con su sesgo, IV call/put,
+        IV skew, n_contratos, z-scores).
       - serie: un punto por dia con campos recortados (pcr_vol, pcr_oi,
-        iv_skew, z-scores) -- preserva la trayectoria del periodo.
-      Lecturas: pcr_vol > 1 = mas puts (presion bajista); iv_skew > 0 = el
-      mercado paga mas por puts (miedo); vol_total_zscore alto = actividad
-      inusual de opciones.
+        cada uno con sesgo, iv_skew, z-scores) -- preserva la trayectoria.
+      Cada PCR trae su sesgo computado (sesgo_pcr_vol, sesgo_pcr_oi):
+      alcista si PCR < 0.7, neutro 0.7-1.0, bajista > 1.0. IMPORTANTE:
+      PCR < 1 = MAS CALLS que puts (no al reves). iv_skew trae sesgo_iv_skew:
+      bajista si skew > 0 (puts mas caras = miedo), alcista si skew < 0
+      (calls mas caras). vol_total_zscore alto = actividad inusual.
 
     pcr_por_vencimiento: resumen computado por cada vencimiento vivo. En vez
       de la serie diaria cruda devuelve PCR OI inicio/actual, delta de OI
