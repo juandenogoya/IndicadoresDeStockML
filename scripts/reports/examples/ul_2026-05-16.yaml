@@ -1,0 +1,115 @@
+# Ejemplo de input para make_report.py
+# Genera: UL_2026-05-16.pdf
+
+ticker: UL
+nombre: Unilever
+fecha: 2026-05-16
+fecha_legible: "16 mayo 2026"
+handle: "@juan_de_nogoya"
+
+precio: 58.40
+var_5d: 2.1
+
+veredicto: >
+  Estructura alcista de corto plazo (3 velas verdes consecutivas) con
+  indicadores confirmando la tendencia. Las opciones muestran cautela en
+  el medio plazo (PCR_OI > 1 en vencimientos de mayo-junio), con muros
+  de calls que limitan el upside cercano.
+
+# Tabla resumen de niveles (Página 1)
+# resistencia / soporte son listas [desde, hasta]; null = sin liquidez
+niveles:
+  - ventana: Corto
+    resistencia: [61.0, 64.0]
+    soporte:     [54.0, 56.0]
+  - ventana: Medio
+    resistencia: [62.5, 66.0]
+    soporte:     [52.0, 55.0]
+  - ventana: Largo
+    resistencia: null
+    soporte:     [50.0, 53.0]
+
+# Sesgo general (Página 1)
+sesgo:
+  indicadores: "ALCISTA"
+  opciones:    "NEUTRO-BAJISTA (cautela medio plazo)"
+  iv_skew:     "BAJISTA (puts caras = cobertura)"
+  iv_skew_valor: 0.19
+
+# Indicadores técnicos (Página 2)
+indicadores:
+  rsi14: 62.3
+  rsi14_sesgo: "alcista"
+  macd_hist: 0.41
+  macd_sesgo: "alcista"
+  sma_tendencia: "alcista fuerte (close > 21 > 50 > 200)"
+  adx: 28.1
+  adx_fuerza: "tendencia fuerte"
+
+# Opciones — detalle por ventana (Página 2)
+opciones_ventanas:
+  - ventana: corto
+    dias: "1-14"
+    valido: true
+    pcr_oi: 0.88
+    sesgo_pcr_oi: "alcista"
+    resistencia:
+      zona: [61.0, 64.0]
+      pico: 61.0
+    soporte:
+      zona: [54.0, 56.0]
+      pico: 55.0
+
+  - ventana: medio
+    dias: "15-45"
+    valido: true
+    pcr_oi: 1.03
+    sesgo_pcr_oi: "bajista"
+    resistencia:
+      zona: [62.5, 66.0]
+      pico: 63.0
+    soporte:
+      zona: [52.0, 55.0]
+      pico: 54.0
+
+  - ventana: largo
+    dias: "46-90"
+    valido: true
+    pcr_oi: 0.94
+    sesgo_pcr_oi: "neutro"
+    resistencia: null
+    soporte:
+      zona: [50.0, 53.0]
+      pico: 52.0
+
+# Strikes calientes (Página 2)
+# tipo: call | put
+# moneyness: ATM | OTM | ITM
+strikes_calientes:
+  - tipo: call
+    strike: 63.0
+    vencimiento: "18-jun"
+    moneyness: OTM
+    delta_oi: 1450
+  - tipo: call
+    strike: 61.0
+    vencimiento: "22-may"
+    moneyness: ATM
+    delta_oi: 980
+  - tipo: put
+    strike: 54.0
+    vencimiento: "18-jun"
+    moneyness: OTM
+    delta_oi: 1120
+  - tipo: put
+    strike: 52.0
+    vencimiento: "18-jun"
+    moneyness: OTM
+    delta_oi: 860
+
+# Cierre / Setup operativo (Página 2)
+conclusion: >
+  El alza de corto plazo tiene soporte técnico (RSI alcista, SMA alineada).
+  Resistencia inmediata en 61-64 donde se acumulan calls. La cautela del
+  medio plazo sugiere tomar parciales antes de esa zona; un cierre bajo $54
+  invalidaría el setup.

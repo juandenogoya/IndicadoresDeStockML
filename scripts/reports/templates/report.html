@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <title>{{ ticker }} — Análisis Técnico {{ fecha }}</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+{# ═══════════════════════════════════════════════════════════════════ #}
+{# PÁGINA 1 — Cover + Veredicto + Niveles + Sesgo                    #}
+{# ═══════════════════════════════════════════════════════════════════ #}
+
+<section class="page">
+
+    <div class="header">
+        <div class="header-left">
+            <div class="ticker-name">{{ ticker }}{% if nombre %} <span style="font-weight:400; opacity:.85;">• {{ nombre }}</span>{% endif %}</div>
+            <div class="subtitle">{{ fecha_legible }} — Análisis Técnico</div>
+        </div>
+        <div class="header-right">{{ handle }}</div>
+    </div>
+
+    <div class="price-row">
+        <div>
+            <span class="label">Precio</span>
+            <span class="value">${{ "%.2f"|format(precio) }}</span>
+        </div>
+        {% if var_5d is not none %}
+        <div>
+            <span class="label">Variación 5d</span>
+            <span class="value {{ 'positive' if var_5d >= 0 else 'negative' }}">
+                {{ "%+.1f"|format(var_5d) }}%
+            </span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="section-title">Veredicto</div>
+    <div class="veredicto">{{ veredicto }}</div>
+
+    <div class="section-title">Niveles clave</div>
+    <table>
+        <thead>
+            <tr>
+                <th>Ventana</th>
+                <th>Resistencia</th>
+                <th>Soporte</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in niveles %}
+            <tr>
+                <td>{{ v.ventana }}</td>
+                <td>
+                    {%- if v.resistencia -%}
+                        ${{ "%.1f"|format(v.resistencia[0]) }} – ${{ "%.1f"|format(v.resistencia[1]) }}
+                    {%- else -%}
+                        <span class="sin-datos">sin liquidez</span>
+                    {%- endif -%}
+                </td>
+                <td>
+                    {%- if v.soporte -%}
+                        ${{ "%.1f"|format(v.soporte[0]) }} – ${{ "%.1f"|format(v.soporte[1]) }}
+                    {%- else -%}
+                        <span class="sin-datos">sin liquidez</span>
+                    {%- endif -%}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="section-title">Sesgo general</div>
+    <table class="tabla-sesgo">
+        <tr>
+            <td>Indicadores técnicos</td>
+            <td class="destacado">{{ sesgo.indicadores }}</td>
+        </tr>
+        <tr>
+            <td>Opciones (PCR OI)</td>
+            <td class="destacado">{{ sesgo.opciones }}</td>
+        </tr>
+        <tr>
+            <td>IV Skew {% if sesgo.iv_skew_valor is not none %}({{ "%+.3f"|format(sesgo.iv_skew_valor) }}){% endif %}</td>
+            <td class="destacado">{{ sesgo.iv_skew }}</td>
+        </tr>
+    </table>
+
+</section>
+
+{# ═══════════════════════════════════════════════════════════════════ #}
+{# PÁGINA 2 — Detalle + Strikes Calientes + Setup                     #}
+{# ═══════════════════════════════════════════════════════════════════ #}
+
+<section class="page">
+
+    <div class="header">
+        <div class="header-left">
+            <div class="ticker-name">{{ ticker }} <span style="font-weight:400; opacity:.85;">• Detalle</span></div>
+            <div class="subtitle">{{ fecha_legible }}</div>
+        </div>
+        <div class="header-right">{{ handle }}</div>
+    </div>
+
+    <div class="section-title">Indicadores técnicos</div>
+    <table>
+        <tr>
+            <td style="width:30%;"><strong>RSI14</strong></td>
+            <td style="width:25%;">{{ "%.1f"|format(indicadores.rsi14) }}</td>
+            <td><em>{{ indicadores.rsi14_sesgo }}</em></td>
+        </tr>
+        <tr>
+            <td><strong>MACD</strong></td>
+            <td>{{ "%+.2f"|format(indicadores.macd_hist) }}</td>
+            <td><em>{{ indicadores.macd_sesgo }}</em></td>
+        </tr>
+        <tr>
+            <td><strong>SMA</strong></td>
+            <td colspan="2"><em>{{ indicadores.sma_tendencia }}</em></td>
+        </tr>
+        <tr>
+            <td><strong>ADX</strong></td>
+            <td>{{ "%.1f"|format(indicadores.adx) }}</td>
+            <td><em>{{ indicadores.adx_fuerza }}</em></td>
+        </tr>
+    </table>
+
+    <div class="section-title">Opciones — PCR y zonas por ventana</div>
+    {% for v in opciones_ventanas %}
+    <div class="ventana">
+        <div class="ventana-title">▸ {{ v.ventana | capitalize }} ({{ v.dias }} días)</div>
+        {% if v.valido %}
+        <div class="ventana-row">
+            <span class="label">PCR OI</span>{{ "%.2f"|format(v.pcr_oi) }} → <em>{{ v.sesgo_pcr_oi }}</em>
+        </div>
+        {% if v.resistencia %}
+        <div class="ventana-row">
+            <span class="label">Resistencia</span>${{ "%.1f"|format(v.resistencia.zona[0]) }} – ${{ "%.1f"|format(v.resistencia.zona[1]) }} <span style="color:#8794A8;">(pico ${{ "%.1f"|format(v.resistencia.pico) }})</span>
+        </div>
+        {% else %}
+        <div class="ventana-row">
+            <span class="label">Resistencia</span><span class="sin-datos">sin liquidez suficiente</span>
+        </div>
+        {% endif %}
+        {% if v.soporte %}
+        <div class="ventana-row">
+            <span class="label">Soporte</span>${{ "%.1f"|format(v.soporte.zona[0]) }} – ${{ "%.1f"|format(v.soporte.zona[1]) }} <span style="color:#8794A8;">(pico ${{ "%.1f"|format(v.soporte.pico) }})</span>
+        </div>
+        {% else %}
+        <div class="ventana-row">
+            <span class="label">Soporte</span><span class="sin-datos">sin liquidez suficiente</span>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="ventana-row"><span class="sin-datos">Ventana sin liquidez suficiente (OI total &lt; 500)</span></div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if strikes_calientes %}
+    <div class="section-title">Strikes calientes (Δ OI último periodo)</div>
+    <table class="strikes-calientes">
+        <thead>
+            <tr>
+                <th>Tipo</th>
+                <th>Strike</th>
+                <th>Vencimiento</th>
+                <th>Moneyness</th>
+                <th style="text-align:right;">Δ OI</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in strikes_calientes %}
+            <tr>
+                <td class="tipo-{{ s.tipo }}">{{ s.tipo | upper }}</td>
+                <td>${{ "%.1f"|format(s.strike) }}</td>
+                <td>{{ s.vencimiento }}</td>
+                <td>{{ s.moneyness }}</td>
+                <td class="delta">{% if s.delta_oi >= 0 %}+{% endif %}{{ "{:,}".format(s.delta_oi).replace(",", ".") }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <div class="section-title">Setup operativo / Conclusión</div>
+    <div class="conclusion">{{ conclusion }}</div>
+
+    <div class="cierre">
+        <span class="handle">Más análisis: {{ handle }}</span>
+        <span class="disclaimer">Contenido educativo. No es recomendación de inversión.</span>
+    </div>
+
+</section>
+
+</body>
+</html>

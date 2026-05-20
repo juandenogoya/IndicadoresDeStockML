@@ -1,0 +1,226 @@
+/* ─────────────────────────────────────────────────────────────
+   Reporte de Análisis Técnico — estilos
+   Paleta: navy (#1B2A4E) + blanco + grafito (#2C3E50)
+   ───────────────────────────────────────────────────────────── */
+
+@page {
+    size: A4;
+    margin: 1.5cm 1.8cm 2cm 1.8cm;
+
+    @bottom-right {
+        content: "Página " counter(page) " de " counter(pages);
+        font-size: 8pt;
+        color: #8794A8;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    color: #2C3E50;
+    font-size: 10pt;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* ── Page break entre páginas ──────────────────────────────── */
+.page {
+    page-break-after: always;
+}
+.page:last-child {
+    page-break-after: auto;
+}
+
+/* ── Header band (navy) ────────────────────────────────────── */
+.header {
+    background: #1B2A4E;
+    color: white;
+    padding: 16pt 20pt;
+    margin: -1.5cm -1.8cm 18pt -1.8cm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-left .ticker-name {
+    font-size: 22pt;
+    font-weight: 700;
+    letter-spacing: 0.4pt;
+    margin: 0;
+    line-height: 1.1;
+}
+
+.header-left .subtitle {
+    font-size: 9pt;
+    opacity: 0.85;
+    margin-top: 3pt;
+    letter-spacing: 0.3pt;
+}
+
+.header-right {
+    text-align: right;
+    font-size: 9.5pt;
+    opacity: 0.95;
+    font-weight: 500;
+}
+
+/* ── Sección: precio + variación ───────────────────────────── */
+.price-row {
+    display: flex;
+    gap: 40pt;
+    padding: 6pt 0 14pt 0;
+    border-bottom: 1pt solid #DDE3EC;
+    margin-bottom: 14pt;
+}
+
+.price-row .label {
+    color: #5D7290;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.8pt;
+    display: block;
+    margin-bottom: 2pt;
+}
+
+.price-row .value {
+    font-size: 14pt;
+    font-weight: 600;
+}
+
+.price-row .value.positive { color: #198754; }
+.price-row .value.negative { color: #DC3545; }
+
+/* ── Títulos de sección ────────────────────────────────────── */
+.section-title {
+    text-transform: uppercase;
+    font-size: 8.5pt;
+    font-weight: 700;
+    letter-spacing: 1.2pt;
+    color: #5D7290;
+    border-bottom: 1pt solid #DDE3EC;
+    padding-bottom: 4pt;
+    margin: 16pt 0 10pt 0;
+}
+
+/* ── Veredicto (callout) ───────────────────────────────────── */
+.veredicto {
+    background: #F5F7FA;
+    border-left: 3pt solid #1B2A4E;
+    padding: 10pt 14pt;
+    margin: 6pt 0 8pt 0;
+    font-size: 10.5pt;
+    line-height: 1.5;
+}
+
+/* ── Tablas (niveles, indicadores, sesgo) ──────────────────── */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 4pt 0 6pt 0;
+    font-size: 10pt;
+}
+
+th {
+    text-align: left;
+    font-weight: 600;
+    color: #5D7290;
+    padding: 5pt 6pt;
+    border-bottom: 1.5pt solid #1B2A4E;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+}
+
+td {
+    padding: 5pt 6pt;
+    border-bottom: 1pt solid #F0F2F5;
+}
+
+.tabla-sesgo td:first-child {
+    color: #5D7290;
+    font-weight: 500;
+    width: 35%;
+}
+
+.tabla-sesgo .destacado {
+    font-weight: 700;
+    color: #1B2A4E;
+}
+
+/* ── Ventanas de opciones ──────────────────────────────────── */
+.ventana {
+    margin: 10pt 0;
+    padding-left: 8pt;
+    border-left: 2pt solid #DDE3EC;
+}
+
+.ventana-title {
+    font-weight: 700;
+    color: #1B2A4E;
+    font-size: 10.5pt;
+    margin-bottom: 4pt;
+}
+
+.ventana-row {
+    margin: 2pt 0 2pt 4pt;
+    font-size: 9.5pt;
+}
+
+.ventana-row .label {
+    color: #5D7290;
+    display: inline-block;
+    min-width: 90pt;
+}
+
+.ventana-row .sin-datos {
+    color: #8794A8;
+    font-style: italic;
+}
+
+/* ── Tabla de strikes calientes ────────────────────────────── */
+.strikes-calientes td.tipo-call { color: #198754; font-weight: 600; }
+.strikes-calientes td.tipo-put  { color: #DC3545; font-weight: 600; }
+
+.strikes-calientes td.delta {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+/* ── Setup operativo / conclusión ──────────────────────────── */
+.conclusion {
+    background: #F5F7FA;
+    border-left: 3pt solid #1B2A4E;
+    padding: 10pt 14pt;
+    margin: 6pt 0 14pt 0;
+    font-size: 10pt;
+    line-height: 1.55;
+}
+
+/* ── Disclaimer + handle (footer del cuerpo) ───────────────── */
+.cierre {
+    margin-top: 18pt;
+    padding-top: 10pt;
+    border-top: 1pt solid #DDE3EC;
+    text-align: center;
+    font-size: 8.5pt;
+    color: #5D7290;
+}
+
+.cierre .handle {
+    font-weight: 700;
+    color: #1B2A4E;
+    font-size: 9.5pt;
+    display: block;
+    margin-bottom: 3pt;
+}
+
+.cierre .disclaimer {
+    font-style: italic;
+    font-size: 8pt;
+    color: #8794A8;
+    margin-top: 4pt;
+}
