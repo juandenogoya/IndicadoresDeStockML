@@ -225,6 +225,17 @@ def _safe_int(val) -> Optional[int]:
 
 
 # ── Colector por ticker ───────────────────────────────────────────────────────
+#
+# Dos implementaciones intercambiables:
+#   _recolectar_ticker_yf  : usa yfinance (cliente historico)
+#   _recolectar_ticker_yq  : usa yahooquery (alternativo, 20/5/2026)
+# El dispatcher publico es recolectar_ticker(..., engine=...).
+#
+# Motivo del engine alternativo: yfinance dejo de responder confiablemente
+# el endpoint /v7/finance/options desde ~18/5/2026 (verificado en 5 IPs
+# distintas). yahooquery usa otro endpoint sobre el mismo provider Yahoo
+# y trae el chain entero en UNA call (vs ~30 calls de yfinance por ticker).
+
 
 def recolectar_ticker(
     ticker: str,
@@ -233,16 +244,40 @@ def recolectar_ticker(
     hv_20d: Optional[float],
     max_dte: int = None,
     min_oi: int = None,
+    engine: str = "yfinance",
 ) -> list[dict]:
     """
-    Descarga la chain de opciones para un ticker.
+    Descarga la chain de opciones para un ticker, segun el engine elegido.
 
-    Filtros aplicados:
+    Ambas implementaciones devuelven la MISMA estructura: lista de dicts
+    con claves fecha_snapshot, ticker, vencimiento, tipo, strike, volumen,
+    open_interest, iv, bid, ask, precio_subyacente, hv_20d.
+
+    Filtros aplicados (igual en ambos engines):
         - Vencimientos <= max_dte dias desde fecha_snapshot (default MAX_DTE)
         - Se incluye el contrato si:  vol > 0   (se opero hoy)
                                   OR  OI >= min_oi  (posicion relevante abierta)
           Contratos con vol=0 y OI < MIN_OI son noise (posiciones fantasma).
     """
+    if engine == "yfinance":
+        return _recolectar_ticker_yf(ticker, fecha_snapshot, precio_subyacente,
+                                     hv_20d, max_dte, min_oi)
+    elif engine == "yahooquery":
+        return _recolectar_ticker_yq(ticker, fecha_snapshot, precio_subyacente,
+                                     hv_20d, max_dte, min_oi)
+    else:
+        raise ValueError(f"Engine desconocido: {engine!r}")
+
+
+def _recolectar_ticker_yf(
+    ticker: str,
+    fecha_snapshot: date,
+    precio_subyacente: Optional[float],
+    hv_20d: Optional[float],
+    max_dte: int = None,
+    min_oi: int = None,
+) -> list[dict]:
+    """Implementacion via yfinance: 1 call para listar exps + N para cada chain."""
     from datetime import timedelta
     _max_dte = max_dte or MAX_DTE
     _min_oi  = min_oi  if min_oi is not None else MIN_OI
@@ -299,6 +334,96 @@ def recolectar_ticker(
                     "precio_subyacente": precio_subyacente,
                     "hv_20d":            hv_20d,
                 })
+
+    return filas
+
+
+def _recolectar_ticker_yq(
+    ticker: str,
+    fecha_snapshot: date,
+    precio_subyacente: Optional[float],
+    hv_20d: Optional[float],
+    max_dte: int = None,
+    min_oi: int = None,
+) -> list[dict]:
+    """
+    Implementacion via yahooquery: UNA call descarga el chain entero
+    (todas las expirations, calls + puts).
+
+    Diferencias menores de shape vs yfinance que ajustamos aca:
+      - optionType viene plural ('calls'/'puts') -> mapeamos a 'call'/'put'
+      - expiration viene como Timestamp           -> .date() para uniformar
+    """
+    from datetime import timedelta
+    from src.utils.yahooquery_options import descargar_chain
+    import pandas as pd
+
+    _max_dte = max_dte or MAX_DTE
+    _min_oi  = min_oi  if min_oi is not None else MIN_OI
+    limite_vencimiento = fecha_snapshot + timedelta(days=_max_dte)
+
+    try:
+        df = descargar_chain(ticker)
+    except Exception:
+        # Incluye OptionsRateLimit. Para preservar comportamiento simetrico
+        # con la rama yfinance (que se traga errores), devolvemos []. El
+        # caller (cmd_run) loguea "sin opciones activas" y sigue.
+        return []
+
+    if df is None or df.empty:
+        return []
+
+    filas = []
+
+    # MultiIndex: (symbol, expiration, optionType). symbol = ticker.
+    for idx, row in df.iterrows():
+        # idx puede ser tupla de 3 elementos
+        _sym, exp_ts, tipo_yq = idx
+
+        # Normalizar expiration a datetime.date
+        if hasattr(exp_ts, "date"):
+            exp_date = exp_ts.date()
+        elif isinstance(exp_ts, str):
+            exp_date = date.fromisoformat(exp_ts)
+        else:
+            exp_date = exp_ts
+
+        if exp_date > limite_vencimiento:
+            continue
+
+        # Normalizar tipo: yahooquery usa plural, persistimos en singular
+        # para mantener el mismo formato que el resto del codigo (resumen,
+        # opciones_resumen_diario, etc.) ya consume 'call'/'put'.
+        if tipo_yq == "calls":
+            tipo = "call"
+        elif tipo_yq == "puts":
+            tipo = "put"
+        else:
+            tipo = tipo_yq
+
+        vol = _safe_int(row.get("volume"))
+        oi  = _safe_int(row.get("openInterest"))
+
+        # Mismo filtro que yfinance: incluir si opero hoy O si tiene OI relevante
+        active_today = vol is not None and vol > 0
+        relevant_oi  = oi  is not None and oi  >= _min_oi
+        if not active_today and not relevant_oi:
+            continue
+
+        filas.append({
+            "fecha_snapshot":    fecha_snapshot,
+            "ticker":            ticker,
+            "vencimiento":       exp_date,
+            "tipo":              tipo,
+            "strike":            float(row["strike"]),
+            "volumen":           vol,
+            "open_interest":     oi,
+            "iv":                _safe_float(row.get("impliedVolatility")),
+            "bid":               _safe_float(row.get("bid")),
+            "ask":               _safe_float(row.get("ask")),
+            "precio_subyacente": precio_subyacente,
+            "hv_20d":            hv_20d,
+        })
 
     return filas
 
@@ -473,16 +598,18 @@ def _check_datos_existentes(fecha: date) -> int:
 
 
 def cmd_run(tickers: list[str], dry_run: bool = False,
-            fecha_override: Optional[date] = None, intento: int = 1):
+            fecha_override: Optional[date] = None, intento: int = 1,
+            engine: str = "yfinance"):
     fecha_hoy      = fecha_override or date.today()
     _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
 
-    # Lock yfinance: evita que otro script (cron_diario, recovery) corra en
-    # paralelo y duplique la carga sobre la misma IP. No lockea en dry-run.
+    # Lock yfinance: el lockfile se llama 'yfinance' por historia, pero protege
+    # contra concurrencia sobre la IP frente a Yahoo en general (yfinance e
+    # yahooquery comparten provider y rate-limit por IP).
     if not dry_run:
         try:
             from src.utils.yfinance_lock import acquire as acquire_yf_lock
-            acquire_yf_lock(f"33_opciones_snapshot --intento {intento}")
+            acquire_yf_lock(f"33_opciones_snapshot --intento {intento} --engine {engine}")
         except ImportError:
             pass  # backward-compat si el helper no existe en cierta version
 
@@ -495,6 +622,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
     log(f"  MIN_OI    : {MIN_OI} (umbral sin volumen)")
     log(f"  Modo      : {'DRY RUN' if dry_run else 'REAL'}")
     log(f"  Intento   : {intento}/4")
+    log(f"  Engine    : {engine}")
     log("=" * 60)
 
     # ── Check previo: datos ya existentes ────────────────────────────────────
@@ -532,7 +660,7 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
         hv     = hvs.get(ticker)
 
         try:
-            filas = recolectar_ticker(ticker, fecha_hoy, precio, hv)
+            filas = recolectar_ticker(ticker, fecha_hoy, precio, hv, engine=engine)
 
             if not filas:
                 log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  sin opciones activas")
@@ -1081,6 +1209,9 @@ def main():
     parser.add_argument("--intento", type=int, default=1, choices=[1, 2, 3, 4],
                         help="Numero de intento del dia (1=23UTC Oracle, 2=02UTC Oracle, "
                              "3=04UTC GH backup, 4=06UTC Oracle)")
+    parser.add_argument("--engine", choices=["yfinance", "yahooquery"], default="yfinance",
+                        help="Cliente para descargar option chains (default: yfinance). "
+                             "yahooquery: 1 call por ticker vs ~30 de yfinance.")
     args = parser.parse_args()
 
     if args.init:
@@ -1101,7 +1232,8 @@ def main():
 
     fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
     tickers = args.ticker if args.ticker else list(ALL_TICKERS)
-    cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override, intento=args.intento)
+    cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override,
+            intento=args.intento, engine=args.engine)
 
 
 if __name__ == "__main__":

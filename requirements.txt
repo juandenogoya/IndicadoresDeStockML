@@ -1,5 +1,6 @@
 # ── Data & Core ──────────────────────────────────────────────
 yfinance==0.2.54
+yahooquery==2.4.1
 pandas-datareader==0.10.0
 pandas==2.2.3
 numpy==2.2.3

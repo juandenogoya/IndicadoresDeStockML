@@ -13,14 +13,21 @@ Resuelve el problema del script ciego de cron_diario --step precios, que reporta
   6. Reporta tickers que NO se pudieron completar (no oculta fallos)
 
 Uso:
-    python scripts/recovery_incremental.py                       # local, default
+    python scripts/recovery_incremental.py                       # local, yfinance
     python scripts/recovery_incremental.py --target local        # idem
     python scripts/recovery_incremental.py --target railway      # apunta a Railway
+    python scripts/recovery_incremental.py --engine yahooquery   # usa yahooquery en vez de yfinance
     python scripts/recovery_incremental.py --dry-run             # solo diagnostico
     python scripts/recovery_incremental.py --batch-size 5        # mas tickers por download
     python scripts/recovery_incremental.py --max-cycles 8        # mas reintentos
     python scripts/recovery_incremental.py --skip-futuros        # solo precios
     python scripts/recovery_incremental.py --skip-indicadores    # solo OHLCV, no recalcula
+
+Engine de descarga:
+    yfinance   (default) - cliente historico, usa yf.download() en batch.
+    yahooquery           - alternativo (20/5/2026): mismo provider Yahoo
+                           pero distintos endpoints. Util cuando yfinance
+                           falla por bloqueo del endpoint.
 
 Codigo de salida:
     0 = todo OK, lista de pendientes vacia al final
@@ -187,9 +194,36 @@ def agrupar_por_rango(pendientes: dict, target_date: date) -> dict:
     return grupos
 
 
-# ── Descarga via yfinance ─────────────────────────────────────────────────────
+# ── Descarga: factory + implementaciones por engine ──────────────────────────
+#
+# get_downloader(engine) devuelve una funcion (tickers, start, end) -> {t: df}.
+# Asi recover_precios() y recover_futuros() son ciegos al engine. Para sumar
+# un engine nuevo a futuro: implementar nuevo modulo en src/utils/ con la
+# misma firma, y agregarlo al if/elif de get_downloader().
 
-def download_batch(tickers: list, start: date, end: date) -> dict:
+def get_downloader(engine: str):
+    """
+    Retorna la funcion de descarga correspondiente al engine elegido.
+    Cualquier RateLimitDetected del engine se re-lanza como la excepcion
+    de este modulo, para que el orquestador la maneje uniforme.
+    """
+    if engine == "yfinance":
+        return _download_batch_yf
+    elif engine == "yahooquery":
+        from src.utils import yahooquery_loader as yq
+
+        def _wrapped(tickers, start, end):
+            try:
+                return yq.download_batch(tickers, start, end)
+            except yq.RateLimitDetected as e:
+                # Re-lanzamos como la excepcion local para que recover_* la atrape
+                raise RateLimitDetected(str(e))
+        return _wrapped
+    else:
+        raise ValueError(f"Engine desconocido: {engine!r}")
+
+
+def _download_batch_yf(tickers: list, start: date, end: date) -> dict:
     """
     Descarga OHLCV via yf.download() en batch. Retorna {ticker: DataFrame}.
     Levanta RateLimitDetected si hay rate limit (yfinance lo imprime a
@@ -307,23 +341,24 @@ def procesar_futuro(symbol: str, df_yf, engine) -> bool:
     if df_db.empty:
         return False
 
-    # Upsert directo a futuros_diarios. La tabla espera columnas: fecha, ticker,
-    # open, high, low, close, adj_close, volume. ON CONFLICT (ticker, fecha).
+    # Upsert directo a futuros_diarios. Schema real (verificado en local y
+    # Railway al 20/5/2026): fecha, ticker, open, high, low, close, volume.
+    # NO tiene adj_close -- es OHLCV puro, igual que como lo escribe
+    # 34_futuros_indices.py (linea 213). Mantenemos paridad con el productivo.
     rows = df_db.to_dict("records")
     with engine.connect() as c:
         for r in rows:
             c.execute(text("""
                 INSERT INTO futuros_diarios
-                  (fecha, ticker, open, high, low, close, adj_close, volume)
+                  (fecha, ticker, open, high, low, close, volume)
                 VALUES
-                  (:fecha, :ticker, :open, :high, :low, :close, :adj_close, :volume)
+                  (:fecha, :ticker, :open, :high, :low, :close, :volume)
                 ON CONFLICT (ticker, fecha) DO UPDATE SET
-                  open = EXCLUDED.open,
-                  high = EXCLUDED.high,
-                  low  = EXCLUDED.low,
-                  close= EXCLUDED.close,
-                  adj_close = EXCLUDED.adj_close,
-                  volume    = EXCLUDED.volume
+                  open  = EXCLUDED.open,
+                  high  = EXCLUDED.high,
+                  low   = EXCLUDED.low,
+                  close = EXCLUDED.close,
+                  volume= EXCLUDED.volume
             """), r)
         c.commit()
     return True
@@ -331,10 +366,12 @@ def procesar_futuro(symbol: str, df_yf, engine) -> bool:
 
 # ── Orchestracion por seccion ────────────────────────────────────────────────
 
-def recover_precios(engine, target_date: date, args) -> dict:
+def recover_precios(engine, target_date: date, args, downloader) -> dict:
     """
     Loop incremental para precios_diarios. Retorna {ticker: max_fecha} de los que
     no se pudieron completar.
+    downloader: funcion (tickers, start, end) -> {ticker: DataFrame}.
+                Retornada por get_downloader(args.engine).
     """
     log(SEP)
     log(f"PRECIOS DIARIOS  --  target_date = {target_date}")
@@ -367,7 +404,7 @@ def recover_precios(engine, target_date: date, args) -> dict:
             for i in range(0, len(tickers), args.batch_size):
                 batch = tickers[i:i + args.batch_size]
                 try:
-                    res = download_batch(batch, start, end)
+                    res = downloader(batch, start, end)
                 except RateLimitDetected:
                     log(f"  [RATE-LIMIT] pausa {PAUSE_AFTER_RATELIMIT_S}s y reintentamos en proximo ciclo")
                     rate_limited = True
@@ -381,13 +418,13 @@ def recover_precios(engine, target_date: date, args) -> dict:
                                 log(f"  [OK]   {t}  (filas={len(res[t])})")
                             else:
                                 vacios_cycle += 1
-                                log(f"  [VACIO] {t} (df_yf no upsertable)")
+                                log(f"  [VACIO] {t} (df no upsertable)")
                         except Exception as e:
                             fail_cycle += 1
                             log(f"  [FAIL] {t}: {str(e)[:80]}")
                     else:
                         vacios_cycle += 1
-                        log(f"  [---]  {t} (yfinance sin datos)")
+                        log(f"  [---]  {t} (sin datos del engine)")
 
                 time.sleep(PAUSE_BETWEEN_BATCHES_S)
 
@@ -408,8 +445,8 @@ def recover_precios(engine, target_date: date, args) -> dict:
     return pendientes_final
 
 
-def recover_futuros(engine, target_date: date, args) -> dict:
-    """Idem para futuros_diarios."""
+def recover_futuros(engine, target_date: date, args, downloader) -> dict:
+    """Idem para futuros_diarios. downloader: ver recover_precios()."""
     log("\n" + SEP)
     log(f"FUTUROS DIARIOS  --  target_date = {target_date}")
     log(SEP)
@@ -438,7 +475,7 @@ def recover_futuros(engine, target_date: date, args) -> dict:
             for i in range(0, len(syms), args.batch_size):
                 batch = syms[i:i + args.batch_size]
                 try:
-                    res = download_batch(batch, start, end)
+                    res = downloader(batch, start, end)
                 except RateLimitDetected:
                     log(f"  [RATE-LIMIT] pausa {PAUSE_AFTER_RATELIMIT_S}s y reintentamos en proximo ciclo")
                     rate_limited = True
@@ -456,7 +493,7 @@ def recover_futuros(engine, target_date: date, args) -> dict:
                             fail_cycle += 1
                             log(f"  [FAIL] {s}: {str(e)[:80]}")
                     else:
-                        log(f"  [---]  {s} (yfinance sin datos)")
+                        log(f"  [---]  {s} (sin datos del engine)")
                 time.sleep(PAUSE_BETWEEN_BATCHES_S)
 
             if rate_limited:
@@ -501,10 +538,12 @@ def main():
     )
     parser.add_argument("--target", choices=["local", "railway"], default="local",
                         help="DB destino (default: local)")
+    parser.add_argument("--engine", choices=["yfinance", "yahooquery"], default="yfinance",
+                        help="Cliente Yahoo a usar (default: yfinance)")
     parser.add_argument("--max-cycles", type=int, default=MAX_CYCLES_DEFAULT,
                         help=f"Maximo de ciclos de reintento (default: {MAX_CYCLES_DEFAULT})")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE_DEFAULT,
-                        help=f"Tickers por lote en yf.download (default: {BATCH_SIZE_DEFAULT})")
+                        help=f"Tickers por lote en la descarga (default: {BATCH_SIZE_DEFAULT})")
     parser.add_argument("--skip-futuros", action="store_true",
                         help="Saltea la seccion de futuros")
     parser.add_argument("--skip-indicadores", action="store_true",
@@ -519,10 +558,16 @@ def main():
     from src.data.database import get_engine
     from src.utils.yfinance_lock import acquire as acquire_yf_lock
 
-    # Lock yfinance global: si otro script esta corriendo, abortar antes de
-    # tocar la API (evita doble carga sobre la misma IP). En dry-run no lockea.
+    # Lock yfinance global: el lockfile se llama 'yfinance' por historia, pero
+    # protege contra concurrencia sobre la IP frente a Yahoo en general
+    # (yfinance Y yahooquery comparten provider y rate-limit por IP).
+    # En dry-run no lockea.
     if not args.dry_run:
-        acquire_yf_lock(f"recovery_incremental --target {args.target}")
+        acquire_yf_lock(f"recovery_incremental --target {args.target} --engine {args.engine}")
+
+    # Downloader segun engine. Se construye ANTES de los loops para que un
+    # engine invalido falle rapido (validacion de argparse ya lo restringe).
+    downloader = get_downloader(args.engine)
 
     engine = get_engine()
     target_date = calcular_target_date()
@@ -530,7 +575,7 @@ def main():
     print()
     print(SEP)
     print(f"  RECOVERY INCREMENTAL  |  target_DB={args.target.upper()}  |  fecha={target_date}")
-    print(f"  batch_size={args.batch_size}  max_cycles={args.max_cycles}")
+    print(f"  engine={args.engine}  batch_size={args.batch_size}  max_cycles={args.max_cycles}")
     if args.dry_run:
         print(f"  MODO DRY-RUN (sin escritura)")
     if args.skip_futuros:
@@ -541,12 +586,12 @@ def main():
     print()
 
     # PRECIOS
-    pend_precios = recover_precios(engine, target_date, args)
+    pend_precios = recover_precios(engine, target_date, args, downloader)
 
     # FUTUROS
     pend_futuros = {}
     if not args.skip_futuros:
-        pend_futuros = recover_futuros(engine, target_date, args)
+        pend_futuros = recover_futuros(engine, target_date, args, downloader)
 
     # ── REPORTE FINAL ─────────────────────────────────────────────────────────
     print()
