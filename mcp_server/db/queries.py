@@ -347,6 +347,36 @@ SQL_OPTIONS_ACUMULACION_OI = """
 # moneyness_pct = (strike/precio_sub - 1)*100  (positivo = strike sobre precio)
 
 
+# ── Opciones: OI/volumen por strike en el ultimo snapshot ─────────────────────
+
+SQL_OPTIONS_STRIKE_OI = """
+    WITH ultimo AS (
+        SELECT MAX(fecha_snapshot) AS fecha_fin
+        FROM   opciones_snapshot
+        WHERE  ticker = $1
+    )
+    SELECT
+        s.tipo,
+        s.strike,
+        (s.vencimiento - u.fecha_fin)::int  AS dias_a_venc,
+        s.open_interest,
+        s.volumen,
+        s.precio_subyacente
+    FROM   opciones_snapshot s
+    CROSS  JOIN ultimo u
+    WHERE  s.ticker         = $1
+      AND  s.fecha_snapshot = u.fecha_fin
+      AND  s.vencimiento    > u.fecha_fin
+      AND  s.vencimiento   <= u.fecha_fin + 90
+    ORDER  BY s.strike
+"""
+# $1: ticker
+# Contratos vivos del ultimo snapshot, hasta 90 dias al vencimiento (cubre
+# las ventanas corto 1-14 / medio 15-45 / largo 46-90). Sin filtro de OI:
+# Python agrega; los strikes con OI=0 simplemente no forman zona.
+# Soporte/resistencia y PCR por ventana se computan en Python.
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Overview: get_ticker_overview
 # ══════════════════════════════════════════════════════════════════════════════

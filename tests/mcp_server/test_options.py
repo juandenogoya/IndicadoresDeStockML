@@ -23,10 +23,12 @@ from mcp_server.tools.options import (
     _iv_skew,
     _moneyness_label,
     _resumen_pcr_por_vencimiento,
+    _resumen_soporte_resistencia,
     _sesgo_iv_skew,
     _sesgo_pcr,
     _tend_actual,
     _tend_serie_row,
+    _zona_oi,
     get_options_analysis,
 )
 
@@ -340,6 +342,146 @@ class TestAcumRow:
         assert isinstance(result["iv_actual"], float)
 
 
+# ── Tests de _zona_oi (Etapa 4) ───────────────────────────────────────────────
+
+class TestZonaOi:
+    def test_dict_vacio_devuelve_none(self):
+        assert _zona_oi({}) is None
+
+    def test_un_solo_strike(self):
+        z = _zona_oi({60.0: 1000})
+        assert z["zona"] == [60.0, 60.0]
+        assert z["pico"] == 60.0
+        assert z["oi"]   == 1000
+
+    def test_cluster_contiguo_alrededor_del_pico(self):
+        # pico 61 (3200), umbral 40% = 1280. Corrida contigua: 60, 61, 62.5, 64
+        strike_oi = {
+            59.0:  800,    # < 1280 -> corta abajo
+            60.0: 1500,    # >= 1280
+            61.0: 3200,    # PICO
+            62.5: 2800,    # >= 1280
+            64.0: 1400,    # >= 1280
+            65.0:  600,    # < 1280 -> corta arriba
+            70.0: 1500,    # alto pero no contiguo -> NO entra
+        }
+        z = _zona_oi(strike_oi)
+        assert z["zona"] == [60.0, 64.0]
+        assert z["pico"] == 61.0
+        assert z["oi"]   == 1500 + 3200 + 2800 + 1400   # 8900
+
+    def test_strike_lejano_alto_no_entra_si_no_contiguo(self):
+        # 70 tiene 5000 pero los del medio (66, 68) tienen poco -> queda fuera
+        strike_oi = {
+            60.0:  500,
+            61.0: 5000,    # PICO -> umbral 2000
+            62.0:  100,    # < 2000 corta
+            68.0:  100,
+            70.0: 5000,    # no contiguo
+        }
+        z = _zona_oi(strike_oi)
+        assert z["zona"] == [61.0, 61.0]
+        assert z["pico"] == 61.0
+
+
+# ── Tests de _resumen_soporte_resistencia (Etapa 4) ──────────────────────────
+
+def _strike_row(tipo, strike, dias_a_venc, oi=0, vol=0, precio=58.4):
+    """Helper para construir filas de SQL_OPTIONS_STRIKE_OI."""
+    return {
+        "tipo":              tipo,
+        "strike":            Decimal(str(strike)),
+        "dias_a_venc":       dias_a_venc,
+        "open_interest":     oi,
+        "volumen":           vol,
+        "precio_subyacente": Decimal(str(precio)),
+    }
+
+
+class TestResumenSoporteResistencia:
+    def test_devuelve_3_ventanas_aun_sin_datos(self):
+        result = _resumen_soporte_resistencia([], precio=58.4)
+        assert result["precio_actual"] == 58.4
+        nombres = [v["ventana"] for v in result["ventanas"]]
+        assert nombres == ["corto", "medio", "largo"]
+
+    def test_ventana_invalida_si_oi_total_bajo_500(self):
+        # corto con muy poco OI
+        rows = [
+            _strike_row("call", 60.0, 5, oi=100),
+            _strike_row("put",  56.0, 5, oi=100),
+        ]
+        result = _resumen_soporte_resistencia(rows, precio=58.4)
+        corto = result["ventanas"][0]
+        assert corto["valido"] is False
+        assert corto["sesgo_pcr_oi"] == "sin liquidez"
+
+    def test_ventana_valida_con_oi_suficiente(self):
+        # OI total > 500: 400 + 300 = 700
+        rows = [
+            _strike_row("call", 60.0, 5, oi=400),
+            _strike_row("put",  56.0, 5, oi=300),
+        ]
+        result = _resumen_soporte_resistencia(rows, precio=58.4)
+        corto = result["ventanas"][0]
+        assert corto["valido"] is True
+        assert corto["oi_ventana"] == 700
+        assert corto["pcr_oi"] == pytest.approx(0.75)
+        assert corto["sesgo_pcr_oi"] == "neutro"   # 0.7-1.0
+
+    def test_resistencia_desde_calls_arriba_del_precio(self):
+        # precio 58.4; calls arriba: 60, 61, 62.5 con pico en 61
+        rows = [
+            _strike_row("call", 60.0, 5, oi=1500),
+            _strike_row("call", 61.0, 5, oi=3200),
+            _strike_row("call", 62.5, 5, oi=2800),
+            _strike_row("call", 55.0, 5, oi=900),   # debajo del precio: NO cuenta
+            _strike_row("put",  55.0, 5, oi=200),   # liquidez minima
+        ]
+        result = _resumen_soporte_resistencia(rows, precio=58.4)
+        corto = result["ventanas"][0]
+        res = corto["resistencia"]
+        assert res is not None
+        assert res["pico"] == 61.0
+        assert res["zona"] == [60.0, 62.5]
+
+    def test_soporte_desde_puts_debajo_del_precio(self):
+        rows = [
+            _strike_row("put", 55.0, 5, oi=2100),   # PICO
+            _strike_row("put", 54.0, 5, oi=1100),
+            _strike_row("put", 56.0, 5, oi=1200),
+            _strike_row("put", 60.0, 5, oi=500),    # arriba del precio: NO cuenta
+            _strike_row("call", 60.0, 5, oi=300),
+        ]
+        result = _resumen_soporte_resistencia(rows, precio=58.4)
+        corto = result["ventanas"][0]
+        sop = corto["soporte"]
+        assert sop is not None
+        assert sop["pico"] == 55.0
+
+    def test_separa_por_ventana_de_vencimiento(self):
+        # mismo strike, distinto dias_a_venc -> ventanas distintas
+        rows = [
+            _strike_row("call", 60.0, 5,  oi=400),    # corto
+            _strike_row("put",  56.0, 5,  oi=300),
+            _strike_row("call", 65.0, 30, oi=800),    # medio
+            _strike_row("put",  50.0, 30, oi=200),
+        ]
+        result = _resumen_soporte_resistencia(rows, precio=58.4)
+        corto = next(v for v in result["ventanas"] if v["ventana"] == "corto")
+        medio = next(v for v in result["ventanas"] if v["ventana"] == "medio")
+        assert corto["oi_ventana"] == 700
+        assert medio["oi_ventana"] == 1000
+
+    def test_sin_precio_no_calcula_zonas(self):
+        rows = [_strike_row("call", 60.0, 5, oi=1000),
+                _strike_row("put",  55.0, 5, oi=1000)]
+        result = _resumen_soporte_resistencia(rows, precio=None)
+        corto = result["ventanas"][0]
+        assert corto["resistencia"] is None
+        assert corto["soporte"]     is None
+
+
 # ── Tests unitarios de get_options_analysis ───────────────────────────────────
 
 def _make_pool_mock(fetchrow_val, fetch_side_effect):
@@ -395,7 +537,7 @@ async def test_estructura_respuesta_valida():
             "max_fecha":    date(2026, 5, 15),
             "cutoff_fecha": date(2026, 4, 18),
         },
-        fetch_side_effect=[[], [], []],  # tend, pcr, acum — todos vacios
+        fetch_side_effect=[[], [], [], []],  # tend, pcr, acum, strike_oi — vacios
     )
     with patch("mcp_server.tools.options.get_pool", AsyncMock(return_value=pool)):
         result = await get_options_analysis("AAPL")
@@ -410,6 +552,10 @@ async def test_estructura_respuesta_valida():
     assert "acumulacion_oi"          in result
     assert "top_calls_por_delta_oi"  in result["acumulacion_oi"]
     assert "top_puts_por_delta_oi"   in result["acumulacion_oi"]
+    assert "soporte_resistencia"     in result
+    assert "ventanas"                in result["soporte_resistencia"]
+    # 3 ventanas siempre (corto/medio/largo), aunque esten vacias
+    assert len(result["soporte_resistencia"]["ventanas"]) == 3
 
 
 @pytest.mark.asyncio
@@ -419,7 +565,7 @@ async def test_dias_historia_se_clampea_al_maximo():
             "max_fecha":    date(2026, 5, 15),
             "cutoff_fecha": date(2026, 4, 18),
         },
-        fetch_side_effect=[[], [], []],
+        fetch_side_effect=[[], [], [], []],
     )
     with patch("mcp_server.tools.options.get_pool", AsyncMock(return_value=pool)):
         result = await get_options_analysis("AAPL", dias_historia=999)
@@ -448,7 +594,7 @@ async def test_acumulacion_separada_por_tipo():
             "max_fecha":    date(2026, 5, 15),
             "cutoff_fecha": date(2026, 4, 18),
         },
-        fetch_side_effect=[[], [], acum_rows],
+        fetch_side_effect=[[], [], acum_rows, []],
     )
     with patch("mcp_server.tools.options.get_pool", AsyncMock(return_value=pool)):
         result = await get_options_analysis("AAPL")
@@ -479,7 +625,7 @@ async def test_precio_sub_del_primer_dia_de_tendencia():
             "max_fecha":    date(2026, 5, 15),
             "cutoff_fecha": date(2026, 4, 18),
         },
-        fetch_side_effect=[[tend_row_mock], [], []],
+        fetch_side_effect=[[tend_row_mock], [], [], []],
     )
     with patch("mcp_server.tools.options.get_pool", AsyncMock(return_value=pool)):
         result = await get_options_analysis("AAPL")
@@ -537,6 +683,19 @@ async def test_get_options_analysis_integration():
     # Validar moneyness_label en acumulacion
     for row in result["acumulacion_oi"]["top_calls_por_delta_oi"]:
         assert row["moneyness_label"] in ("ATM", "OTM", "ITM", "N/A")
+
+    # Validar estructura de soporte_resistencia (Etapa 4)
+    sr = result["soporte_resistencia"]
+    assert "precio_actual" in sr
+    assert len(sr["ventanas"]) == 3
+    for v in sr["ventanas"]:
+        assert v["ventana"] in ("corto", "medio", "largo")
+        assert "valido"        in v
+        assert "oi_ventana"    in v
+        assert "pcr_oi"        in v
+        assert "sesgo_pcr_oi"  in v
+        assert "resistencia"   in v
+        assert "soporte"       in v
 
 
 @pytest.mark.integration

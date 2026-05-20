@@ -5,7 +5,7 @@ posicionamiento institucional.
 
 Tool unica: get_options_analysis(ticker, dias_historia=20)
 
-Retorna un envelope con 3 secciones:
+Retorna un envelope con 4 secciones:
   tendencia_diaria     -- {actual, serie}: ultimo dia completo + serie diaria
                           recortada (PCR vol/OI, IV skew, z-scores por dia).
                           Conserva la trayectoria; campos redundantes fuera.
@@ -13,6 +13,10 @@ Retorna un envelope con 3 secciones:
                           inicio/actual, delta de OI, sesgo y tendencia
                           (NO devuelve la serie diaria cruda -- ahorro de tokens)
   acumulacion_oi       -- top 10 calls + top 10 puts con mayor crecimiento de OI
+  soporte_resistencia  -- por ventana de vencimiento (corto 1-14, medio 15-45,
+                          largo 46-90): PCR de la ventana + zona de soporte y
+                          resistencia derivadas del cluster de OI (puts abajo /
+                          calls arriba del precio). Util para TP/SL/alertas.
 
 La seccion 3 responde: "a donde fue el dinero nuevo en el periodo?"
 La seccion 2 responde: "como evoluciono el sentimiento por vencimiento?"
@@ -40,11 +44,24 @@ from mcp_server.db.queries import (
     SQL_OPTIONS_ACUMULACION_OI,
     SQL_OPTIONS_DATE_RANGE,
     SQL_OPTIONS_PCR_POR_VENCIMIENTO,
+    SQL_OPTIONS_STRIKE_OI,
     SQL_OPTIONS_TENDENCIA,
 )
 
 MAX_DIAS_HISTORIA = 60
 DEFAULT_DIAS_HISTORIA = 20
+
+# ── Etapa 4: ventanas de vencimiento, liquidez y zonas S/R ────────────────────
+# Espejo de scripts/forward_testing/ft_bot_tech_sectorial_options_v1.py.
+# El MCP no puede importar de scripts/; si cambian alla, sincronizar aca.
+# Registro y justificacion en docs/parametros_mcp.md.
+_VENTANAS_VENC = [
+    ("corto", 1, 14),    # weeklies, posicionamiento tactico
+    ("medio", 15, 45),   # mensuales, mayor OI, mas confiable
+    ("largo", 46, 90),   # institucional, medio plazo
+]
+_MIN_OI_VENTANA = 500    # OI total (call+put) minimo para ventana valida
+_ZONA_OI_PCT    = 0.40   # strike entra a la zona si OI >= 40% del pico
 
 OPTIONS_ANNOTATIONS = {
     "readOnlyHint": True,
@@ -298,6 +315,107 @@ def _resumen_pcr_por_vencimiento(rows) -> list[dict]:
     return sorted(resumen, key=lambda x: x["vencimiento"])
 
 
+# ── Soporte / resistencia desde OI por ventana de vencimiento ────────────────
+
+def _zona_oi(strike_oi: dict) -> dict | None:
+    """
+    Calcula una zona de precio a partir del OI por strike de UN solo lado
+    (calls arriba del precio = resistencia, puts abajo del precio = soporte).
+
+    Algoritmo:
+      1. Pico = strike con mayor OI.
+      2. Umbral = OI del pico * _ZONA_OI_PCT (default 40%).
+      3. Zona = corrida CONTIGUA de strikes alrededor del pico cuyo OI sigue
+         estando por encima del umbral. La contigueidad importa: si hay un
+         strike lejano con OI alto pero los del medio no, es un muro aparte.
+
+    Retorna {zona: [desde, hasta], pico, oi} o None si no hay strikes.
+    """
+    if not strike_oi:
+        return None
+    strikes = sorted(strike_oi)
+    pico    = max(strikes, key=lambda s: strike_oi[s])
+    umbral  = strike_oi[pico] * _ZONA_OI_PCT
+    i       = strikes.index(pico)
+    lo = hi = i
+    while lo > 0 and strike_oi[strikes[lo - 1]] >= umbral:
+        lo -= 1
+    while hi < len(strikes) - 1 and strike_oi[strikes[hi + 1]] >= umbral:
+        hi += 1
+    zona = strikes[lo:hi + 1]
+    return {
+        "zona": [zona[0], zona[-1]],
+        "pico": pico,
+        "oi":   sum(strike_oi[s] for s in zona),
+    }
+
+
+def _resumen_soporte_resistencia(rows, precio) -> dict:
+    """
+    Por cada ventana (corto/medio/largo): PCR de la ventana + zonas de
+    soporte/resistencia derivadas del OI.
+
+    rows: filas de SQL_OPTIONS_STRIKE_OI (tipo, strike, dias_a_venc, OI, vol).
+    precio: precio del subyacente (para separar strikes arriba/abajo).
+
+    Por ventana:
+      - oi_ventana = sum(call_oi) + sum(put_oi).
+      - valido = oi_ventana >= _MIN_OI_VENTANA (default 500).
+      - PCR vol y OI con su sesgo (3 bandas). Si !valido, sesgo = "sin liquidez".
+      - resistencia = zona de call OI sobre el precio.
+      - soporte     = zona de put OI bajo el precio.
+    """
+    ventanas = []
+    for nombre, dmin, dmax in _VENTANAS_VENC:
+        ws = [r for r in rows
+              if r["dias_a_venc"] is not None and dmin <= r["dias_a_venc"] <= dmax]
+
+        call_oi  = sum(int(r["open_interest"] or 0) for r in ws if r["tipo"] == "call")
+        put_oi   = sum(int(r["open_interest"] or 0) for r in ws if r["tipo"] == "put")
+        call_vol = sum(int(r["volumen"]       or 0) for r in ws if r["tipo"] == "call")
+        put_vol  = sum(int(r["volumen"]       or 0) for r in ws if r["tipo"] == "put")
+        oi_ventana = call_oi + put_oi
+        valido = oi_ventana >= _MIN_OI_VENTANA
+
+        pcr_oi  = _pcr(put_oi,  call_oi)
+        pcr_vol = _pcr(put_vol, call_vol)
+        sesgo_oi  = _sesgo_pcr(pcr_oi)  if valido else "sin liquidez"
+        sesgo_vol = _sesgo_pcr(pcr_vol) if valido else "sin liquidez"
+
+        # Zonas S/R: solo si tenemos precio. Resistencia = calls sobre precio;
+        # soporte = puts bajo precio.
+        resistencia = soporte = None
+        if precio is not None:
+            calls_arriba = {}
+            puts_abajo   = {}
+            for r in ws:
+                k = float(r["strike"])
+                oi = int(r["open_interest"] or 0)
+                if oi <= 0:
+                    continue
+                if r["tipo"] == "call" and k > precio:
+                    calls_arriba[k] = calls_arriba.get(k, 0) + oi
+                elif r["tipo"] == "put" and k < precio:
+                    puts_abajo[k] = puts_abajo.get(k, 0) + oi
+            resistencia = _zona_oi(calls_arriba)
+            soporte     = _zona_oi(puts_abajo)
+
+        ventanas.append({
+            "ventana":       nombre,
+            "dias":          f"{dmin}-{dmax}",
+            "valido":        valido,
+            "oi_ventana":    oi_ventana,
+            "pcr_oi":        pcr_oi,
+            "sesgo_pcr_oi":  sesgo_oi,
+            "pcr_vol":       pcr_vol,
+            "sesgo_pcr_vol": sesgo_vol,
+            "resistencia":   resistencia,
+            "soporte":       soporte,
+        })
+
+    return {"precio_actual": precio, "ventanas": ventanas}
+
+
 # ── Tool publica ──────────────────────────────────────────────────────────────
 
 async def get_options_analysis(
@@ -336,6 +454,17 @@ async def get_options_analysis(
       - calls OTM acumulando = apuesta alcista (espera subida de precio)
       - puts ATM acumulando  = cobertura bajista (espera caida o volatilidad)
 
+    soporte_resistencia: por cada ventana de vencimiento (corto 1-14d, medio
+      15-45d, largo 46-90d) computa, sobre el ULTIMO snapshot:
+      - PCR_OI y PCR_vol agregados de la ventana (con sus sesgos de 3 bandas).
+      - valido=False si el OI total de la ventana < 500 (sin liquidez fiable).
+      - resistencia: zona [desde, hasta] derivada del cluster de call OI por
+        encima del precio (strikes contiguos con OI >= 40% del pico).
+      - soporte: misma idea con put OI por debajo del precio.
+      Las zonas dan rangos de precio testeables para TP/SL o alertas.
+      Las ventanas y umbrales se replican de scripts/forward_testing/ y
+      estan documentados en docs/parametros_mcp.md.
+
     Args:
         ticker:        Simbolo del activo (ej: "AAPL", "SPY"). Case-sensitive.
         dias_historia: Snapshots diarios a incluir (default 20, max 60).
@@ -344,7 +473,8 @@ async def get_options_analysis(
     Returns:
         {ticker, fecha_snapshot, cutoff_fecha, precio_subyacente,
          dias_historia, tendencia_diaria, pcr_por_vencimiento,
-         acumulacion_oi: {top_calls_por_delta_oi, top_puts_por_delta_oi}}
+         acumulacion_oi: {top_calls_por_delta_oi, top_puts_por_delta_oi},
+         soporte_resistencia: {precio_actual, ventanas: [...]}}
         En caso de error o sin datos: {"error": "<descripcion>"}.
     """
     dias_historia = max(1, min(int(dias_historia), MAX_DIAS_HISTORIA))
@@ -384,6 +514,11 @@ async def get_options_analysis(
                 SQL_OPTIONS_ACUMULACION_OI, ticker, cutoff_fecha
             )
 
+            # 5. Strike OI del ultimo snapshot (para zonas S/R por ventana)
+            strike_rows = await conn.fetch(
+                SQL_OPTIONS_STRIKE_OI, ticker
+            )
+
         # Precio subyacente del snapshot mas reciente (primer row = mas reciente)
         precio_sub = None
         if tend_rows:
@@ -414,6 +549,7 @@ async def get_options_analysis(
                 "top_calls_por_delta_oi": top_calls,
                 "top_puts_por_delta_oi":  top_puts,
             },
+            "soporte_resistencia": _resumen_soporte_resistencia(strike_rows, precio_sub),
         }
 
     except Exception as exc:
