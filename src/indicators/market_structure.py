@@ -263,8 +263,22 @@ def _calcular_ticker(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def calcular_features_market_structure(df: pd.DataFrame) -> pd.DataFrame:
-    """Aplica el calculo de features por ticker via groupby."""
-    resultado = df.groupby("ticker", group_keys=False).apply(_calcular_ticker)
+    """Aplica el calculo de features por ticker via iteracion explicita.
+
+    Nota (20/5/2026): se reemplazo el groupby.apply original porque en
+    pandas 3.x con group_keys=False la columna 'ticker' se descarta del
+    DataFrame resultante (en pandas 2.x se preservaba). upsert_features_ms()
+    requiere 'ticker' como columna. Iterar manualmente + concat es
+    agnostico a la version de pandas y deja el mismo resultado funcional.
+    """
+    grupos = []
+    for ticker, grp in df.groupby("ticker", sort=True):
+        res = _calcular_ticker(grp)
+        if "ticker" not in res.columns:
+            res = res.copy()
+            res["ticker"] = ticker
+        grupos.append(res)
+    resultado = pd.concat(grupos, ignore_index=True)
     print(f"    Features calculadas: {len(resultado):,} filas")
     return resultado
 

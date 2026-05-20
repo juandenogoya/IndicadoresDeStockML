@@ -165,8 +165,20 @@ def _calcular_grupo_1w(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def calcular_features_precio_accion_1w(df: pd.DataFrame) -> pd.DataFrame:
-    """Aplica el calculo de features por ticker via groupby."""
-    resultado = df.groupby("ticker", group_keys=False).apply(_calcular_grupo_1w)
+    """Aplica el calculo de features 1W por ticker via iteracion explicita.
+
+    Mismo fix que las versiones diarias (20/5/2026): pandas 3.x con
+    group_keys=False descarta la columna 'ticker' del resultado. Iterar
+    manualmente + concat es agnostico a la version de pandas.
+    """
+    grupos = []
+    for ticker, grp in df.groupby("ticker", sort=True):
+        res = _calcular_grupo_1w(grp)
+        if "ticker" not in res.columns:
+            res = res.copy()
+            res["ticker"] = ticker
+        grupos.append(res)
+    resultado = pd.concat(grupos, ignore_index=True)
     print(f"    Features 1W calculadas: {len(resultado):,} filas")
     return resultado
 
