@@ -179,10 +179,23 @@ REM   - El nombre de la estrategia
 REM   - El nombre del script .py
 
 
+REM ── PASO FINAL - Generar reporte HTML ────────────────────────
+echo Generando reporte HTML...
+echo. >> "%LOGFILE%"
+echo --- REPORTE HTML --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\forward_testing\ft_reporte_html.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [WARN] ft_reporte_html.py fallo - ver log.
+) ELSE (
+    echo [OK] Reporte: %ROOT%reportes\ft_reporte.html
+)
+
+
 echo.
 echo ============================================================
 echo  Completado. Ver detalle en:
 echo  %LOGFILE%
+echo  Reporte HTML: %ROOT%reportes\ft_reporte.html
 IF %ERRORS% EQU 1 (
     echo  ATENCION: uno o mas bots reportaron error - ver log.
 )
