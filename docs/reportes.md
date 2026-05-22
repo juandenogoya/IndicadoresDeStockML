@@ -39,10 +39,25 @@ Ambos comparten el mismo origen de datos (el YAML) pero distinto destino.
    markdown estandar (prefijo `✦`, indentacion, bullets con `*`, secciones
    "1. Titulo"). `make_report.py` lo limpia antes de renderizar.
 
+## App local (Streamlit) -- la forma amigable
+
+`scripts/reports/app.py` (lanzar con `app.bat`) es una UI local que envuelve
+todo el modulo: escribís un ticker, "Traer datos", pegás la narrativa del LLM
+(opcional) y generás infografía o PDF con un boton, con preview y descarga.
+Abre en `http://localhost:8501`.
+
+Decision tecnica clave: la app obtiene los datos corriendo `build_yaml.py`
+como **subproceso**, no importando las tools del MCP en proceso. Razon:
+asyncpg no se lleva bien con el modelo de event-loop/threads de Streamlit
+(da WinError 64). Ademas, el subproceso se lanza con `DATABASE_URL` removida
+del env para forzar el DSN LOCAL (si Streamlit heredo una DATABASE_URL
+remota del shell, sin esto intentaria conectar a Railway y falla).
+
 ## Estructura del modulo
 
 ```
 scripts/reports/
+|-- app.py / .bat              # UI local Streamlit (envuelve todo el modulo)
 |-- build_yaml.py / .bat       # ticker -> YAML (datos del MCP) + .md placeholder
 |-- make_report.py / .bat      # YAML (+ .md) -> PDF + PNGs por pagina
 |-- make_infografia.py / .bat  # ticker o YAML -> infografía PNG (single image)

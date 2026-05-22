@@ -4,6 +4,7 @@ pyyaml>=6.0
 python-dotenv>=1.0
 markdown>=3.5
 pymupdf>=1.24      # PDF -> PNG (pure Python, sin deps de sistema)
+streamlit>=1.30    # app local (scripts/reports/app.py)
 
 # Notas:
 # - asyncpg y pydantic-settings ya vienen del MCP server (mismo venv).
