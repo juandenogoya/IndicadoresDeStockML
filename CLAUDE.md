@@ -22,6 +22,8 @@ Documentacion que existe hoy en docs/:
 - docs/mcp_server.md      : servidor MCP consultivo (diseno + estado)
 - docs/parametros_mcp.md  : registro de umbrales/parametros de las tools MCP
                             y su interpretacion (para re-tunear a futuro)
+- docs/reportes.md        : modulo scripts/reports/ -- generador de PDF e
+                            infografias para compartir analisis en X
 - docs/estrategias_ft.md  : estrategias de forward testing
 - docs/forward_testing/   : detalle de forward testing
 - docs/checklist_recovery_manual.md : flujos de recovery manual
@@ -153,6 +155,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/migrations/create_earnings_calendar.py` | Crea la tabla earnings_calendar (Railway + local) |
 | `scripts/migrations/migrate_ft_railway_to_local.py` | Migracion puntual de tablas ft_* Railway -> local |
+| `scripts/reports/make_infografia.bat <TICKER>` | Infografia PNG para X (datos del MCP, sin LLM). Ver docs/reportes.md |
+| `scripts/reports/build_yaml.bat <TICKER>` + `make_report.bat <yaml>` | Reporte PDF detallado con narrativa del LLM |
 
 ## Tablas DB principales
 

@@ -65,3 +65,13 @@ scripts/manual/check_yfinance_download_v2*.py
 
 # Backups locales de la migracion FT (descartables)
 scripts/migrations/backup_ft_local_*/
+
+# Reportes HTML generados (artefactos, no versionar)
+reportes/
+
+# Salida del modulo scripts/reports/ (YAMLs, MDs, PDFs, PNGs por analisis)
+scripts/reports/output/
+
+# Artefactos generados en examples/ (solo se versiona el YAML de input)
+scripts/reports/examples/*.pdf
+scripts/reports/examples/*.png

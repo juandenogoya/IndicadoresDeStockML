@@ -10,11 +10,8 @@ handle: "@juan_de_nogoya"
 precio: 58.40
 var_5d: 2.1
 
-veredicto: >
-  Estructura alcista de corto plazo (3 velas verdes consecutivas) con
-  indicadores confirmando la tendencia. Las opciones muestran cautela en
-  el medio plazo (PCR_OI > 1 en vencimientos de mayo-junio), con muros
-  de calls que limitan el upside cercano.
+# NOTA: veredicto/conclusion fueron reemplazados por `narrativa` (markdown libre).
+# Ver al final del archivo.
 
 # Tabla resumen de niveles (Página 1)
 # resistencia / soporte son listas [desde, hasta]; null = sin liquidez
@@ -107,9 +104,30 @@ strikes_calientes:
     moneyness: OTM
     delta_oi: 860
 
-# Cierre / Setup operativo (Página 2)
-conclusion: >
-  El alza de corto plazo tiene soporte técnico (RSI alcista, SMA alineada).
-  Resistencia inmediata en 61-64 donde se acumulan calls. La cautela del
-  medio plazo sugiere tomar parciales antes de esa zona; un cierre bajo $54
-  invalidaría el setup.
+# Narrativa libre en markdown (Página 3+)
+# Pegá el output del LLM tal cual: usa ## para secciones, * para itálicas,
+# ** para negritas, - para listas. El PDF lo renderiza con estilo navy.
+narrativa: |
+  ## Análisis de opciones
+
+  Tendencia diaria mixta: PCR vol 0.61 alcista (más actividad en calls),
+  pero PCR OI 1.27 bajista (más posicionamiento defensivo). El IV skew
+  positivo refuerza el sesgo defensivo.
+
+  La acumulación de OI por vencimiento muestra divergencia: corto plazo
+  neutro, medio bajista (puts acumulando en 47-48), largo alcista
+  (calls acumulando en 60).
+
+  ## Estructura técnica
+
+  RSI 48 (neutral) y MACD bajista en el muy corto plazo, pero SMA21 sobre
+  SMA50 sostiene la estructura alcista de medio plazo. La acción está
+  consolidando arriba de 50 con resistencia clara en 51.5-52.
+
+  ## Setup operativo
+
+  - **Largo**: ruptura sostenida arriba de $52 con volumen.
+  - **TP1**: $55 (resistencia del medio plazo).
+  - **SL**: cierre bajo $48.5 invalida el setup.
+  - **Vigilar**: si el PCR OI del medio plazo se modera, el sesgo se vuelve
+    más claramente alcista.

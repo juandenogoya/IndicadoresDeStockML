@@ -38,8 +38,8 @@ body {
 .header {
     background: #1B2A4E;
     color: white;
-    padding: 16pt 20pt;
-    margin: -1.5cm -1.8cm 18pt -1.8cm;
+    padding: 14pt 20pt;
+    margin: -1.5cm -1.8cm 14pt -1.8cm;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -101,18 +101,18 @@ body {
     letter-spacing: 1.2pt;
     color: #5D7290;
     border-bottom: 1pt solid #DDE3EC;
-    padding-bottom: 4pt;
-    margin: 16pt 0 10pt 0;
+    padding-bottom: 3pt;
+    margin: 12pt 0 7pt 0;
 }
 
 /* ── Veredicto (callout) ───────────────────────────────────── */
 .veredicto {
     background: #F5F7FA;
     border-left: 3pt solid #1B2A4E;
-    padding: 10pt 14pt;
-    margin: 6pt 0 8pt 0;
-    font-size: 10.5pt;
-    line-height: 1.5;
+    padding: 8pt 12pt;
+    margin: 4pt 0 6pt 0;
+    font-size: 10pt;
+    line-height: 1.45;
 }
 
 /* ── Tablas (niveles, indicadores, sesgo) ──────────────────── */
@@ -152,7 +152,7 @@ td {
 
 /* ── Ventanas de opciones ──────────────────────────────────── */
 .ventana {
-    margin: 10pt 0;
+    margin: 6pt 0;
     padding-left: 8pt;
     border-left: 2pt solid #DDE3EC;
 }
@@ -194,16 +194,93 @@ td {
 .conclusion {
     background: #F5F7FA;
     border-left: 3pt solid #1B2A4E;
-    padding: 10pt 14pt;
-    margin: 6pt 0 14pt 0;
+    padding: 8pt 12pt;
+    margin: 4pt 0 8pt 0;
     font-size: 10pt;
+    line-height: 1.5;
+}
+
+/* ── Narrativa (markdown renderizado) ──────────────────────── */
+.narrativa-content {
+    margin: 4pt 0 12pt 0;
+}
+
+.narrativa-content h2 {
+    text-transform: uppercase;
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 1.2pt;
+    color: #1B2A4E;
+    border-bottom: 1pt solid #DDE3EC;
+    padding-bottom: 4pt;
+    margin: 14pt 0 6pt 0;
+    page-break-after: avoid;
+}
+
+.narrativa-content h3 {
+    font-size: 10.5pt;
+    font-weight: 700;
+    color: #1B2A4E;
+    margin: 10pt 0 4pt 0;
+    page-break-after: avoid;
+}
+
+.narrativa-content h2:first-child,
+.narrativa-content h3:first-child {
+    margin-top: 0;
+}
+
+.narrativa-content p {
+    margin: 4pt 0 6pt 0;
     line-height: 1.55;
+    text-align: justify;
+}
+
+.narrativa-content ul,
+.narrativa-content ol {
+    margin: 4pt 0 6pt 0;
+    padding-left: 18pt;
+}
+
+.narrativa-content li {
+    margin: 2pt 0;
+    line-height: 1.45;
+}
+
+.narrativa-content strong {
+    color: #1B2A4E;
+    font-weight: 700;
+}
+
+.narrativa-content em {
+    color: #5D7290;
+}
+
+.narrativa-content code {
+    background: #F0F2F5;
+    padding: 1pt 4pt;
+    border-radius: 2pt;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 9pt;
+}
+
+.narrativa-content blockquote {
+    border-left: 3pt solid #5D7290;
+    background: #F5F7FA;
+    padding: 6pt 12pt;
+    margin: 8pt 0;
+    color: #2C3E50;
+    font-style: italic;
+}
+
+.narrativa-content table {
+    margin: 6pt 0;
 }
 
 /* ── Disclaimer + handle (footer del cuerpo) ───────────────── */
 .cierre {
-    margin-top: 18pt;
-    padding-top: 10pt;
+    margin-top: 10pt;
+    padding-top: 7pt;
     border-top: 1pt solid #DDE3EC;
     text-align: center;
     font-size: 8.5pt;

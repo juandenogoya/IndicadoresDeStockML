@@ -1,0 +1,255 @@
+/* ─────────────────────────────────────────────────────────────
+   Infografía -- versión X-friendly (1 sola imagen tall)
+   Paleta: navy (#1B2A4E) + blanco + grafito (#2C3E50)
+   Tamaño: 1080x1500 px (apto para feed de X y carrusel)
+   ───────────────────────────────────────────────────────────── */
+
+@page {
+    size: 1080px 1500px;
+    margin: 0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    color: #2C3E50;
+    background: #F5F7FA;
+    font-size: 14pt;
+    line-height: 1.35;
+}
+
+.ig-container {
+    width: 1080px;
+    min-height: 1500px;
+    padding: 0;
+    background: #F5F7FA;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Header navy ─────────────────────────────────────────── */
+.ig-header {
+    background: #1B2A4E;
+    color: white;
+    padding: 22px 36px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.ig-header .ticker-name {
+    font-size: 26pt;
+    font-weight: 700;
+    letter-spacing: 0.4pt;
+    line-height: 1.05;
+}
+.ig-header .nombre {
+    font-weight: 400;
+    opacity: 0.85;
+    font-size: 18pt;
+}
+.ig-header .subtitle {
+    font-size: 11pt;
+    opacity: 0.85;
+    margin-top: 4px;
+    letter-spacing: 0.3pt;
+}
+.ig-header .header-right {
+    font-size: 12pt;
+    font-weight: 600;
+    opacity: 0.95;
+}
+
+/* ── Bloques generales ──────────────────────────────────── */
+.ig-bloque {
+    background: white;
+    margin: 12px 18px;
+    padding: 16px 22px;
+    border-radius: 6px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+.ig-bloque h2 {
+    text-transform: uppercase;
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 1.4pt;
+    color: #5D7290;
+    margin: 0 0 10px 0;
+    padding-bottom: 6px;
+    border-bottom: 1pt solid #DDE3EC;
+}
+
+/* ── Bloque 1: identidad + precio ───────────────────────── */
+.ig-precio {
+    display: flex;
+    align-items: center;
+    gap: 30px;
+}
+.ig-ticker-info {
+    flex: 0 0 auto;
+    text-align: center;
+    border-right: 1pt solid #DDE3EC;
+    padding-right: 24px;
+}
+.ig-precio-info {
+    flex: 1;
+}
+.ticker-big {
+    font-size: 36pt;
+    font-weight: 700;
+    color: #1B2A4E;
+    line-height: 1;
+}
+.ticker-sector {
+    font-size: 10pt;
+    color: #5D7290;
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.6pt;
+}
+.precio-label {
+    font-size: 9pt;
+    color: #5D7290;
+    text-transform: uppercase;
+    letter-spacing: 0.8pt;
+}
+.precio-valor {
+    font-size: 32pt;
+    font-weight: 700;
+    color: #1B2A4E;
+    line-height: 1.1;
+}
+.precio-var {
+    font-size: 16pt;
+    font-weight: 600;
+    margin-top: 2px;
+}
+.precio-var.positive { color: #198754; }
+.precio-var.negative { color: #DC3545; }
+.precio-meta {
+    font-size: 9pt;
+    color: #8794A8;
+    margin-top: 4px;
+}
+
+/* ── Tablas (sesgo, niveles, PA) ────────────────────────── */
+.ig-bloque table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12pt;
+}
+.ig-bloque th {
+    text-align: left;
+    font-weight: 600;
+    color: #5D7290;
+    padding: 6px 8px;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+    border-bottom: 1pt solid #DDE3EC;
+}
+.ig-bloque td {
+    padding: 7px 8px;
+    border-bottom: 1pt solid #F0F2F5;
+}
+.tabla-sesgo td.lbl,
+.tabla-pa td.lbl {
+    color: #5D7290;
+    width: 50%;
+}
+.tabla-sesgo td.val,
+.tabla-pa td.val {
+    font-weight: 700;
+    color: #1B2A4E;
+}
+
+/* ── Colores semánticos del sesgo ───────────────────────── */
+.sesgo-alcista,
+.sesgo-alcista-fuerte { color: #198754 !important; }
+.sesgo-bajista,
+.sesgo-bajista-fuerte { color: #DC3545 !important; }
+.sesgo-neutro,
+.sesgo-lateral,
+.sesgo-neutral { color: #5D7290 !important; }
+.sesgo-sin-datos    { color: #8794A8 !important; font-style: italic; }
+
+/* ── Frase interpretativa (regla, no LLM) ──────────────── */
+.interp {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: #F5F7FA;
+    border-left: 3pt solid #1B2A4E;
+    font-size: 11pt;
+    color: #2C3E50;
+    line-height: 1.45;
+}
+
+/* ── Layout de 2 columnas (indicadores + opciones) ────── */
+.ig-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    margin: 0;
+}
+.ig-2col .ig-bloque {
+    margin: 12px 9px;
+}
+.ig-2col .ig-bloque:first-child { margin-left: 18px; }
+.ig-2col .ig-bloque:last-child  { margin-right: 18px; }
+
+/* ── Metricas (RSI, MACD, PCR, etc.) ────────────────────── */
+.metrica {
+    display: grid;
+    grid-template-columns: 1fr 70px 1fr;
+    gap: 8px;
+    align-items: baseline;
+    padding: 7px 0;
+    border-bottom: 1pt solid #F0F2F5;
+    font-size: 11pt;
+}
+.metrica:last-child { border-bottom: none; }
+.m-nombre {
+    color: #5D7290;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 9pt;
+    letter-spacing: 0.4pt;
+}
+.m-valor {
+    font-weight: 700;
+    color: #1B2A4E;
+    font-size: 13pt;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.m-label {
+    color: #2C3E50;
+    font-style: italic;
+    font-size: 11pt;
+    text-align: left;
+    padding-left: 6px;
+}
+
+.sin-datos { color: #8794A8; font-style: italic; }
+
+/* ── Footer ─────────────────────────────────────────────── */
+.ig-footer {
+    margin: auto 0 0 0;
+    padding: 14px 36px;
+    background: #1B2A4E;
+    color: white;
+    text-align: center;
+    font-size: 10pt;
+}
+.ig-footer .handle {
+    font-weight: 700;
+}
+.ig-footer .sep { margin: 0 8px; opacity: 0.5; }
+.ig-footer .disclaimer { opacity: 0.85; font-style: italic; }
+
+/* ── Cell de ventana en niveles ─────────────────────────── */
+.ventana-cell {
+    font-weight: 600;
+    color: #1B2A4E;
+}

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <title>{{ ticker }} — Infografía {{ fecha }}</title>
+    <link rel="stylesheet" href="infografia.css">
+</head>
+<body>
+
+<div class="ig-container">
+
+    {# ── Header ──────────────────────────────────────────────── #}
+    <header class="ig-header">
+        <div class="header-left">
+            <div class="ticker-name">{{ ticker }}{% if nombre %} <span class="nombre">• {{ nombre }}</span>{% endif %}</div>
+            <div class="subtitle">{{ fecha_legible }} — Análisis Técnico</div>
+        </div>
+        <div class="header-right">{{ handle }}</div>
+    </header>
+
+    {# ── Bloque 1: Identidad + Precio ────────────────────────── #}
+    <section class="ig-bloque ig-precio">
+        <div class="ig-ticker-info">
+            <div class="ticker-big">{{ ticker }}</div>
+            {% if sector %}<div class="ticker-sector">{{ sector }}</div>{% endif %}
+        </div>
+        <div class="ig-precio-info">
+            <div class="precio-label">Precio</div>
+            <div class="precio-valor">${{ "%.2f"|format(precio) }}</div>
+            {% if var_5d is not none %}
+            <div class="precio-var {{ 'positive' if var_5d >= 0 else 'negative' }}">
+                {{ "%+.1f"|format(var_5d) }}% (5d) {{ '↑' if var_5d >= 0 else '↓' }}
+            </div>
+            {% endif %}
+            <div class="precio-meta">Cierre {{ fecha }}</div>
+        </div>
+    </section>
+
+    {# ── Bloque 2: Sesgo general ─────────────────────────────── #}
+    <section class="ig-bloque ig-sesgo">
+        <h2>Sesgo general</h2>
+        <table class="tabla-sesgo">
+            <tr>
+                <td class="lbl">Indicadores técnicos</td>
+                <td class="val sesgo-{{ sesgo.indicadores | lower | replace(' ', '-') }}">{{ sesgo.indicadores }}</td>
+            </tr>
+            <tr>
+                <td class="lbl">Opciones (PCR OI)</td>
+                <td class="val sesgo-{{ sesgo.opciones | lower | replace(' ', '-') }}">{{ sesgo.opciones }}</td>
+            </tr>
+            <tr>
+                <td class="lbl">IV Skew {% if sesgo.iv_skew_valor is not none %}({{ "%+.3f"|format(sesgo.iv_skew_valor) }}){% endif %}</td>
+                <td class="val sesgo-{{ sesgo.iv_skew | lower | replace(' ', '-') }}">{{ sesgo.iv_skew }}</td>
+            </tr>
+        </table>
+        {% if frase_combinada %}
+        <div class="interp">→ {{ frase_combinada }}</div>
+        {% endif %}
+    </section>
+
+    {# ── Bloque 3: Niveles por ventana ───────────────────────── #}
+    <section class="ig-bloque ig-niveles">
+        <h2>Niveles por ventana</h2>
+        <table>
+            <thead>
+                <tr><th>Ventana</th><th>Resistencia</th><th>Soporte</th></tr>
+            </thead>
+            <tbody>
+                {% for v in niveles %}
+                <tr>
+                    <td class="ventana-cell">{{ v.ventana }}</td>
+                    <td>
+                        {%- if v.resistencia -%}
+                            ${{ "%.1f"|format(v.resistencia[0]) }}{% if v.resistencia[0] != v.resistencia[1] %} – ${{ "%.1f"|format(v.resistencia[1]) }}{% endif %}
+                        {%- else -%}
+                            <span class="sin-datos">sin liquidez</span>
+                        {%- endif -%}
+                    </td>
+                    <td>
+                        {%- if v.soporte -%}
+                            ${{ "%.1f"|format(v.soporte[0]) }}{% if v.soporte[0] != v.soporte[1] %} – ${{ "%.1f"|format(v.soporte[1]) }}{% endif %}
+                        {%- else -%}
+                            <span class="sin-datos">sin liquidez</span>
+                        {%- endif -%}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    {# ── Bloque 4 y 5: Indicadores + Opciones (2 columnas) ───── #}
+    <div class="ig-2col">
+        <section class="ig-bloque ig-indicadores">
+            <h2>Indicadores</h2>
+            <div class="metrica">
+                <span class="m-nombre">RSI14</span>
+                <span class="m-valor">{{ "%.1f"|format(indicadores.rsi14) }}</span>
+                <span class="m-label">{{ indicadores.rsi14_sesgo }}</span>
+            </div>
+            <div class="metrica">
+                <span class="m-nombre">MACD</span>
+                <span class="m-valor">{{ "%+.2f"|format(indicadores.macd_hist) }}</span>
+                <span class="m-label">{{ indicadores.macd_sesgo }}</span>
+            </div>
+            {% for nombre_sma, dist in [
+                ('SMA21',  indicadores.dist_sma21),
+                ('SMA50',  indicadores.dist_sma50),
+                ('SMA200', indicadores.dist_sma200)
+            ] %}
+            {% if dist is not none %}
+            <div class="metrica">
+                <span class="m-nombre">{{ nombre_sma }}</span>
+                <span class="m-valor">{{ "%+.1f"|format(dist) }}%</span>
+                <span class="m-label sesgo-{{ 'alcista' if dist >= 0 else 'bajista' }}">{{ 'sobre' if dist >= 0 else 'bajo' }}</span>
+            </div>
+            {% endif %}
+            {% endfor %}
+            <div class="metrica">
+                <span class="m-nombre">ADX</span>
+                <span class="m-valor">{{ "%.1f"|format(indicadores.adx) }}</span>
+                <span class="m-label">{{ indicadores.adx_fuerza }}</span>
+            </div>
+        </section>
+
+        <section class="ig-bloque ig-opciones">
+            <h2>Opciones</h2>
+            {% for v in opciones_ventanas %}
+            <div class="metrica">
+                <span class="m-nombre">PCR OI {{ v.ventana }}</span>
+                {% if v.valido %}
+                <span class="m-valor">{{ "%.2f"|format(v.pcr_oi) }}</span>
+                <span class="m-label sesgo-{{ v.sesgo_pcr_oi | lower }}">{{ v.sesgo_pcr_oi }}</span>
+                {% else %}
+                <span class="m-label sin-datos" style="grid-column: 2 / span 2;">sin liquidez</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+            <div class="metrica">
+                <span class="m-nombre">IV Skew</span>
+                {% if sesgo.iv_skew_valor is not none %}
+                <span class="m-valor">{{ "%+.3f"|format(sesgo.iv_skew_valor) }}</span>
+                <span class="m-label sesgo-{{ sesgo.iv_skew | lower }}">{{ sesgo.iv_skew }}</span>
+                {% else %}
+                <span class="m-label sin-datos">sin datos</span>
+                {% endif %}
+            </div>
+        </section>
+    </div>
+
+    {# ── Bloque 6: Price Action ──────────────────────────────── #}
+    <section class="ig-bloque ig-pa">
+        <h2>Price Action</h2>
+        <table class="tabla-pa">
+            {% if pa %}
+            <tr>
+                <td class="lbl">Patrón</td>
+                <td class="val">{{ pa.patron or 'sin patrón destacado' }}</td>
+            </tr>
+            <tr>
+                <td class="lbl">Tendencia velas</td>
+                <td class="val">{{ pa.tendencia_velas or '—' }}</td>
+            </tr>
+            <tr>
+                <td class="lbl">Estructura SMC (5v)</td>
+                <td class="val">{{ pa.estructura_5 or '—' }}</td>
+            </tr>
+            {% else %}
+            <tr><td class="sin-datos">sin datos de price action</td></tr>
+            {% endif %}
+        </table>
+        {% if frase_pa %}
+        <div class="interp">→ {{ frase_pa }}</div>
+        {% endif %}
+    </section>
+
+    {# ── Footer ──────────────────────────────────────────────── #}
+    <footer class="ig-footer">
+        <span class="handle">{{ handle }}</span>
+        <span class="sep">•</span>
+        <span class="disclaimer">Contenido educativo. No es recomendación de inversión.</span>
+    </footer>
+
+</div>
+
+</body>
+</html>

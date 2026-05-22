@@ -1,3 +1,11 @@
 weasyprint>=60.0
 jinja2>=3.1
 pyyaml>=6.0
+python-dotenv>=1.0
+markdown>=3.5
+pymupdf>=1.24      # PDF -> PNG (pure Python, sin deps de sistema)
+
+# Notas:
+# - asyncpg y pydantic-settings ya vienen del MCP server (mismo venv).
+# - build_yaml.py importa funciones puras de mcp_server/tools/ para
+#   reusar la logica de las queries, sin levantar el server MCP.

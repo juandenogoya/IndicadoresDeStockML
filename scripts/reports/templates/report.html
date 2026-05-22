@@ -8,7 +8,7 @@
 <body>
 
 {# ═══════════════════════════════════════════════════════════════════ #}
-{# PÁGINA 1 — Cover + Veredicto + Niveles + Sesgo                    #}
+{# PÁGINA 1 — Cover + Niveles + Sesgo (datos fijos)                   #}
 {# ═══════════════════════════════════════════════════════════════════ #}
 
 <section class="page">
@@ -36,9 +36,6 @@
         {% endif %}
     </div>
 
-    <div class="section-title">Veredicto</div>
-    <div class="veredicto">{{ veredicto }}</div>
-
     <div class="section-title">Niveles clave</div>
     <table>
         <thead>
@@ -54,14 +51,14 @@
                 <td>{{ v.ventana }}</td>
                 <td>
                     {%- if v.resistencia -%}
-                        ${{ "%.1f"|format(v.resistencia[0]) }} – ${{ "%.1f"|format(v.resistencia[1]) }}
+                        ${{ "%.1f"|format(v.resistencia[0]) }}{% if v.resistencia[0] != v.resistencia[1] %} – ${{ "%.1f"|format(v.resistencia[1]) }}{% endif %}
                     {%- else -%}
                         <span class="sin-datos">sin liquidez</span>
                     {%- endif -%}
                 </td>
                 <td>
                     {%- if v.soporte -%}
-                        ${{ "%.1f"|format(v.soporte[0]) }} – ${{ "%.1f"|format(v.soporte[1]) }}
+                        ${{ "%.1f"|format(v.soporte[0]) }}{% if v.soporte[0] != v.soporte[1] %} – ${{ "%.1f"|format(v.soporte[1]) }}{% endif %}
                     {%- else -%}
                         <span class="sin-datos">sin liquidez</span>
                     {%- endif -%}
@@ -90,7 +87,7 @@
 </section>
 
 {# ═══════════════════════════════════════════════════════════════════ #}
-{# PÁGINA 2 — Detalle + Strikes Calientes + Setup                     #}
+{# PÁGINA 2 — Detalle: Indicadores + Opciones + Strikes (datos fijos) #}
 {# ═══════════════════════════════════════════════════════════════════ #}
 
 <section class="page">
@@ -136,7 +133,9 @@
         </div>
         {% if v.resistencia %}
         <div class="ventana-row">
-            <span class="label">Resistencia</span>${{ "%.1f"|format(v.resistencia.zona[0]) }} – ${{ "%.1f"|format(v.resistencia.zona[1]) }} <span style="color:#8794A8;">(pico ${{ "%.1f"|format(v.resistencia.pico) }})</span>
+            <span class="label">Resistencia</span>
+            ${{ "%.1f"|format(v.resistencia.zona[0]) }}{% if v.resistencia.zona[0] != v.resistencia.zona[1] %} – ${{ "%.1f"|format(v.resistencia.zona[1]) }}{% endif %}
+            <span style="color:#8794A8;">(pico ${{ "%.1f"|format(v.resistencia.pico) }})</span>
         </div>
         {% else %}
         <div class="ventana-row">
@@ -145,7 +144,9 @@
         {% endif %}
         {% if v.soporte %}
         <div class="ventana-row">
-            <span class="label">Soporte</span>${{ "%.1f"|format(v.soporte.zona[0]) }} – ${{ "%.1f"|format(v.soporte.zona[1]) }} <span style="color:#8794A8;">(pico ${{ "%.1f"|format(v.soporte.pico) }})</span>
+            <span class="label">Soporte</span>
+            ${{ "%.1f"|format(v.soporte.zona[0]) }}{% if v.soporte.zona[0] != v.soporte.zona[1] %} – ${{ "%.1f"|format(v.soporte.zona[1]) }}{% endif %}
+            <span style="color:#8794A8;">(pico ${{ "%.1f"|format(v.soporte.pico) }})</span>
         </div>
         {% else %}
         <div class="ventana-row">
@@ -184,8 +185,26 @@
     </table>
     {% endif %}
 
-    <div class="section-title">Setup operativo / Conclusión</div>
-    <div class="conclusion">{{ conclusion }}</div>
+</section>
+
+{# ═══════════════════════════════════════════════════════════════════ #}
+{# PÁGINA 3+ — Narrativa (markdown libre, variable en largo)          #}
+{# ═══════════════════════════════════════════════════════════════════ #}
+
+{% if narrativa %}
+<section class="page narrativa-page">
+
+    <div class="header">
+        <div class="header-left">
+            <div class="ticker-name">{{ ticker }} <span style="font-weight:400; opacity:.85;">• Análisis</span></div>
+            <div class="subtitle">{{ fecha_legible }}</div>
+        </div>
+        <div class="header-right">{{ handle }}</div>
+    </div>
+
+    <div class="narrativa-content">
+        {{ narrativa | markdown }}
+    </div>
 
     <div class="cierre">
         <span class="handle">Más análisis: {{ handle }}</span>
@@ -193,6 +212,7 @@
     </div>
 
 </section>
+{% endif %}
 
 </body>
 </html>
