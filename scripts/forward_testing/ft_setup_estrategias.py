@@ -220,6 +220,40 @@ ESTRATEGIAS = [
             "position_pct":             0.20,
         },
     },
+    {
+        "nombre":      "FT_TECH_SECTOR_OIEXIT_v1",
+        "descripcion": "Entrada IDENTICA a TECH_SECTOR_v1 (tech_score>=4.0, sectorial, sin opciones). "
+                       "Salida nueva: SL=put wall OI (medio, zona -10%, liquidez relativa; fallback 2xATR). "
+                       "Proteccion por R (BE en +1R, +1R en +2R). +3R libera techo. "
+                       "Fase 2: backstop Chandelier 2.5xATR + quorum 3 de 4 "
+                       "(cierre<SMA21 / candle_5d<=-2 / PCR_VOL mayoria bajista / divergencia volumen).",
+        "logica":      "tecnico_sectorial_oiexit_v1",
+        "parametros":  {
+            "sectores":                 SECTORES_ACTIVOS,
+            "n_sectores":               len(SECTORES_ACTIVOS),
+            "score_entrada":            4.0,
+            "wall_ventana_min":         15,
+            "wall_ventana_max":         45,
+            "wall_zona_pct":            0.10,
+            "wall_liq_mult_mediana":    3.0,
+            "wall_liq_min_abs":         1000,
+            "wall_dist_min_pct":        0.02,
+            "sl_fallback_atr_mult":     2.0,
+            "r_breakeven":              1.0,
+            "r_lock":                   2.0,
+            "r_libera":                 3.0,
+            "r_piso_fase2":             2.0,
+            "chandelier_atr_mult":      2.5,
+            "quorum_min":               3,
+            "sma_salida":               21,
+            "candle_salida_max":        -2.0,
+            "pcr_vol_salida_max":       1,
+            "div_dist_max20_min":       -1.0,
+            "div_vol_ratio_max":        0.8,
+            "max_pos_sector":           5,
+            "position_pct":             0.20,
+        },
+    },
 ]
 
 

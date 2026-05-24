@@ -151,7 +151,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/migrations/clean_railway_may12.py` | One-shot one-off |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
-| `scripts/manual/ft_run_diario.bat` | Corre los 9 bots de Forward Testing en local |
+| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML |
+| `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/migrations/create_earnings_calendar.py` | Crea la tabla earnings_calendar (Railway + local) |
 | `scripts/migrations/migrate_ft_railway_to_local.py` | Migracion puntual de tablas ft_* Railway -> local |

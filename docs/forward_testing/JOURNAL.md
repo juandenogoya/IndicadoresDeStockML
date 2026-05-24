@@ -151,6 +151,32 @@ sobre fechas confirmadas.
 
 ---
 
+### 2026-05-18 — DISENO
+**Estrategia #10 — TECH_SECTOR_OIEXIT_v1 (entrada v1, salida nueva)**
+Experimento de variable unica: entrada **identica** a TECH_SECTOR_v1 (puro
+tecnico + sectorial, sin opciones), cambiando **solo la salida**.
+**Salida nueva**: SL inicial anclado al put wall de OI (fallback 2x ATR);
+proteccion por escalones de R (BE en +1R, +1R en +2R); al tocar +3R se libera
+el techo y la posicion pasa a "corrida" — backstop Chandelier 2.5x ATR +
+quorum 3 de 4 (cierre<SMA21 / candle_5d<=-2 / PCR_VOL mayoria bajista /
+divergencia de volumen). Earnings transversal.
+**Razon / Hipotesis**: un TP fijo corta a los ganadores cuando mas corren. Si
+la perdida ya esta acotada por el SL que sube, el valor esta en dejar correr
+las tendencias y salir por senal de agotamiento, no por un numero fijo.
+**Hallazgos del analisis de OI (NVDA + JPM/KO/CAT/XOM/LLY/MSFT)**:
+- El OI lejano son coberturas de cola (inutiles como S/R) -> buscar wall solo
+  en zona +-10% del precio.
+- El soporte (put wall) es nitido; la resistencia (call wall) es ruidosa y
+  suele estar pegada -> SL por wall, TP por R, no forzar ambos por OI.
+- La liquidez de opciones NO sigue al tamano de la empresa (CAT/LLY caros pero
+  ralos; KO barato pero liquido) -> validez del wall RELATIVA al ticker.
+- Walls y ATR suelen coincidir; el valor esta donde divergen (a medir).
+**Efecto esperado**: capturar mas de las corridas fuertes que el TP 4x ATR de
+v1 cortaba, sin perder el control de la perdida.
+**Ref**: estrategias/TECH_SECTOR_OIEXIT_v1.md
+
+---
+
 ## Template de entrada
 
 ```

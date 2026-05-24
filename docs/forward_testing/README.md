@@ -23,6 +23,7 @@ explorar y parametrizar de la mejor manera posible.
 | [estrategias/SMC_v2.md](estrategias/SMC_v2.md) | SMC + filtro contexto entrada + salida agotamiento |
 | [estrategias/TECH_SECTOR_OPTIONS_v1.md](estrategias/TECH_SECTOR_OPTIONS_v1.md) | Sectorial + confirmacion PCR_OI opciones |
 | [estrategias/TECH_SECTOR_OPTIONS_v2.md](estrategias/TECH_SECTOR_OPTIONS_v2.md) | Sectorial + confirmacion PCR_VOL opciones |
+| [estrategias/TECH_SECTOR_OIEXIT_v1.md](estrategias/TECH_SECTOR_OIEXIT_v1.md) | Entrada TECH_SECTOR_v1 + salida por OI walls / corrida |
 | **Templates** | |
 | [templates/ESTRATEGIA_TEMPLATE.md](templates/ESTRATEGIA_TEMPLATE.md) | Template para documentar nuevas versiones |
 
@@ -44,6 +45,7 @@ explorar y parametrizar de la mejor manera posible.
 | 7 | SMC_v2 | EN DESARROLLO | 2026-05-17 | Filtro contexto + salida agotamiento |
 | 8 | TECH_SECTOR_OPTIONS_v1 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_OI opciones |
 | 9 | TECH_SECTOR_OPTIONS_v2 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_VOL opciones |
+| 10 | TECH_SECTOR_OIEXIT_v1 | EN DESARROLLO | 2026-05-18 | Entrada v1 + salida OI walls/corrida |
 
 ---
 
