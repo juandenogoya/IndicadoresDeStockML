@@ -116,10 +116,23 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   endpoint que `yf.download` /v8/finance/chart/. SIN ventaja de rate limit.
 
 ### Opciones snapshot -- irrecuperabilidad
-- yfinance solo expone la chain VIGENTE. Una vez abre el mercado del dia
+- yfinance/Yahoo solo expone la chain VIGENTE. Una vez abre el mercado del dia
   siguiente (13:30 UTC durante DST), las strikes/contratos del cierre
   anterior dejan de estar disponibles. **Snapshot debe correr antes**.
 - Esquema actual: 4 intentos (23:00, 02:00, 04:00 GH, 06:00 UTC).
+- **Engine yahooquery (20/5/2026)**: yfinance dejo de servir confiablemente el
+  endpoint de opciones (~18/5/2026, verificado en 5 IPs). `33_opciones_snapshot.py`
+  y `recovery_incremental.py` aceptan `--engine yfinance|yahooquery` (default
+  yfinance, retrocompatible). Los 4 cron pasan `--engine yahooquery`. yahooquery
+  trae el chain entero en 1 call/ticker (vs ~30 de yfinance).
+- **precio_subyacente desde yahooquery (26/5/2026)**: `_get_precios_subyacentes`
+  ANTES leia el ultimo close de precios_diarios, pero el snapshot corre en Oracle
+  con .env.local -> lee precios_diarios de RAILWAY, que bajo Plan C esta CONGELADO
+  (solo opciones se escriben ahi). El precio quedaba pegado a una fecha vieja,
+  contaminando moneyness/muros/expected_move. AHORA toma el precio de yahooquery
+  (regularMarketPrice si mercado cerrado, regularMarketPreviousClose si abierto),
+  que coincide con el close de precios_diarios LOCAL.
+- **NO asumir** que precio_subyacente sale de precios_diarios: sale de yahooquery.
 
 ### PostgreSQL ON CONFLICT
 - Requiere unique index **FULL** (sin clausula WHERE).
@@ -168,6 +181,11 @@ Las criticas:
 - `alertas_scanner` (col: `scan_fecha`, `precio_fecha`)
 - `ticker_zscore_diario` | `opciones_zscore_diario`
 - `opciones_snapshot` | `opciones_resumen_diario`
+- `opciones_sector_zscore_diario` (PCR_vol+vol agregados por sector, z-score)
+- `opciones_pcr_plazo_diario` (PCR vol/OI + muros S/R por ventana corto/medio/largo,
+  por ticker; fuente src/utils/opciones_plazo.py)
+- `opciones_sector_pcr_plazo_diario` (PCR sectorial por ventana + z-score)
+- `indicadores_tecnicos_1w` (RSI/MACD semanal)
 - `futuros_diarios` | `indicadores_tecnicos_futuros`
 - `features_regimen_macro` | `features_ml` | `features_sector`
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
@@ -212,7 +230,12 @@ Fases completadas:
 - Extra: screener multi-criterio (screen_tickers, opcion B con 17
   parametros nullable) -- no estaba en el plan original de 12 tools
 
-Tools registradas hasta hoy (14):
+- Fase 1G: sintesis (get_ticker_sintesis, 26/05/2026) -- une tecnico D+W
+  (RSI/MACD diario y semanal clasificados) x opciones por plazo (PCR_vol,
+  muros de OI como S/R) x sentimiento sectorial, mas reglas de interpretacion.
+  Recalcula los muros con el close real (defensa ante precio_subyacente viejo).
+
+Tools registradas hasta hoy (16):
 - ping
 - check_trading_day, get_last_trading_day
 - list_tables, describe_table, list_tickers
@@ -222,6 +245,7 @@ Tools registradas hasta hoy (14):
 - get_ticker_overview
 - screen_tickers
 - get_ml_alert_history
+- get_ticker_sintesis
 
 Fases pendientes:
 - run_select con validacion sqlglot (postergado: screen_tickers cubre
