@@ -158,18 +158,53 @@ def init_tabla():
 # ── Precios y HV desde DB ─────────────────────────────────────────────────────
 
 def _get_precios_subyacentes(tickers: list[str]) -> dict[str, float]:
-    """Ultimo close disponible en precios_diarios por ticker."""
-    engine = get_engine()
-    placeholders = ", ".join(f"'{t}'" for t in tickers)
-    with engine.connect() as conn:
-        rows = conn.execute(text(f"""
-            SELECT DISTINCT ON (ticker) ticker, close
-            FROM   precios_diarios
-            WHERE  ticker IN ({placeholders})
-              AND  close > 0
-            ORDER  BY ticker, fecha DESC
-        """)).fetchall()
-    return {r[0]: float(r[1]) for r in rows}
+    """
+    Precio del subyacente al momento del snapshot, desde YAHOOQUERY.
+
+    Motivo (26/5/2026): antes leia el ultimo close de precios_diarios, pero el
+    snapshot corre en Oracle cargando .env.local -> lee precios_diarios de
+    Railway, que bajo Plan C esta CONGELADO (no se actualizan precios ahi).
+    Resultado: precio_subyacente quedaba pegado a una fecha vieja (ej 08/05),
+    contaminando moneyness, muros de OI y expected move.
+
+    yahooquery devuelve el precio vigente del subyacente, coherente con la
+    chain vigente que tambien capturamos:
+      - mercado cerrado (cron 23:00 UTC): regularMarketPrice = cierre del dia.
+      - mercado abierto: regularMarketPreviousClose = ultimo cierre completo.
+    Este valor coincide con el close de precios_diarios LOCAL (que si esta al dia).
+
+    Fallback: si yahooquery no da precio para un ticker, ese ticker queda sin
+    precio_subyacente (None) en vez de heredar un valor viejo erroneo.
+    """
+    from yahooquery import Ticker
+
+    result: dict[str, float] = {}
+    try:
+        t = Ticker(tickers, asynchronous=True)
+        price_data = t.price
+    except Exception as e:
+        log(f"  [WARN] yahooquery .price fallo: {str(e)[:100]}")
+        return result
+
+    if not isinstance(price_data, dict):
+        return result
+
+    for tk, d in price_data.items():
+        if not isinstance(d, dict):
+            continue  # respuesta de error para ese ticker
+        estado = d.get("marketState", "")
+        if estado == "REGULAR":
+            px = d.get("regularMarketPreviousClose")
+        else:
+            px = d.get("regularMarketPrice") or d.get("regularMarketPreviousClose")
+        if px is not None:
+            try:
+                pxf = float(px)
+                if pxf > 0:
+                    result[tk] = pxf
+            except (TypeError, ValueError):
+                pass
+    return result
 
 
 def _get_hv_20d(tickers: list[str]) -> dict[str, float]:
