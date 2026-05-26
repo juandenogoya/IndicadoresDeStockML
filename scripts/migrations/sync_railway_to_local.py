@@ -527,6 +527,67 @@ def _create_opciones_tables_local(local_eng):
         """,
         "CREATE INDEX IF NOT EXISTS idx_opc_sector_zscore_fecha  ON opciones_sector_zscore_diario (fecha)",
         "CREATE INDEX IF NOT EXISTS idx_opc_sector_zscore_sector ON opciones_sector_zscore_diario (sector)",
+
+        # opciones_pcr_plazo_diario (PCR + muros OI por ventana, por ticker)
+        """
+        CREATE TABLE IF NOT EXISTS opciones_pcr_plazo_diario (
+            id                    SERIAL PRIMARY KEY,
+            fecha                 DATE          NOT NULL,
+            ticker                VARCHAR(20)   NOT NULL,
+            ventana               VARCHAR(10)   NOT NULL,
+            dte_min               SMALLINT,
+            dte_max               SMALLINT,
+            call_vol              BIGINT,
+            put_vol               BIGINT,
+            pcr_vol               NUMERIC(8,4),
+            call_oi               BIGINT,
+            put_oi                BIGINT,
+            pcr_oi                NUMERIC(8,4),
+            veredicto_oi          CHAR(1),
+            precio_sub            NUMERIC(12,4),
+            soporte_strike        NUMERIC(12,4),
+            soporte_oi            BIGINT,
+            soporte_dist_pct      NUMERIC(6,2),
+            resistencia_strike    NUMERIC(12,4),
+            resistencia_oi        BIGINT,
+            resistencia_dist_pct  NUMERIC(6,2),
+            n_contratos           INTEGER,
+            created_at            TIMESTAMP DEFAULT NOW(),
+            CONSTRAINT opciones_pcr_plazo_diario_uniq UNIQUE (fecha, ticker, ventana)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_pcr_plazo_fecha   ON opciones_pcr_plazo_diario (fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_pcr_plazo_ticker  ON opciones_pcr_plazo_diario (ticker)",
+        "CREATE INDEX IF NOT EXISTS idx_pcr_plazo_ventana ON opciones_pcr_plazo_diario (ventana)",
+
+        # opciones_sector_pcr_plazo_diario (PCR sectorial por ventana + zscore)
+        """
+        CREATE TABLE IF NOT EXISTS opciones_sector_pcr_plazo_diario (
+            id                      SERIAL PRIMARY KEY,
+            fecha                   DATE          NOT NULL,
+            sector                  VARCHAR(100)  NOT NULL,
+            ventana                 VARCHAR(10)   NOT NULL,
+            dte_min                 SMALLINT,
+            dte_max                 SMALLINT,
+            n_tickers               SMALLINT,
+            call_vol_sector         BIGINT,
+            put_vol_sector          BIGINT,
+            pcr_vol_sector          NUMERIC(8,4),
+            call_oi_sector          BIGINT,
+            put_oi_sector           BIGINT,
+            pcr_oi_sector           NUMERIC(8,4),
+            veredicto_oi            CHAR(1),
+            pcr_vol_sector_zscore   NUMERIC(6,2),
+            pcr_vol_sector_media    NUMERIC(8,4),
+            pcr_vol_sector_std      NUMERIC(8,4),
+            ventana_dias            SMALLINT,
+            created_at              TIMESTAMP DEFAULT NOW(),
+            CONSTRAINT opciones_sector_pcr_plazo_diario_uniq UNIQUE (fecha, sector, ventana)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_sec_pcr_plazo_fecha   ON opciones_sector_pcr_plazo_diario (fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_sec_pcr_plazo_sector  ON opciones_sector_pcr_plazo_diario (sector)",
+        "CREATE INDEX IF NOT EXISTS idx_sec_pcr_plazo_ventana ON opciones_sector_pcr_plazo_diario (ventana)",
     ]
     with local_eng.connect() as conn:
         for stmt in ddl_statements:
@@ -675,6 +736,20 @@ def sync_opciones(rail_eng, local_eng, dry_run: bool):
         ["fecha", "sector"], dry_run
     )
 
+    # opciones_pcr_plazo_diario (PCR + muros por ventana, por ticker)
+    log("opciones_pcr_plazo_diario...")
+    n2c = _sync_opciones_incremental(
+        rail_eng, local_env, "opciones_pcr_plazo_diario", "fecha",
+        ["fecha", "ticker", "ventana"], dry_run
+    )
+
+    # opciones_sector_pcr_plazo_diario (PCR sectorial por ventana)
+    log("opciones_sector_pcr_plazo_diario...")
+    n2d = _sync_opciones_incremental(
+        rail_eng, local_env, "opciones_sector_pcr_plazo_diario", "fecha",
+        ["fecha", "sector", "ventana"], dry_run
+    )
+
     # opciones_snapshot (grande, ~1.2M filas) — chunks de 5000
     log("opciones_snapshot (puede tardar varios minutos)...")
     n3 = _sync_opciones_incremental(
@@ -683,8 +758,9 @@ def sync_opciones(rail_eng, local_eng, dry_run: bool):
         dry_run, chunksize=5000
     )
 
-    total = n1 + n2 + n2b + n3
-    log(f"  opciones total: resumen={n1} zscore={n2} sector_zscore={n2b} snapshot={n3}")
+    total = n1 + n2 + n2b + n2c + n2d + n3
+    log(f"  opciones total: resumen={n1} zscore={n2} sector_zscore={n2b} "
+        f"pcr_plazo={n2c} sector_pcr_plazo={n2d} snapshot={n3}")
     return total
 
 

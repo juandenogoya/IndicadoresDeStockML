@@ -745,6 +745,24 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
         except Exception as z_err:
             log(f"  [WARN] Z-score opciones/sector no calculado: {z_err}")
 
+        # PCR + muros de OI por plazo (corto/medio/largo) y su agregado sectorial.
+        # Orden: primero por ticker (calcular_pcr_plazo), luego el sectorial que
+        # DERIVA de la tabla por ticker (calcular_pcr_sector_plazo).
+        try:
+            from src.utils.opciones_plazo import (
+                calcular_pcr_plazo, calcular_pcr_sector_plazo,
+                init_tabla, init_tabla_sector,
+            )
+            engine = get_engine()
+            init_tabla(engine)
+            init_tabla_sector(engine)
+            n_p = calcular_pcr_plazo(fecha_hoy, engine)
+            log(f"  PCR por plazo    : {n_p} filas -> opciones_pcr_plazo_diario")
+            n_ps = calcular_pcr_sector_plazo(fecha_hoy, engine)
+            log(f"  PCR sector plazo : {n_ps} filas -> opciones_sector_pcr_plazo_diario")
+        except Exception as p_err:
+            log(f"  [WARN] PCR por plazo no calculado: {p_err}")
+
     log("")
     log(f"  Filas snapshot   : {total_filas:,}")
     log(f"  Sin opciones     : {sin_opciones}")
