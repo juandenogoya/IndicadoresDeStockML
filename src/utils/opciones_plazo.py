@@ -335,3 +335,176 @@ def backfill_pcr_plazo(engine=None, desde: date = None) -> int:
     for (f,) in fechas:
         total += calcular_pcr_plazo(f, engine=eng)
     return total
+
+
+# ── PCR sectorial por ventana (deriva de opciones_pcr_plazo_diario) ────────────
+
+DDL_SECTOR_PCR_PLAZO = """
+CREATE TABLE IF NOT EXISTS opciones_sector_pcr_plazo_diario (
+    id                      SERIAL PRIMARY KEY,
+    fecha                   DATE          NOT NULL,
+    sector                  VARCHAR(100)  NOT NULL,
+    ventana                 VARCHAR(10)   NOT NULL,
+    dte_min                 SMALLINT,
+    dte_max                 SMALLINT,
+    n_tickers               SMALLINT,
+
+    call_vol_sector         BIGINT,
+    put_vol_sector          BIGINT,
+    pcr_vol_sector          NUMERIC(8,4),
+
+    call_oi_sector          BIGINT,
+    put_oi_sector           BIGINT,
+    pcr_oi_sector           NUMERIC(8,4),
+    veredicto_oi            CHAR(1),
+
+    -- Z-score temporal del PCR_vol sectorial (vs historia del propio
+    -- sector+ventana). Detecta sentimiento inusual a nivel sector/plazo.
+    pcr_vol_sector_zscore   NUMERIC(6,2),
+    pcr_vol_sector_media    NUMERIC(8,4),
+    pcr_vol_sector_std      NUMERIC(8,4),
+    ventana_dias            SMALLINT,
+
+    created_at              TIMESTAMP DEFAULT NOW(),
+    UNIQUE (fecha, sector, ventana)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sec_pcr_plazo_fecha   ON opciones_sector_pcr_plazo_diario (fecha);
+CREATE INDEX IF NOT EXISTS idx_sec_pcr_plazo_sector  ON opciones_sector_pcr_plazo_diario (sector);
+CREATE INDEX IF NOT EXISTS idx_sec_pcr_plazo_ventana ON opciones_sector_pcr_plazo_diario (ventana);
+"""
+
+
+def init_tabla_sector(engine=None):
+    """Crea la tabla opciones_sector_pcr_plazo_diario si no existe."""
+    eng = engine or get_engine()
+    with eng.connect() as conn:
+        conn.execute(text(DDL_SECTOR_PCR_PLAZO))
+        conn.commit()
+
+
+_SQL_UPSERT_SECTOR = """
+    INSERT INTO opciones_sector_pcr_plazo_diario (
+        fecha, sector, ventana, dte_min, dte_max, n_tickers,
+        call_vol_sector, put_vol_sector, pcr_vol_sector,
+        call_oi_sector, put_oi_sector, pcr_oi_sector, veredicto_oi,
+        pcr_vol_sector_zscore, pcr_vol_sector_media, pcr_vol_sector_std, ventana_dias
+    ) VALUES %s
+    ON CONFLICT (fecha, sector, ventana) DO UPDATE SET
+        dte_min               = EXCLUDED.dte_min,
+        dte_max               = EXCLUDED.dte_max,
+        n_tickers             = EXCLUDED.n_tickers,
+        call_vol_sector       = EXCLUDED.call_vol_sector,
+        put_vol_sector        = EXCLUDED.put_vol_sector,
+        pcr_vol_sector        = EXCLUDED.pcr_vol_sector,
+        call_oi_sector        = EXCLUDED.call_oi_sector,
+        put_oi_sector         = EXCLUDED.put_oi_sector,
+        pcr_oi_sector         = EXCLUDED.pcr_oi_sector,
+        veredicto_oi          = EXCLUDED.veredicto_oi,
+        pcr_vol_sector_zscore = EXCLUDED.pcr_vol_sector_zscore,
+        pcr_vol_sector_media  = EXCLUDED.pcr_vol_sector_media,
+        pcr_vol_sector_std    = EXCLUDED.pcr_vol_sector_std,
+        ventana_dias          = EXCLUDED.ventana_dias
+"""
+
+
+def calcular_pcr_sector_plazo(fecha: date, engine=None, ventana_zscore: int = 60) -> int:
+    """
+    Agrega opciones_pcr_plazo_diario por (sector, ventana) para `fecha` y
+    calcula PCR_vol/OI sectorial + z-score temporal del PCR_vol sectorial.
+
+    Deriva de la tabla por ticker (no recalcula desde opciones_snapshot).
+    Prerequisito: calcular_pcr_plazo(fecha) ya corrio para esa fecha.
+
+    Retorna numero de filas (sector x ventana) insertadas/actualizadas.
+    """
+    from src.utils.zscore_pipeline import _media_std, _zscore
+
+    eng = engine or get_engine()
+
+    # Agregacion sectorial del dia: suma vol/OI de los tickers de cada sector
+    with eng.connect() as conn:
+        hoy = conn.execute(text("""
+            SELECT a.sector, p.ventana, p.dte_min, p.dte_max,
+                   COUNT(*)                AS n_tickers,
+                   SUM(p.call_vol)         AS call_vol,
+                   SUM(p.put_vol)          AS put_vol,
+                   SUM(p.call_oi)          AS call_oi,
+                   SUM(p.put_oi)           AS put_oi
+            FROM   opciones_pcr_plazo_diario p
+            JOIN   activos a ON p.ticker = a.ticker
+            WHERE  p.fecha = :f AND a.sector IS NOT NULL
+            GROUP  BY a.sector, p.ventana, p.dte_min, p.dte_max
+        """), {"f": fecha}).fetchall()
+
+    if not hoy:
+        return 0
+
+    registros = []
+    with eng.connect() as conn:
+        for row in hoy:
+            sector  = row.sector
+            ventana = row.ventana
+            call_vol = int(row.call_vol or 0)
+            put_vol  = int(row.put_vol or 0)
+            call_oi  = int(row.call_oi or 0)
+            put_oi   = int(row.put_oi or 0)
+            oi_total = call_oi + put_oi
+
+            pcr_vol = _pcr(put_vol, call_vol)
+            pcr_oi  = _pcr(put_oi, call_oi)
+            veredicto = _veredicto(pcr_oi, oi_total)
+
+            # Historia del PCR_vol sectorial para (sector, ventana), fechas < f
+            hist = conn.execute(text("""
+                SELECT p.fecha,
+                       SUM(p.call_vol) AS call_vol,
+                       SUM(p.put_vol)  AS put_vol
+                FROM   opciones_pcr_plazo_diario p
+                JOIN   activos a ON p.ticker = a.ticker
+                WHERE  a.sector = :s AND p.ventana = :v AND p.fecha < :f
+                GROUP  BY p.fecha
+                ORDER  BY p.fecha DESC
+                LIMIT  :n
+            """), {"s": sector, "v": ventana, "f": fecha, "n": ventana_zscore}).fetchall()
+
+            h_pcr = [_pcr(int(h.put_vol or 0), int(h.call_vol or 0)) for h in hist]
+            h_pcr = [x for x in h_pcr if x is not None]
+            mean_pcr, std_pcr = _media_std(h_pcr)
+
+            registros.append((
+                fecha, sector, ventana, int(row.dte_min), int(row.dte_max), int(row.n_tickers),
+                call_vol, put_vol, pcr_vol,
+                call_oi, put_oi, pcr_oi, veredicto,
+                _zscore(pcr_vol, mean_pcr, std_pcr),
+                _safe_round(mean_pcr, 4), _safe_round(std_pcr, 4),
+                len(h_pcr),
+            ))
+
+    if not registros:
+        return 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, _SQL_UPSERT_SECTOR, registros, page_size=200)
+
+    return len(registros)
+
+
+def backfill_pcr_sector_plazo(engine=None, desde: date = None) -> int:
+    """
+    Backfill de opciones_sector_pcr_plazo_diario. Reusa calcular_pcr_sector_plazo
+    por fecha. Prerequisito: opciones_pcr_plazo_diario ya poblada.
+    """
+    eng = engine or get_engine()
+    filtro = "WHERE fecha >= :desde" if desde else ""
+    with eng.connect() as conn:
+        fechas = conn.execute(
+            text(f"SELECT DISTINCT fecha FROM opciones_pcr_plazo_diario {filtro} ORDER BY fecha"),
+            {"desde": desde} if desde else {}
+        ).fetchall()
+
+    total = 0
+    for (f,) in fechas:
+        total += calcular_pcr_sector_plazo(f, engine=eng)
+    return total
