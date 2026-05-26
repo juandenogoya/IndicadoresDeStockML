@@ -634,9 +634,24 @@ def _check_datos_existentes(fecha: date) -> int:
 
 def cmd_run(tickers: list[str], dry_run: bool = False,
             fecha_override: Optional[date] = None, intento: int = 1,
-            engine: str = "yfinance"):
+            engine: str = "yfinance", force: bool = False):
     fecha_hoy      = fecha_override or date.today()
     _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
+
+    # Guard de dia habil NYSE: el cron corre L-V pero NO chequea feriados US.
+    # En un feriado (ej Memorial Day) Yahoo sigue sirviendo la chain del ultimo
+    # cierre habil -> el snapshot duplicaria ese dia etiquetado con la fecha del
+    # feriado, ensuciando z-scores y series temporales (cada fecha_snapshot deja
+    # de ser 1 dia de trading). Skip salvo --force.
+    if not force:
+        try:
+            from src.utils.trading_calendar import is_trading_day
+            if not is_trading_day(fecha_hoy):
+                log(f"  {fecha_hoy} NO es dia habil NYSE (feriado/fin de semana) -> skip.")
+                log(f"  Usar --force para forzar el snapshot igual.")
+                return
+        except Exception as e:
+            log(f"  [WARN] no se pudo verificar dia habil ({e}); continuo igual.")
 
     # Lock yfinance: el lockfile se llama 'yfinance' por historia, pero protege
     # contra concurrencia sobre la IP frente a Yahoo en general (yfinance e
@@ -1270,6 +1285,9 @@ def main():
     parser.add_argument("--engine", choices=["yfinance", "yahooquery"], default="yfinance",
                         help="Cliente para descargar option chains (default: yfinance). "
                              "yahooquery: 1 call por ticker vs ~30 de yfinance.")
+    parser.add_argument("--force", action="store_true",
+                        help="Forzar el snapshot aunque la fecha no sea dia habil NYSE "
+                             "(por defecto se saltea en feriados/fines de semana).")
     args = parser.parse_args()
 
     if args.init:
@@ -1291,7 +1309,7 @@ def main():
     fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
     tickers = args.ticker if args.ticker else list(ALL_TICKERS)
     cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override,
-            intento=args.intento, engine=args.engine)
+            intento=args.intento, engine=args.engine, force=args.force)
 
 
 if __name__ == "__main__":
