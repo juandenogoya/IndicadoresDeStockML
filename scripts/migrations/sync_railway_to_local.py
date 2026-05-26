@@ -502,6 +502,31 @@ def _create_opciones_tables_local(local_eng):
         "CREATE INDEX IF NOT EXISTS idx_opciones_zscore_fecha   ON opciones_zscore_diario (fecha)",
         "CREATE INDEX IF NOT EXISTS idx_opciones_zscore_ticker  ON opciones_zscore_diario (ticker)",
         "CREATE INDEX IF NOT EXISTS idx_opciones_zscore_sector  ON opciones_zscore_diario (sector)",
+
+        # opciones_sector_zscore_diario (z-scores agregados por sector)
+        """
+        CREATE TABLE IF NOT EXISTS opciones_sector_zscore_diario (
+            id                      SERIAL PRIMARY KEY,
+            fecha                   DATE          NOT NULL,
+            sector                  VARCHAR(100)  NOT NULL,
+            n_tickers               SMALLINT,
+            vol_calls_sector        BIGINT,
+            vol_puts_sector         BIGINT,
+            vol_total_sector        BIGINT,
+            pcr_vol_sector          NUMERIC(8,4),
+            pcr_vol_sector_zscore   NUMERIC(6,2),
+            pcr_vol_sector_media    NUMERIC(8,4),
+            pcr_vol_sector_std      NUMERIC(8,4),
+            vol_total_sector_zscore NUMERIC(6,2),
+            vol_total_sector_media  NUMERIC(18,2),
+            vol_total_sector_std    NUMERIC(18,2),
+            ventana_dias            SMALLINT,
+            created_at              TIMESTAMP DEFAULT NOW(),
+            CONSTRAINT opciones_sector_zscore_diario_uniq UNIQUE (fecha, sector)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_opc_sector_zscore_fecha  ON opciones_sector_zscore_diario (fecha)",
+        "CREATE INDEX IF NOT EXISTS idx_opc_sector_zscore_sector ON opciones_sector_zscore_diario (sector)",
     ]
     with local_eng.connect() as conn:
         for stmt in ddl_statements:
@@ -643,6 +668,13 @@ def sync_opciones(rail_eng, local_eng, dry_run: bool):
         ["ticker", "fecha"], dry_run
     )
 
+    # opciones_sector_zscore_diario (muy pequena, ~10 sectores x N fechas)
+    log("opciones_sector_zscore_diario...")
+    n2b = _sync_opciones_incremental(
+        rail_eng, local_env, "opciones_sector_zscore_diario", "fecha",
+        ["fecha", "sector"], dry_run
+    )
+
     # opciones_snapshot (grande, ~1.2M filas) — chunks de 5000
     log("opciones_snapshot (puede tardar varios minutos)...")
     n3 = _sync_opciones_incremental(
@@ -651,8 +683,8 @@ def sync_opciones(rail_eng, local_eng, dry_run: bool):
         dry_run, chunksize=5000
     )
 
-    total = n1 + n2 + n3
-    log(f"  opciones total: resumen={n1} zscore={n2} snapshot={n3}")
+    total = n1 + n2 + n2b + n3
+    log(f"  opciones total: resumen={n1} zscore={n2} sector_zscore={n2b} snapshot={n3}")
     return total
 
 
