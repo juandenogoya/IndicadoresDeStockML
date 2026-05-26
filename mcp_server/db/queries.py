@@ -742,3 +742,49 @@ SQL_ML_ALERT_HISTORY = """
 # $5  alert_score_min  (float8 | NULL)
 # $6  solo_verificados (bool)  -- TRUE = solo alertas con retornos reales cargados
 # $7  limit            (int)
+
+
+# ── Sintesis: indicadores tecnicos SEMANALES (ultimo) ─────────────────────────
+
+SQL_SINTESIS_TECNICO_1W = """
+    SELECT
+        fecha,
+        rsi14,
+        macd, macd_signal, macd_hist
+    FROM   indicadores_tecnicos_1w
+    WHERE  ticker = $1
+    ORDER  BY fecha DESC
+    LIMIT  1
+"""
+# $1: ticker. Ultimo dato semanal. Para clasificar RSI/MACD en timeframe mayor.
+
+
+# ── Sintesis: PCR + muros OI por plazo (ultima fecha del ticker) ──────────────
+
+SQL_SINTESIS_PCR_PLAZO = """
+    SELECT
+        ventana, dte_min, dte_max, precio_sub,
+        pcr_vol, pcr_oi, veredicto_oi,
+        soporte_strike, soporte_oi, soporte_dist_pct,
+        resistencia_strike, resistencia_oi, resistencia_dist_pct
+    FROM   opciones_pcr_plazo_diario
+    WHERE  ticker = $1
+      AND  fecha = (SELECT MAX(fecha) FROM opciones_pcr_plazo_diario WHERE ticker = $1)
+    ORDER  BY dte_min
+"""
+# $1: ticker. Retorna hasta 3 filas (corto/medio/largo) de la ultima fecha.
+
+
+# ── Sintesis: PCR sectorial por plazo (ultima fecha del sector) ───────────────
+
+SQL_SINTESIS_PCR_SECTOR_PLAZO = """
+    SELECT
+        ventana, dte_min, dte_max, n_tickers,
+        pcr_vol_sector, pcr_oi_sector, veredicto_oi,
+        pcr_vol_sector_zscore
+    FROM   opciones_sector_pcr_plazo_diario
+    WHERE  sector = $1
+      AND  fecha = (SELECT MAX(fecha) FROM opciones_sector_pcr_plazo_diario WHERE sector = $1)
+    ORDER  BY dte_min
+"""
+# $1: sector (texto, ej 'Technology'). Hasta 3 filas de la ultima fecha.

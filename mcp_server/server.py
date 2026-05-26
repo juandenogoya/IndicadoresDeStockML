@@ -42,6 +42,10 @@ from mcp_server.tools.alerts import (
     ALERTS_ANNOTATIONS,
     get_ml_alert_history,
 )
+from mcp_server.tools.sintesis import (
+    SINTESIS_ANNOTATIONS,
+    get_ticker_sintesis,
+)
 
 __version__ = "0.1.0"
 
@@ -112,6 +116,10 @@ mcp.tool(annotations=SCREENER_ANNOTATIONS)(screen_tickers)
 # ── Historial de alertas ML ────────────────────────────────────────────────────
 
 mcp.tool(annotations=ALERTS_ANNOTATIONS)(get_ml_alert_history)
+
+# ── Sintesis: tecnico D+W x opciones por plazo x sector + reglas ──────────────
+
+mcp.tool(annotations=SINTESIS_ANNOTATIONS)(get_ticker_sintesis)
 
 
 if __name__ == "__main__":

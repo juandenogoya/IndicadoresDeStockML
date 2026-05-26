@@ -158,18 +158,53 @@ def init_tabla():
 # ── Precios y HV desde DB ─────────────────────────────────────────────────────
 
 def _get_precios_subyacentes(tickers: list[str]) -> dict[str, float]:
-    """Ultimo close disponible en precios_diarios por ticker."""
-    engine = get_engine()
-    placeholders = ", ".join(f"'{t}'" for t in tickers)
-    with engine.connect() as conn:
-        rows = conn.execute(text(f"""
-            SELECT DISTINCT ON (ticker) ticker, close
-            FROM   precios_diarios
-            WHERE  ticker IN ({placeholders})
-              AND  close > 0
-            ORDER  BY ticker, fecha DESC
-        """)).fetchall()
-    return {r[0]: float(r[1]) for r in rows}
+    """
+    Precio del subyacente al momento del snapshot, desde YAHOOQUERY.
+
+    Motivo (26/5/2026): antes leia el ultimo close de precios_diarios, pero el
+    snapshot corre en Oracle cargando .env.local -> lee precios_diarios de
+    Railway, que bajo Plan C esta CONGELADO (no se actualizan precios ahi).
+    Resultado: precio_subyacente quedaba pegado a una fecha vieja (ej 08/05),
+    contaminando moneyness, muros de OI y expected move.
+
+    yahooquery devuelve el precio vigente del subyacente, coherente con la
+    chain vigente que tambien capturamos:
+      - mercado cerrado (cron 23:00 UTC): regularMarketPrice = cierre del dia.
+      - mercado abierto: regularMarketPreviousClose = ultimo cierre completo.
+    Este valor coincide con el close de precios_diarios LOCAL (que si esta al dia).
+
+    Fallback: si yahooquery no da precio para un ticker, ese ticker queda sin
+    precio_subyacente (None) en vez de heredar un valor viejo erroneo.
+    """
+    from yahooquery import Ticker
+
+    result: dict[str, float] = {}
+    try:
+        t = Ticker(tickers, asynchronous=True)
+        price_data = t.price
+    except Exception as e:
+        log(f"  [WARN] yahooquery .price fallo: {str(e)[:100]}")
+        return result
+
+    if not isinstance(price_data, dict):
+        return result
+
+    for tk, d in price_data.items():
+        if not isinstance(d, dict):
+            continue  # respuesta de error para ese ticker
+        estado = d.get("marketState", "")
+        if estado == "REGULAR":
+            px = d.get("regularMarketPreviousClose")
+        else:
+            px = d.get("regularMarketPrice") or d.get("regularMarketPreviousClose")
+        if px is not None:
+            try:
+                pxf = float(px)
+                if pxf > 0:
+                    result[tk] = pxf
+            except (TypeError, ValueError):
+                pass
+    return result
 
 
 def _get_hv_20d(tickers: list[str]) -> dict[str, float]:
@@ -709,6 +744,24 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
             log(f"  Z-scores sector  : {n_zs} sectores -> opciones_sector_zscore_diario")
         except Exception as z_err:
             log(f"  [WARN] Z-score opciones/sector no calculado: {z_err}")
+
+        # PCR + muros de OI por plazo (corto/medio/largo) y su agregado sectorial.
+        # Orden: primero por ticker (calcular_pcr_plazo), luego el sectorial que
+        # DERIVA de la tabla por ticker (calcular_pcr_sector_plazo).
+        try:
+            from src.utils.opciones_plazo import (
+                calcular_pcr_plazo, calcular_pcr_sector_plazo,
+                init_tabla, init_tabla_sector,
+            )
+            engine = get_engine()
+            init_tabla(engine)
+            init_tabla_sector(engine)
+            n_p = calcular_pcr_plazo(fecha_hoy, engine)
+            log(f"  PCR por plazo    : {n_p} filas -> opciones_pcr_plazo_diario")
+            n_ps = calcular_pcr_sector_plazo(fecha_hoy, engine)
+            log(f"  PCR sector plazo : {n_ps} filas -> opciones_sector_pcr_plazo_diario")
+        except Exception as p_err:
+            log(f"  [WARN] PCR por plazo no calculado: {p_err}")
 
     log("")
     log(f"  Filas snapshot   : {total_filas:,}")
