@@ -6,10 +6,13 @@ Funciones PURAS (sin DB, sin side effects): reciben valores crudos y devuelven
 un estado en texto. Pensadas para alimentar el tablero de sintesis (tool MCP)
 sin volcar numeros crudos al LLM.
 
-Umbrales homogeneos con config.py (NO hardcodear otros):
-    RSI_OVERSOLD  = 35   -> RSI < 35 = Sobreventa
-    RSI_OVERBOUGHT = 65  -> RSI > 65 = Sobrecompra
-    entre 35 y 65        -> Neutral
+Umbrales homogeneos con config.py (RSI_OVERSOLD=35 / RSI_OVERBOUGHT=65).
+Se replican aca como constantes locales en lugar de importar config porque
+este modulo debe ser AUTONOMO y puro: el MCP server lo consume y tiene
+prohibido importar config.py (que ejecuta load_dotenv() al importarse).
+Si los umbrales cambian en config.py, actualizar tambien aca.
+
+    RSI < 35 = Sobreventa  |  35-65 = Neutral  |  RSI > 65 = Sobrecompra
 
 MACD (convencion estandar acordada):
     linea MACD > signal (hist > 0)  -> Compra
@@ -18,7 +21,9 @@ MACD (convencion estandar acordada):
 
 from typing import Optional
 
-from src.utils.config import RSI_OVERSOLD, RSI_OVERBOUGHT
+# Homogeneo con config.RSI_OVERSOLD / config.RSI_OVERBOUGHT (ver docstring)
+RSI_OVERSOLD   = 35
+RSI_OVERBOUGHT = 65
 
 
 def clasificar_rsi(rsi: Optional[float]) -> Optional[str]:
