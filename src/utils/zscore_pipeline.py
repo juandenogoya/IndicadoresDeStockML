@@ -115,13 +115,50 @@ CREATE INDEX IF NOT EXISTS idx_ticker_zscore_ticker  ON ticker_zscore_diario (ti
 CREATE INDEX IF NOT EXISTS idx_ticker_zscore_sector  ON ticker_zscore_diario (sector);
 """
 
+# Z-scores AGREGADOS a nivel sector (no por ticker). Detecta sentimiento de
+# opciones inusual en TODO un sector vs su propia historia -- util para ver
+# si la tendencia de un ticker esta acompanada o contradicha por su sector.
+# Clave: pcr_vol_sector se calcula SUM(puts)/SUM(calls) del sector, NO como
+# promedio de los PCR por ticker (que sesgaria por tamano relativo).
+DDL_OPCIONES_SECTOR_ZSCORE = """
+CREATE TABLE IF NOT EXISTS opciones_sector_zscore_diario (
+    id                      SERIAL PRIMARY KEY,
+    fecha                   DATE          NOT NULL,
+    sector                  VARCHAR(100)  NOT NULL,
+
+    n_tickers               SMALLINT,     -- tickers del sector que aportaron
+
+    -- Volumenes agregados del sector (suma de todos sus tickers)
+    vol_calls_sector        BIGINT,
+    vol_puts_sector         BIGINT,
+    vol_total_sector        BIGINT,
+    pcr_vol_sector          NUMERIC(8,4), -- SUM(puts) / SUM(calls)
+
+    -- Z-scores temporales (ventana hasta 60 dias del propio sector)
+    pcr_vol_sector_zscore   NUMERIC(6,2), -- sentimiento sectorial inusual
+    pcr_vol_sector_media    NUMERIC(8,4),
+    pcr_vol_sector_std      NUMERIC(8,4),
+    vol_total_sector_zscore NUMERIC(6,2), -- spike de actividad sectorial
+    vol_total_sector_media  NUMERIC(18,2),
+    vol_total_sector_std    NUMERIC(18,2),
+
+    ventana_dias            SMALLINT,
+    created_at              TIMESTAMP DEFAULT NOW(),
+    UNIQUE (fecha, sector)
+);
+
+CREATE INDEX IF NOT EXISTS idx_opc_sector_zscore_fecha  ON opciones_sector_zscore_diario (fecha);
+CREATE INDEX IF NOT EXISTS idx_opc_sector_zscore_sector ON opciones_sector_zscore_diario (sector);
+"""
+
 
 def init_tablas(engine=None):
-    """Crea las dos tablas de Z-scores si no existen."""
+    """Crea las tablas de Z-scores si no existen."""
     eng = engine or get_engine()
     with eng.connect() as conn:
         conn.execute(text(DDL_OPCIONES_ZSCORE))
         conn.execute(text(DDL_TICKER_ZSCORE))
+        conn.execute(text(DDL_OPCIONES_SECTOR_ZSCORE))
         conn.commit()
 
 
@@ -361,6 +398,150 @@ def _row_opciones_sin_hist(ticker, fecha, sector, industry,
         None, None,                    # vol_relativo, percentil
         0, None, None,                 # ventana_dias, vol_media, vol_std
     )
+
+
+# ── Calculo: opciones agregadas por sector ────────────────────────────────────
+
+_SQL_UPSERT_OPCIONES_SECTOR = """
+    INSERT INTO opciones_sector_zscore_diario (
+        fecha, sector, n_tickers,
+        vol_calls_sector, vol_puts_sector, vol_total_sector,
+        pcr_vol_sector, pcr_vol_sector_zscore, pcr_vol_sector_media, pcr_vol_sector_std,
+        vol_total_sector_zscore, vol_total_sector_media, vol_total_sector_std,
+        ventana_dias
+    ) VALUES %s
+    ON CONFLICT (fecha, sector) DO UPDATE SET
+        n_tickers               = EXCLUDED.n_tickers,
+        vol_calls_sector        = EXCLUDED.vol_calls_sector,
+        vol_puts_sector         = EXCLUDED.vol_puts_sector,
+        vol_total_sector        = EXCLUDED.vol_total_sector,
+        pcr_vol_sector          = EXCLUDED.pcr_vol_sector,
+        pcr_vol_sector_zscore   = EXCLUDED.pcr_vol_sector_zscore,
+        pcr_vol_sector_media    = EXCLUDED.pcr_vol_sector_media,
+        pcr_vol_sector_std      = EXCLUDED.pcr_vol_sector_std,
+        vol_total_sector_zscore = EXCLUDED.vol_total_sector_zscore,
+        vol_total_sector_media  = EXCLUDED.vol_total_sector_media,
+        vol_total_sector_std    = EXCLUDED.vol_total_sector_std,
+        ventana_dias            = EXCLUDED.ventana_dias
+"""
+
+
+def calcular_zscore_opciones_sector(fecha: date, engine=None, ventana: int = 60) -> int:
+    """
+    Calcula el PCR_Vol y volumen agregados por SECTOR para `fecha`, mas sus
+    Z-scores temporales contra la propia historia del sector.
+
+    pcr_vol_sector = SUM(put_vol) / SUM(call_vol) de todos los tickers del
+    sector (NO promedio de PCR por ticker -- eso sesgaria por tamano relativo).
+
+    Lee de opciones_resumen_diario + activos (sector). Excluye `fecha` de la
+    ventana historica para no contaminar la media.
+
+    Retorna numero de filas insertadas/actualizadas.
+    """
+    eng = engine or get_engine()
+
+    # Agregacion sectorial del dia actual
+    with eng.connect() as conn:
+        hoy_rows = conn.execute(text("""
+            SELECT a.sector,
+                   COUNT(*)                          AS n_tickers,
+                   SUM(COALESCE(r.call_vol, 0))      AS call_vol,
+                   SUM(COALESCE(r.put_vol,  0))      AS put_vol
+            FROM   opciones_resumen_diario r
+            JOIN   activos a ON r.ticker = a.ticker
+            WHERE  r.fecha = :f AND a.sector IS NOT NULL
+            GROUP  BY a.sector
+            ORDER  BY a.sector
+        """), {"f": fecha}).fetchall()
+
+    if not hoy_rows:
+        return 0
+
+    registros = []
+
+    with eng.connect() as conn:
+        for sector, n_tickers, call_vol, put_vol in hoy_rows:
+            call_vol  = int(call_vol or 0)
+            put_vol   = int(put_vol or 0)
+            vol_total = call_vol + put_vol
+            pcr_vol   = _safe_round(put_vol / call_vol, 4) if call_vol > 0 else None
+
+            # Historia sectorial previa: agrega por fecha < f para el mismo sector
+            hist = conn.execute(text("""
+                SELECT r.fecha,
+                       SUM(COALESCE(r.call_vol, 0)) AS call_vol,
+                       SUM(COALESCE(r.put_vol,  0)) AS put_vol
+                FROM   opciones_resumen_diario r
+                JOIN   activos a ON r.ticker = a.ticker
+                WHERE  a.sector = :s AND r.fecha < :f
+                GROUP  BY r.fecha
+                ORDER  BY r.fecha DESC
+                LIMIT  :v
+            """), {"s": sector, "f": fecha, "v": ventana}).fetchall()
+
+            if not hist:
+                registros.append((
+                    fecha, sector, int(n_tickers),
+                    call_vol, put_vol, vol_total,
+                    pcr_vol, None, None, None,   # pcr zscore/media/std
+                    None, None, None,            # vol_total zscore/media/std
+                    0,
+                ))
+                continue
+
+            h_call  = [int(r[1] or 0) for r in hist]
+            h_put   = [int(r[2] or 0) for r in hist]
+            h_total = [c + p for c, p in zip(h_call, h_put)]
+            h_pcr   = [round(p / c, 4) for c, p in zip(h_call, h_put) if c > 0]
+
+            mean_total, std_total = _media_std(h_total)
+            mean_pcr,   std_pcr   = _media_std(h_pcr)
+
+            registros.append((
+                fecha, sector, int(n_tickers),
+                call_vol, put_vol, vol_total,
+                pcr_vol,
+                _zscore(pcr_vol, mean_pcr, std_pcr),
+                _safe_round(mean_pcr, 4),
+                _safe_round(std_pcr, 4),
+                _zscore(vol_total, mean_total, std_total),
+                _safe_round(mean_total, 2),
+                _safe_round(std_total, 2),
+                len(hist),
+            ))
+
+    if not registros:
+        return 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_values(cur, _SQL_UPSERT_OPCIONES_SECTOR, registros, page_size=200)
+
+    return len(registros)
+
+
+def backfill_zscore_opciones_sector(engine=None, desde: date = None) -> int:
+    """
+    Backfill de opciones_sector_zscore_diario para todas las fechas presentes
+    en opciones_resumen_diario. Reusa calcular_zscore_opciones_sector() por
+    fecha (volumen chico: ~10 sectores x N fechas).
+
+    Args:
+        desde: si se especifica, solo procesa fechas >= desde.
+    """
+    eng = engine or get_engine()
+    filtro = "WHERE fecha >= :desde" if desde else ""
+    with eng.connect() as conn:
+        fechas = conn.execute(
+            text(f"SELECT DISTINCT fecha FROM opciones_resumen_diario {filtro} ORDER BY fecha"),
+            {"desde": desde} if desde else {}
+        ).fetchall()
+
+    total = 0
+    for (f,) in fechas:
+        total += calcular_zscore_opciones_sector(f, engine=eng)
+    return total
 
 
 # ── Calculo diario: tickers ───────────────────────────────────────────────────

@@ -697,13 +697,18 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
 
         # Calcular Z-scores de opciones para la fecha del snapshot
         try:
-            from src.utils.zscore_pipeline import calcular_zscore_opciones, init_tablas
+            from src.utils.zscore_pipeline import (
+                calcular_zscore_opciones, calcular_zscore_opciones_sector, init_tablas
+            )
             engine = get_engine()
-            init_tablas(engine)   # crea tabla si no existe (idempotente)
+            init_tablas(engine)   # crea tablas si no existen (idempotente)
             n_z = calcular_zscore_opciones(fecha_hoy, engine)
             log(f"  Z-scores opciones: {n_z} tickers -> opciones_zscore_diario")
+            # Z-scores agregados por sector (PCR_vol + volumen sectorial)
+            n_zs = calcular_zscore_opciones_sector(fecha_hoy, engine)
+            log(f"  Z-scores sector  : {n_zs} sectores -> opciones_sector_zscore_diario")
         except Exception as z_err:
-            log(f"  [WARN] Z-score opciones no calculado: {z_err}")
+            log(f"  [WARN] Z-score opciones/sector no calculado: {z_err}")
 
     log("")
     log(f"  Filas snapshot   : {total_filas:,}")
