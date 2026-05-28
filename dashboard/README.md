@@ -72,8 +72,20 @@ numerico: da falsa precision.)
 | Dimension | Vota segun | Resultado |
 |---|---|---|
 | Tecnico (A) | MACD/RSI diario+semanal | Alcista / Bajista / Mixto |
-| Opciones (B) | PCR_oi por plazo | Alcista / Bajista / Mixto |
-| Estructura (F) | BOS/CHoCH/estructura SMC | Alcista / Bajista / Neutral |
+| Opciones (B) | PCR_oi por plazo, SOLO por concordancia | Alcista / Bajista / Mixto |
+| Estructura (F) | BOS/CHoCH/estructura SMC ventana 10 | Alcista / Bajista / Neutral |
+
+> **B vota solo por concordancia (decision 27/5/2026).** Los 3 plazos
+> (corto/medio/largo) son sentimientos distintos y SIEMPRE se muestran por
+> separado en la tabla de opciones. B aporta al veredicto unicamente cuando los
+> 3 plazos coinciden en direccion (3 alcistas -> voto alcista; 3 bajistas -> voto
+> bajista). Si divergen entre plazos, B NO vota una direccion (cuenta como Mixto
+> y se omite del consenso) y la divergencia se reporta tal cual como matiz en la
+> frase (regla B3). Nunca se promedia/agrega un PCR unico: agregar desvirtua el
+> mensaje descriptivo.
+>
+> **SMC (F) usa la ventana estrategica (10)** (estructura_10 / bos_10 / choch_10),
+> coherente con el horizonte diario+semanal del informe.
 
 **Capa 2 — combinar votos -> ESTADO:**
 - Consenso 2/3 (de las disponibles) en una direccion -> ALCISTA / BAJISTA.
@@ -107,9 +119,9 @@ Familia **E** (actividad inusual: vol/IV z-score de opciones_zscore_diario) ->
 | A4 | RSI diario Sobrecompra | riesgo correccion | matiz (frase) |
 | A5 | RSI diario Sobreventa | posible rebote | matiz (frase) |
 | A6 | SMA alcista + ADX fuerte | tendencia con fuerza | refuerza |
-| B1 | PCR_oi alcista 3 ventanas | posicionamiento alcista | sesgo alcista |
-| B2 | PCR_oi bajista 3 ventanas | posicionamiento bajista | sesgo bajista |
-| B3 | sesgo opciones divergente por plazo | cambio de expectativa | matiz |
+| B1 | PCR_oi alcista en las 3 ventanas (concordancia) | posicionamiento alcista | sesgo alcista |
+| B2 | PCR_oi bajista en las 3 ventanas (concordancia) | posicionamiento bajista | sesgo bajista |
+| B3 | sesgo opciones divergente por plazo | cambio de expectativa; B no vota | matiz |
 | B4 | MACD venta + PCR_oi medio bajista | presion bajista confirmada | sesgo bajista |
 | C1 | RSI sobrecompra + call wall cercano arriba (<3%) | techo potencial | matiz |
 | C2 | RSI sobreventa + put wall cercano abajo (<3%) | rebote potencial | matiz |
@@ -170,6 +182,9 @@ Falta (el grueso del desarrollo):
 - Descriptivo, no predictivo. Complemento de TV.
 - Estado: 3 valores + frase. Sin score numerico. Sin 4to estado.
 - 3 dimensiones igual peso, consenso 2/3, sin datos se omite.
+- Opciones (B) vota solo por concordancia de los 3 plazos; nunca se agrega/promedia
+  un PCR unico. Divergencia por plazo = B no vota (Mixto) + matiz B3 en la frase.
+- SMC (F) usa la ventana estrategica (10).
 - Sector / muros / price action = complemento en la frase, NO modifican estado.
 - Sector (no industria) para el analisis.
 - Semanal W-FRI cerrado, con fecha.

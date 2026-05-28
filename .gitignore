@@ -72,6 +72,9 @@ reportes/
 # Salida del modulo scripts/reports/ (YAMLs, MDs, PDFs, PNGs por analisis)
 scripts/reports/output/
 
+# Salida del dashboard (JPG exportados del informe por ticker)
+dashboard/output/
+
 # Artefactos generados en examples/ (solo se versiona el YAML de input)
 scripts/reports/examples/*.pdf
 scripts/reports/examples/*.png
