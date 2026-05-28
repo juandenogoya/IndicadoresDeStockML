@@ -302,10 +302,13 @@ def cargar_radar() -> dict:
     universo en la ultima fecha disponible, + z-score de volumen por sector.
 
     percentil_vol viene en escala 0-100 (usado como guarda de liquidez).
+    stock_vol_z = z de volumen de la ACCION (ticker_zscore_diario) en la misma
+    fecha; habilita el cruce accion+opciones. None si la tabla no tiene esa fecha
+    (ticker_zscore_diario se recalcula en local; ver memory/dashboard.md).
 
     Returns:
         {"fecha": str, "tickers": [ {ticker, sector, vol_total, vol_z, iv_z,
-          pcr_z, pcr_vol, iv_avg, percentil_vol} ], "sector_z": {sector: z}}
+          pcr_z, pcr_vol, iv_avg, percentil_vol, stock_vol_z} ], "sector_z": {...}}
     """
     df = query_df(
         """
@@ -316,6 +319,8 @@ def cargar_radar() -> dict:
         WHERE  fecha = (SELECT MAX(fecha) FROM opciones_zscore_diario)
         """
     )
+    fecha_opc = df["fecha"].iloc[0] if not df.empty else None
+
     sec = query_df(
         """
         SELECT sector, vol_total_sector_zscore
@@ -327,6 +332,16 @@ def cargar_radar() -> dict:
     for _, r in sec.iterrows():
         if r["sector"] is not None:
             sector_z[r["sector"]] = _f(r["vol_total_sector_zscore"])
+
+    # z de volumen de la accion en la MISMA fecha (cruce accion+opciones).
+    stock_z = {}
+    if fecha_opc is not None:
+        sk = query_df(
+            "SELECT ticker, vol_zscore FROM ticker_zscore_diario WHERE fecha = :f",
+            params={"f": fecha_opc},
+        )
+        for _, r in sk.iterrows():
+            stock_z[r["ticker"]] = _f(r["vol_zscore"])
 
     tickers = []
     fecha = None
@@ -342,5 +357,6 @@ def cargar_radar() -> dict:
             "pcr_vol":       _f(r["pcr_vol"]),
             "iv_avg":        _f(r["iv_avg"]),
             "percentil_vol": _f(r["percentil_vol"]),
+            "stock_vol_z":   stock_z.get(r["ticker"]),
         })
     return {"fecha": fecha, "tickers": tickers, "sector_z": sector_z}

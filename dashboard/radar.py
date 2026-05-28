@@ -7,9 +7,11 @@ z-scores (cuantos desvios esta el valor de hoy vs la historia del propio ticker)
 Logica PURA (sin DB, sin Streamlit). Recibe el dict de dashboard.sintesis_data.
 cargar_radar() y devuelve filas clasificadas y rankeadas.
 
-Decisiones de diseno (27/5/2026):
-  - Senales: volumen de opciones, IV, y sesgo PCR. (El cruce accion+opciones queda
-    afuera del v1: ticker_zscore_diario esta desactualizada bajo Plan C.)
+Decisiones de diseno (27-28/5/2026):
+  - Senales: volumen de opciones, IV, y sesgo PCR.
+  - Cruce accion+opciones (28/5): si el volumen de opciones Y el de la accion son
+    ambos inusuales -> "Institucional probable". Requiere ticker_zscore_diario
+    fresca (se recalcula en local; ver memory/dashboard.md). Si falta, no dispara.
   - Sin score unico: se muestran las z por separado + un TAG legible (no caja negra).
   - Guarda de liquidez por percentil_vol (escala 0-100) para filtrar ruido.
   - "Sector acompana": si el volumen del sector tambien es inusual (rotacion) vs
@@ -30,6 +32,7 @@ def _clasificar(t: dict, z: float):
     """
     tags, mags = [], []
     vol_z, iv_z, pcr_z = t.get("vol_z"), t.get("iv_z"), t.get("pcr_z")
+    stock_z = t.get("stock_vol_z")
 
     if vol_z is not None and vol_z >= z:
         tags.append("Volumen inusual"); mags.append(vol_z)
@@ -41,6 +44,9 @@ def _clasificar(t: dict, z: float):
         tags.append("Sesgo a calls"); mags.append(abs(pcr_z))
     if pcr_z is not None and pcr_z >= z:
         tags.append("Cobertura (puts)"); mags.append(pcr_z)
+    # Cruce accion+opciones: volumen inusual en AMBOS = huella institucional probable.
+    if (vol_z is not None and vol_z >= z) and (stock_z is not None and stock_z >= z):
+        tags.append("Institucional probable")
 
     return tags, mags
 
@@ -82,6 +88,7 @@ def construir_radar(radar_data: dict, z: float = Z_INUSUAL_DEFAULT,
             "vol_z":           round(t["vol_z"], 1) if t.get("vol_z") is not None else None,
             "iv_z":            round(t["iv_z"], 1) if t.get("iv_z") is not None else None,
             "pcr_z":           round(t["pcr_z"], 1) if t.get("pcr_z") is not None else None,
+            "accion_z":        round(t["stock_vol_z"], 1) if t.get("stock_vol_z") is not None else None,
             "sector_acompana": acompana,
         })
 

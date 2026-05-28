@@ -183,7 +183,7 @@ def _vista_radar():
 
     cols = {"ticker": "Ticker", "sector": "Sector", "tipo": "Tipo",
             "magnitud": "Magnitud (z)", "vol_z": "vol z", "iv_z": "IV z",
-            "pcr_z": "PCR z", "sector_acompana": "Sector acompana?"}
+            "pcr_z": "PCR z", "accion_z": "Accion z", "sector_acompana": "Sector acompana?"}
     df = pd.DataFrame(filas)[list(cols.keys())].rename(columns=cols)
     st.caption(f"{len(df)} tickers con actividad inusual (orden por magnitud). "
                "Tags: Volumen inusual / IV en alza / Sesgo a calls / Cobertura (puts).")
