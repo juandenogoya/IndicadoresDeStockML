@@ -109,7 +109,9 @@ numerico: da falsa precision.)
 Sesgo (votan el estado): **A** (tecnico), **B** (opciones), **F** (SMC).
 Contexto (modulan la frase): **C** (muros + price action), **D** (sector).
 Familia **E** (actividad inusual: vol/IV z-score de opciones_zscore_diario) ->
-**fase 2** (es mas radar/screening que analisis de un ticker).
+es mas radar/screening que analisis de un ticker. **IMPLEMENTADO v1 (28/5/2026)**:
+modo "Radar del dia" (dashboard/radar.py + cargar_radar). Senales vol/IV/PCR z,
+tags legibles, guarda por percentil_vol, contexto sectorial, click -> informe.
 
 | ID | Cuando aplica | Senala | Rol |
 |----|----|----|----|
@@ -144,12 +146,17 @@ Familia **E** (actividad inusual: vol/IV z-score de opciones_zscore_diario) ->
   infografias existente (scripts/reports/). 
 - Escalar (acceso remoto) = fase posterior, a definir.
 
-## Papel de trabajo (transparencia) — FASE 2
+## Papel de trabajo (transparencia) — IMPLEMENTADO v1 (28/5/2026)
 
-Capa de drill-down: por cada dato, ver dato crudo + feature + como se calculo +
-tabla/fuente. Base = un "diccionario de metricas" (definicion unica por metrica:
-formula, ventana, tabla origen). En Streamlit se resuelve con expandible/tooltip.
-NO bloquea el v1.
+Capa de transparencia: por cada metrica del informe, ver valor + dato crudo +
+como se calculo + ventana + tabla/fuente + umbral. Base = un "diccionario de
+metricas" (definicion unica por metrica: dashboard/metricas.py:DICCIONARIO).
+Implementacion: pestana "Papel de trabajo" (st.tabs) con tabla por seccion
+(Tecnico / Opciones por plazo / Sector por plazo) + crudos en vivo. Export a PDF
+A4 horizontal (dashboard/export_jpg.py:generar_papel_pdf + templates/papel.html).
+Profundidad elegida: definicion + crudo donde este a mano (no se traen series
+pesadas como el close de RSI). Pendiente (futuro): drill-down por celda
+(popover), que hoy st.dataframe no permite sin renderizar filas custom.
 
 ## Que existe y que falta construir
 
@@ -162,20 +169,24 @@ Ya existe (reutilizable):
   reglas) — buen punto de partida.
 - Infografias: scripts/reports/ (PNG para X).
 
-Falta (el grueso del desarrollo):
-1. **Logica del arbol** (3 dimensiones -> estado de 3 + frase) — NO esta implementada.
-2. **Sumar SMC y price action** a la sintesis (hoy no estan en la tool).
-3. **Dashboard Streamlit** (selector + render de cuadros).
-4. **Export JPG**.
+Estado de construccion (28/5/2026): TODO el v1 + Fase 2 v1 HECHO. Ver detalle de
+archivos en memory/dashboard.md.
+1. [HECHO] **Logica del arbol** -> src/utils/dashboard_sintesis.py
+2. [HECHO] **SMC y price action** en la sintesis (clasificacion_tecnica.py)
+3. [HECHO] **Dashboard Streamlit** -> dashboard/app.py (+ view.py, sintesis_data.py)
+4. [HECHO] **Export JPG** del informe -> dashboard/export_jpg.py
+5. [HECHO] **Papel de trabajo** + diccionario de metricas + export PDF -> dashboard/metricas.py
+6. [HECHO] **Radar (familia E)** v1 -> dashboard/radar.py + modo Radar en app.py
+7. [PENDIENTE] Radar: earnings overlay + cruce accion+opciones (requiere refrescar
+   ticker_zscore_diario, hoy congelada al 15/05). Drill-down por celda en el papel.
 
-## Plan de construccion (orden incremental)
+## Plan de construccion (orden incremental) -- COMPLETADO v1+Fase2 (28/5/2026)
 
-1. **Logica de sintesis** (el cerebro): arbol + SMC + price action. Testeable sin
-   UI. Permite validacion de COHERENCIA (cualitativa) sobre tickers reales —
-   NO backtesting de retorno (es descriptivo; ver decision en memoria).
-2. **Dashboard Streamlit local**.
-3. **Export JPG**.
-4. (Fase 2) Papel de trabajo + diccionario de metricas + familia E (radar).
+1. [HECHO] **Logica de sintesis** (el cerebro): arbol + SMC + price action.
+   Validado por COHERENCIA cualitativa sobre tickers reales (no backtesting).
+2. [HECHO] **Dashboard Streamlit local**.
+3. [HECHO] **Export JPG**.
+4. [HECHO] (Fase 2) Papel de trabajo + diccionario de metricas + familia E (radar).
 
 ## Decisiones de diseno tomadas (resumen)
 

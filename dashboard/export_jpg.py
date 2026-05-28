@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from jinja2 import Environment, FileSystemLoader
 
 from dashboard.view import construir_vista
+from dashboard.metricas import construir_papel
 
 _DIR = Path(__file__).resolve().parent
 _TEMPLATES = _DIR / "templates"
@@ -105,6 +106,32 @@ def generar_jpg(ticker: str, datos: dict, sintesis: dict,
     out_jpg = out_dir / f"{_fecha_archivo(datos)}_{ticker.upper()}.jpg"
     html = _render_html(vista)
     return _html_a_jpg(html, out_jpg)
+
+
+def generar_papel_pdf(ticker: str, datos: dict, sintesis: dict,
+                      out_dir: Path = None) -> Path:
+    """
+    Genera el PDF del papel de trabajo (documento metodologico, texto
+    seleccionable) y devuelve su ruta. Nombre: YYYYMMDD_TICKER_papel.pdf.
+    """
+    from weasyprint import HTML, CSS
+
+    vista = construir_vista(datos, sintesis)
+    papel = construir_papel(datos, sintesis)
+
+    env = Environment(
+        loader=FileSystemLoader(str(_TEMPLATES)),
+        autoescape=True, trim_blocks=True, lstrip_blocks=True,
+    )
+    html = env.get_template("papel.html").render(enc=vista["encabezado"], papel=papel)
+
+    out_dir = Path(out_dir) if out_dir else _OUTPUT
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_pdf = out_dir / f"{_fecha_archivo(datos)}_{ticker.upper()}_papel.pdf"
+    HTML(string=html, base_url=str(_TEMPLATES)).write_pdf(
+        target=str(out_pdf), stylesheets=[CSS(filename=str(_TEMPLATES / "papel.css"))]
+    )
+    return out_pdf
 
 
 # CLI util para probar sin Streamlit: python dashboard/export_jpg.py AAPL

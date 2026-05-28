@@ -165,6 +165,7 @@ def _opciones_plazo(ticker: str, close) -> dict:
     df = query_df(
         """
         SELECT ventana, pcr_vol, pcr_oi, veredicto_oi, precio_sub,
+               call_vol, put_vol, call_oi, put_oi,
                soporte_strike, soporte_oi, resistencia_strike, resistencia_oi
         FROM   opciones_pcr_plazo_diario
         WHERE  ticker = :t
@@ -180,6 +181,11 @@ def _opciones_plazo(ticker: str, close) -> dict:
             "veredicto_oi": _VER_MAP.get(r["veredicto_oi"]),
             "put_wall":     _muro_recalc(r["soporte_strike"], r["soporte_oi"], close),
             "call_wall":    _muro_recalc(r["resistencia_strike"], r["resistencia_oi"], close),
+            # Crudos (para el papel de trabajo)
+            "call_vol":     int(r["call_vol"]) if r["call_vol"] is not None else None,
+            "put_vol":      int(r["put_vol"])  if r["put_vol"]  is not None else None,
+            "call_oi":      int(r["call_oi"])  if r["call_oi"]  is not None else None,
+            "put_oi":       int(r["put_oi"])   if r["put_oi"]   is not None else None,
         }
     return out
 
@@ -191,7 +197,8 @@ def _sector_plazo(sector: str) -> dict:
     df = query_df(
         """
         SELECT ventana, pcr_vol_sector, pcr_oi_sector, veredicto_oi,
-               pcr_vol_sector_zscore, n_tickers
+               pcr_vol_sector_zscore, pcr_vol_sector_media, pcr_vol_sector_std,
+               n_tickers
         FROM   opciones_sector_pcr_plazo_diario
         WHERE  sector = :s
           AND  fecha = (SELECT MAX(fecha) FROM opciones_sector_pcr_plazo_diario WHERE sector = :s)
@@ -205,6 +212,8 @@ def _sector_plazo(sector: str) -> dict:
             "pcr_oi_sector":         _f(r["pcr_oi_sector"]),
             "veredicto_oi":          _VER_MAP.get(r["veredicto_oi"]),
             "pcr_vol_sector_zscore": _f(r["pcr_vol_sector_zscore"]),
+            "pcr_vol_sector_media":  _f(r["pcr_vol_sector_media"]),
+            "pcr_vol_sector_std":    _f(r["pcr_vol_sector_std"]),
             "n_tickers":             int(r["n_tickers"]) if r["n_tickers"] is not None else None,
         }
     return out
@@ -285,3 +294,53 @@ def listar_tickers() -> list:
     """Tickers disponibles (con precio en local), orden alfabetico."""
     df = query_df("SELECT DISTINCT ticker FROM precios_diarios ORDER BY ticker")
     return df["ticker"].tolist() if not df.empty else []
+
+
+def cargar_radar() -> dict:
+    """
+    Datos para el Radar (familia E): z-scores de actividad de opciones de TODO el
+    universo en la ultima fecha disponible, + z-score de volumen por sector.
+
+    percentil_vol viene en escala 0-100 (usado como guarda de liquidez).
+
+    Returns:
+        {"fecha": str, "tickers": [ {ticker, sector, vol_total, vol_z, iv_z,
+          pcr_z, pcr_vol, iv_avg, percentil_vol} ], "sector_z": {sector: z}}
+    """
+    df = query_df(
+        """
+        SELECT fecha, ticker, sector, vol_total,
+               vol_total_zscore, iv_zscore, pcr_vol_zscore,
+               pcr_vol, iv_avg, percentil_vol
+        FROM   opciones_zscore_diario
+        WHERE  fecha = (SELECT MAX(fecha) FROM opciones_zscore_diario)
+        """
+    )
+    sec = query_df(
+        """
+        SELECT sector, vol_total_sector_zscore
+        FROM   opciones_sector_zscore_diario
+        WHERE  fecha = (SELECT MAX(fecha) FROM opciones_sector_zscore_diario)
+        """
+    )
+    sector_z = {}
+    for _, r in sec.iterrows():
+        if r["sector"] is not None:
+            sector_z[r["sector"]] = _f(r["vol_total_sector_zscore"])
+
+    tickers = []
+    fecha = None
+    for _, r in df.iterrows():
+        fecha = str(r["fecha"])
+        tickers.append({
+            "ticker":        r["ticker"],
+            "sector":        r["sector"],
+            "vol_total":     int(r["vol_total"]) if r["vol_total"] is not None else None,
+            "vol_z":         _f(r["vol_total_zscore"]),
+            "iv_z":          _f(r["iv_zscore"]),
+            "pcr_z":         _f(r["pcr_vol_zscore"]),
+            "pcr_vol":       _f(r["pcr_vol"]),
+            "iv_avg":        _f(r["iv_avg"]),
+            "percentil_vol": _f(r["percentil_vol"]),
+        })
+    return {"fecha": fecha, "tickers": tickers, "sector_z": sector_z}

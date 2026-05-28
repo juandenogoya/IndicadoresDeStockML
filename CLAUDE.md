@@ -28,9 +28,11 @@ Documentacion que existe hoy en docs/:
 - docs/forward_testing/   : detalle de forward testing
 - docs/checklist_recovery_manual.md : flujos de recovery manual
 - dashboard/README.md     : spec del Dashboard (informe descriptivo por ticker).
-                            v1 desarrollado 28/5/2026 en rama feature/dashboard
-                            (Streamlit local + export JPG). Fase 2 (papel de
-                            trabajo) pendiente. Ver tambien memory/dashboard.md
+                            v1 + Fase 2 v1 desarrollados 28/5/2026 en rama
+                            feature/dashboard: Streamlit local (modos Informe y
+                            Radar del dia), export JPG (informe) y PDF (papel de
+                            trabajo). Corre bajo el venv. Ver memory/dashboard.md
+                            ("Como correrlo / retomarlo").
 
 Politica de documentacion: un doc de dominio se crea SOLO cuando hay
 conocimiento real que no se puede derivar leyendo el codigo (ej.
