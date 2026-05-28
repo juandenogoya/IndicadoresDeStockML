@@ -203,11 +203,13 @@ Las criticas:
 
 ```
 1. status.bat               (ver Railway: que dias faltan)
-2. recovery_incremental.bat (LOCAL: bajar precios faltantes via yfinance)
+2. recovery_incremental.bat (LOCAL: bajar precios faltantes via yfinance/yahooquery)
+   -> incluye z-scores de acciones automaticamente al final (target=local):
+      backfill_zscore_tickers desde MAX(fecha) de ticker_zscore_diario. Ya NO es
+      paso manual. (28/5/2026; antes era el paso 6 de abajo.)
 3. status_local.bat         (verificar 0 tickers desactualizados)
 4. cron_diario --step features  (calcular features sobre los nuevos precios)
 5. cron_diario --step scanner   (generar alertas)
-6. Para z-scores: usar src/utils/zscore_pipeline.backfill_zscore_tickers(engine, desde=date)
 ```
 
 Ver `docs/checklist_recovery_manual.md` para casos detallados (A: Oracle cron
