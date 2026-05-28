@@ -1,5 +1,13 @@
 # Checklist de Recovery Manual
 
+> ⚠️ **PARCIALMENTE DESACTUALIZADO (pre Plan C / pre yahooquery).** Algunos scripts
+> citados ya NO existen. Reemplazos (28/5/2026):
+> - `cron_paso1_precios.bat` -> **`cron_paso1_precios_yq.bat`** (yahooquery, target local)
+> - `recovery_pipeline_local.bat` -> 3 pasos sueltos: `cron_paso1_precios_yq.bat` +
+>   `cron_paso2_features.bat` + `cron_paso3_scanner.bat`
+> - `poblar_opciones.bat` -> **`poblar_opciones_yq.bat`**
+> Bajo Plan C local es la fuente de verdad (no Railway). Reescritura completa = pendiente.
+
 Guia paso a paso para reaccionar cuando algun cron automatico (Oracle o GH Actions)
 falla y los datos no llegan a Railway / local.
 

@@ -1,5 +1,18 @@
 # MANUAL_SCRIPTS — Glosario de ejecutables manuales
 
+> ⚠️ **PARCIALMENTE DESACTUALIZADO (pre Plan C / pre yahooquery).** Este glosario
+> describe scripts que ya NO existen. Mapeo a los actuales (28/5/2026):
+> - `cron_paso1_precios.bat` (borrado) -> **`cron_paso1_precios_yq.bat`** (yahooquery)
+> - `recovery_pipeline_local.bat` (borrado) -> correr los 3 pasos sueltos:
+>   `cron_paso1_precios_yq.bat` + `cron_paso2_features.bat` + `cron_paso3_scanner.bat`
+> - `poblar_opciones.bat` (borrado) -> **`poblar_opciones_yq.bat`** (yahooquery)
+> - `check_yfinance.bat` / `limpiar_cookies_yfinance.bat` (borrados, ya no aplican)
+> - `precios_paso1_fast_info.bat` / `poblar_scanner.bat` / `poblar_futuros.bat` /
+>   `actualizar_precios.bat`: referenciados abajo pero NO existen (stale previo).
+>
+> **Fuente de verdad de scripts activos: tabla en `CLAUDE.md`.** Reescritura completa
+> de este glosario = pendiente.
+
 Referencia rapida de todos los scripts .bat disponibles para ejecucion manual.
 Ubicacion de los archivos: `scripts/manual/` y `scripts/`
 

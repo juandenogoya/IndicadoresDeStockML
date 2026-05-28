@@ -49,7 +49,7 @@ REM ── GRUPO 6: Earnings calendar (replace completo) ───────�
 call :sync_tabla earnings_calendar
 REM ── Forward Testing NO se sincroniza: corre 100%% en local ──
 REM    (Plan C: local es fuente de verdad de las tablas ft_*).
-REM    Migracion puntual: scripts\migrations\migrate_ft_railway_to_local.py
+REM    Migracion puntual: scripts\oneshot\migrate_ft_railway_to_local.py
 REM ── GRUPO 7: Backtesting historico ──────────────────────────
 call :sync_tabla bt_historico
 REM ── GRUPO 8: Features ML ────────────────────────────────────

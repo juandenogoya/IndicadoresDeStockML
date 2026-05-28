@@ -163,18 +163,18 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 |--------|----------|
 | `scripts/manual/recovery_incremental.bat` | Recovery incremental local (precios + futuros) |
 | `scripts/manual/status_local.bat` / `status.bat` | Status DB local / Railway |
-| `scripts/manual/poblar_opciones.bat` | Carga manual opciones US (UNA pasada, sin dry-run) |
+| `scripts/manual/poblar_opciones_yq.bat` | Carga manual opciones US via yahooquery (UNA pasada) |
 | `scripts/manual/recover_opciones_tickers.py` | Recovery quirurgico de tickers especificos |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
-| `scripts/migrations/clean_railway_may12.py` | One-shot one-off |
+| `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
-| `scripts/migrations/create_earnings_calendar.py` | Crea la tabla earnings_calendar (Railway + local) |
-| `scripts/migrations/migrate_ft_railway_to_local.py` | Migracion puntual de tablas ft_* Railway -> local |
+| `scripts/oneshot/create_earnings_calendar.py` | Crea la tabla earnings_calendar (one-shot, archivado en scripts/oneshot/) |
+| `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
 | `scripts/reports/make_infografia.bat <TICKER>` | Infografia PNG para X (datos del MCP, sin LLM). Ver docs/reportes.md |
 | `scripts/reports/build_yaml.bat <TICKER>` + `make_report.bat <yaml>` | Reporte PDF detallado con narrativa del LLM |
 

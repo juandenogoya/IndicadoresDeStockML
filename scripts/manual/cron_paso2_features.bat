@@ -30,7 +30,7 @@ echo Estado actual de la DB LOCAL:
 "%PYTHON%" "%ROOT%scripts\manual\db_status.py" --target local
 echo.
 echo PREREQUISITO: el Paso 1 (precios) debe haber corrido hoy.
-echo Si los precios no estan actualizados, correr cron_paso1_precios.bat primero.
+echo Si los precios no estan actualizados, correr cron_paso1_precios_yq.bat primero.
 echo.
 set /p CONFIRM="Ejecutar Paso 2? (s/n): "
 if /i not "%CONFIRM%"=="s" (
