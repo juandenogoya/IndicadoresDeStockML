@@ -245,6 +245,10 @@ Fases completadas:
   (RSI/MACD diario y semanal clasificados) x opciones por plazo (PCR_vol,
   muros de OI como S/R) x sentimiento sectorial, mas reglas de interpretacion.
   Recalcula los muros con el close real (defensa ante precio_subyacente viejo).
+  Staleness guard del semanal (28/5/2026): indicadores_tecnicos_1w quedo congelada
+  (pipeline 1w deprecado); si la fecha del 1w esta vieja vs el diario, marca el
+  semanal "desactualizado" y lo OMITE de las reglas D-vs-W (no presenta data vieja
+  como vigente). Migrar el semanal del MCP a on-the-fly = follow-up pendiente.
 
 Tools registradas hasta hoy (16):
 - ping
