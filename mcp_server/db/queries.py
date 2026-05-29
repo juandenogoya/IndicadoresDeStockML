@@ -744,19 +744,21 @@ SQL_ML_ALERT_HISTORY = """
 # $7  limit            (int)
 
 
-# ── Sintesis: indicadores tecnicos SEMANALES (ultimo) ─────────────────────────
+# ── Sintesis: precios diarios para el semanal AL VUELO ────────────────────────
 
-SQL_SINTESIS_TECNICO_1W = """
+SQL_SINTESIS_PRECIOS_SEMANAL = """
     SELECT
         fecha,
-        rsi14,
-        macd, macd_signal, macd_hist
-    FROM   indicadores_tecnicos_1w
+        close
+    FROM   precios_diarios
     WHERE  ticker = $1
-    ORDER  BY fecha DESC
-    LIMIT  1
+      AND  fecha  >= $2
+    ORDER  BY fecha ASC
 """
-# $1: ticker. Ultimo dato semanal. Para clasificar RSI/MACD en timeframe mayor.
+# $1: ticker  $2: desde (date, ~540 dias atras = ~75 semanas).
+# El RSI/MACD semanal se computa al vuelo con src.utils.weekly_tf (resample
+# W-FRI + ta) en vez de leer indicadores_tecnicos_1w (tabla congelada bajo
+# Plan C, pipeline semanal deprecado). 75 semanas cubre el warmup de MACD.
 
 
 # ── Sintesis: PCR + muros OI por plazo (ultima fecha del ticker) ──────────────

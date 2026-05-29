@@ -193,8 +193,9 @@ Las criticas:
 - `opciones_sector_pcr_plazo_diario` (PCR sectorial por ventana + z-score)
 - `indicadores_tecnicos_1w` (RSI/MACD semanal) -- CONGELADA 2026-04-02: pipeline
   semanal (scripts 23-30) deprecado 28/5/2026 (Plan C), movido a scripts/legacy_1w/.
-  El timeframe semanal se calcula AL VUELO desde precios_diarios (dashboard +
-  mtf_context). Solo el MCP get_ticker_sintesis aun lee esta tabla (follow-up).
+  El timeframe semanal se calcula AL VUELO desde precios_diarios (dashboard,
+  mtf_context y el MCP get_ticker_sintesis). Ningun flujo vivo la lee ya:
+  src/utils/weekly_tf.py es la fuente unica del RSI/MACD semanal (29/5/2026).
 - `futuros_diarios` | `indicadores_tecnicos_futuros`
 - `features_regimen_macro` | `features_ml` | `features_sector`
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
@@ -245,10 +246,11 @@ Fases completadas:
   (RSI/MACD diario y semanal clasificados) x opciones por plazo (PCR_vol,
   muros de OI como S/R) x sentimiento sectorial, mas reglas de interpretacion.
   Recalcula los muros con el close real (defensa ante precio_subyacente viejo).
-  Staleness guard del semanal (28/5/2026): indicadores_tecnicos_1w quedo congelada
-  (pipeline 1w deprecado); si la fecha del 1w esta vieja vs el diario, marca el
-  semanal "desactualizado" y lo OMITE de las reglas D-vs-W (no presenta data vieja
-  como vigente). Migrar el semanal del MCP a on-the-fly = follow-up pendiente.
+  Semanal AL VUELO (29/5/2026, Tarea 11): el RSI/MACD semanal se computa al
+  momento desde precios_diarios via src/utils/weekly_tf.py (resample W-FRI + ta,
+  modulo PURO sin config/DB, fuente unica compartida con el dashboard). Reemplaza
+  la lectura de indicadores_tecnicos_1w (congelada) y elimina el staleness guard
+  previo: el semanal siempre esta fresco, sin tabla intermedia.
 
 Tools registradas hasta hoy (16):
 - ping

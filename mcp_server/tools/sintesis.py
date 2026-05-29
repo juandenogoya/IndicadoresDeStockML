@@ -17,11 +17,13 @@ Plazos (homogeneo con config / estrategias FT):
 Reglas: son heuristicas interpretativas (no señales de trading validadas).
 Se computan en Python para no volcar numeros crudos al LLM.
 
-Imports: solo funciones puras de src/utils (clasificacion_tecnica, autonomo
-sin config). Cumple la regla del MCP de no importar config/.env del proyecto.
+Imports: solo funciones puras de src/utils (clasificacion_tecnica + weekly_tf,
+ambos autonomos sin config ni DB). Cumple la regla del MCP de no importar
+config/.env del proyecto. El semanal se computa AL VUELO desde precios_diarios
+(weekly_tf), no se lee de indicadores_tecnicos_1w (congelada bajo Plan C).
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from mcp_server.db.pool import get_pool
@@ -29,11 +31,12 @@ from mcp_server.db.queries import (
     SQL_OVERVIEW_PERFIL,
     SQL_OVERVIEW_PRECIO,
     SQL_OVERVIEW_TECNICOS,
-    SQL_SINTESIS_TECNICO_1W,
+    SQL_SINTESIS_PRECIOS_SEMANAL,
     SQL_SINTESIS_PCR_PLAZO,
     SQL_SINTESIS_PCR_SECTOR_PLAZO,
 )
 from src.utils.clasificacion_tecnica import clasificar_rsi, clasificar_macd
+from src.utils.weekly_tf import tecnico_semanal
 
 SINTESIS_ANNOTATIONS = {
     "readOnlyHint": True,
@@ -46,30 +49,11 @@ SINTESIS_ANNOTATIONS = {
 _Z_SECTOR_INUSUAL = 1.5
 # Distancia maxima (%) para considerar un muro de OI "cercano" al precio
 _MURO_CERCANO_PCT = 3.0
-# Dias maximos entre el semanal y el diario antes de considerar el 1w "desactualizado".
-# El pipeline semanal (scripts 23-30) se depreco (28/5/2026, Plan C) -> indicadores_tecnicos_1w
-# queda congelada. El semanal W-FRI normalmente cae a <=7 dias del diario; >14 = stale.
-_DIAS_STALE_1W = 14
-
-
-def _semanal_desactualizado(w_fecha, d_fecha) -> bool:
-    """True si la fecha del semanal esta demasiado vieja respecto al diario
-    (o a hoy si no hay diario). w_fecha/d_fecha son ISO strings o None."""
-    if not w_fecha:
-        return False
-    try:
-        wf = date.fromisoformat(str(w_fecha)[:10])
-    except ValueError:
-        return False
-    ref = None
-    if d_fecha:
-        try:
-            ref = date.fromisoformat(str(d_fecha)[:10])
-        except ValueError:
-            ref = None
-    if ref is None:
-        ref = date.today()
-    return (ref - wf).days > _DIAS_STALE_1W
+# Dias de historia diaria a pedir para el semanal al vuelo. ~760d cubre los ~2
+# anos que guarda precios_diarios -> el RSI/MACD semanal converge al mismo valor
+# que el dashboard (que resamplea la historia completa); el warmup de MACD 26+9
+# queda holgado.
+_DIAS_HISTORIA_1W = 760
 
 
 def _row_to_dict(row) -> dict:
@@ -256,24 +240,23 @@ async def get_ticker_sintesis(ticker: str) -> dict:
                     tecnico["diario"] = {"fecha": d.get("fecha"), **_bloque_tecnico(d.get("rsi14"), d.get("macd"), d.get("macd_signal"))}
                 else:
                     tecnico["diario"] = {"disponible": False}
-                w_raw = await conn.fetchrow(SQL_SINTESIS_TECNICO_1W, ticker)
-                if w_raw:
-                    w = _row_to_dict(w_raw)
-                    d_fecha = (tecnico.get("diario") or {}).get("fecha")
-                    if _semanal_desactualizado(w.get("fecha"), d_fecha):
-                        # indicadores_tecnicos_1w congelada (pipeline 1W deprecado).
-                        # Se marca y se OMITE: sin macd_estado, las reglas D-vs-W no lo usan.
-                        tecnico["semanal"] = {
-                            "disponible": False,
-                            "desactualizado": True,
-                            "fecha": w.get("fecha"),
-                            "razon": ("indicadores_tecnicos_1w congelada (pipeline semanal "
-                                      "deprecado, Plan C); el semanal al vuelo vive en el dashboard"),
-                        }
-                    else:
-                        tecnico["semanal"] = {"fecha": w.get("fecha"), **_bloque_tecnico(w.get("rsi14"), w.get("macd"), w.get("macd_signal"))}
+                # Semanal AL VUELO: resample W-FRI de los precios diarios + RSI/MACD
+                # (src.utils.weekly_tf). Reemplaza la lectura de indicadores_tecnicos_1w
+                # (tabla congelada, pipeline semanal deprecado bajo Plan C).
+                desde_1w = date.today() - timedelta(days=_DIAS_HISTORIA_1W)
+                precios_1w = await conn.fetch(SQL_SINTESIS_PRECIOS_SEMANAL, ticker, desde_1w)
+                sem = tecnico_semanal(precios_1w) if precios_1w else {}
+                if sem:
+                    fecha_sem = sem.get("fecha")
+                    tecnico["semanal"] = {
+                        "fecha": fecha_sem.isoformat() if isinstance(fecha_sem, date) else fecha_sem,
+                        **_bloque_tecnico(sem.get("rsi"), sem.get("macd"), sem.get("macd_signal")),
+                    }
                 else:
-                    tecnico["semanal"] = {"disponible": False}
+                    tecnico["semanal"] = {
+                        "disponible": False,
+                        "razon": "historia diaria insuficiente para el semanal al vuelo",
+                    }
             except Exception as exc:
                 tecnico = {"error": str(exc)}
             result["tecnico"] = tecnico

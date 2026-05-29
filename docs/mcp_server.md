@@ -544,7 +544,7 @@ ventana consultada y dejar que el usuario interprete:
 |---|---|---|
 | Estructura SMC corto plazo | features_market_structure.estructura_5 | -1 bajista / 0 neutral / +1 alcista |
 | Estructura SMC medio plazo | features_market_structure.estructura_10 | idem |
-| Tendencia semanal | features_market_structure_1w.estructura_10 | idem (tendencia_1w). CONGELADA desde 2026-04-02: pipeline 1w deprecado (28/5/2026). get_ticker_sintesis marca el semanal "desactualizado" si la fecha es vieja. |
+| Tendencia semanal (RSI/MACD) | AL VUELO desde precios_diarios via src.utils.weekly_tf (resample W-FRI + ta) | get_ticker_sintesis lo computa en el momento (29/5/2026). Ya NO lee indicadores_tecnicos_1w (congelada, pipeline 1w deprecado 28/5/2026) ni necesita staleness guard. Fuente unica compartida con el dashboard (dashboard/sintesis_data._semanal_bundle). |
 | Score ML | alertas_scanner.alert_score | 0-100, niveles documentados |
 | Nivel cualitativo ML | alertas_scanner.alert_nivel | COMPRA_FUERTE/COMPRA/NEUTRO/VENTA/VENTA_FUERTE |
 | Sesgo PCR volumen | opciones_resumen_diario.pcr_vol | < 0.7 ALCISTA / 0.7-1.0 NEUTRO / > 1.0 BAJISTA |

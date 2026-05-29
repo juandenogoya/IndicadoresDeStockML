@@ -24,17 +24,10 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
-import ta
 
 from src.data.database import query_df
 from src.data.resample_weekly import resample_a_semanal
-
-# Periodos estandar (homogeneo con config.py; replicados como en
-# clasificacion_tecnica.py para mantener el modulo simple)
-RSI_PERIOD  = 14
-MACD_FAST   = 12
-MACD_SLOW   = 26
-MACD_SIGNAL = 9
+from src.utils.weekly_tf import rsi_macd_semanal
 
 _VER_MAP = {"A": "Alcista", "B": "Bajista"}
 
@@ -166,18 +159,9 @@ def _semanal_bundle(ticker: str) -> dict:
     out = {"tecnico": {}, "smc_semanal": {}, "mensual": {}}
     fecha_sem = sem["fecha_semana"].iloc[-1]
 
-    # 1. Tecnico semanal (RSI/MACD)
-    if len(sem) >= MACD_SLOW + MACD_SIGNAL:
-        close = sem["close"].astype(float)
-        rsi = ta.momentum.RSIIndicator(close=close, window=RSI_PERIOD).rsi()
-        macd_ind = ta.trend.MACD(close=close, window_fast=MACD_FAST,
-                                 window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
-        out["tecnico"] = {
-            "fecha":       fecha_sem,
-            "rsi":         _f(rsi.iloc[-1]),
-            "macd":        _f(macd_ind.macd().iloc[-1]),
-            "macd_signal": _f(macd_ind.macd_signal().iloc[-1]),
-        }
+    # 1. Tecnico semanal (RSI/MACD): reusa weekly_tf (fuente unica del semanal
+    # al vuelo, compartida con el MCP). Devuelve {} si faltan semanas.
+    out["tecnico"] = rsi_macd_semanal(sem["close"], fecha_sem)
 
     # 2. SMC semanal (tendencia_1w): estructura sobre barras semanales.
     # _calcular_ticker_1w espera columnas fecha/open/high/low/close/volume.
