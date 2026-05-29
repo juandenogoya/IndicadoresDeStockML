@@ -1,250 +1,203 @@
 # Checklist de Recovery Manual
 
-> ⚠️ **PARCIALMENTE DESACTUALIZADO (pre Plan C / pre yahooquery).** Algunos scripts
-> citados ya NO existen. Reemplazos (28/5/2026):
-> - `cron_paso1_precios.bat` -> **`cron_paso1_precios_yq.bat`** (yahooquery, target local)
-> - `recovery_pipeline_local.bat` -> 3 pasos sueltos: `cron_paso1_precios_yq.bat` +
->   `cron_paso2_features.bat` + `cron_paso3_scanner.bat`
-> - `poblar_opciones.bat` -> **`poblar_opciones_yq.bat`**
-> Bajo Plan C local es la fuente de verdad (no Railway). Reescritura completa = pendiente.
+Guia paso a paso para reaccionar cuando el cron automatico (Oracle / GH Actions)
+falla y faltan datos. Actualizado 28/5/2026 al flujo **Plan C**.
 
-Guia paso a paso para reaccionar cuando algun cron automatico (Oracle o GH Actions)
-falla y los datos no llegan a Railway / local.
+## Plan C en una linea
+
+- **LOCAL PostgreSQL = fuente de verdad** para OHLCV, indicadores, features, scanner,
+  z-scores, ML y backtesting. Se mantiene desde Windows (pasos 1-3 abajo).
+- **Railway = SOLO opciones_snapshot** (lo escribe el cron Oracle/GH; es la unica data
+  irrecuperable post-mercado siguiente). De ahi se baja a local con un sync.
+- El timeframe **semanal (1W) ya no se puebla** (pipeline deprecado): se calcula al
+  vuelo. No hay nada que recuperar ahi.
 
 ---
 
 ## Conceptos basicos
 
-| DB | Cuando se usa | Como apunta el script |
-|----|--------------|----------------------|
-| **Railway** | Fuente de verdad de produccion (cron Oracle escribe aqui) | `.env.local` con `DATABASE_URL` |
-| **Local** | Backup / espejo para desarrollo y emergencias | `.env` con `DB_HOST/PORT/NAME/USER/PASSWORD` |
+| DB | Rol bajo Plan C | Como apunta el script |
+|----|-----------------|----------------------|
+| **Local** | Fuente de verdad (todo menos opciones) | `.env` con `DB_HOST/PORT/NAME/USER/PASSWORD` (sin `DATABASE_URL`) |
+| **Railway** | Solo opciones_snapshot | scripts que cargan `.env.local` -> `DATABASE_URL`=Railway |
 
-| Bat | Target | Para que sirve |
+| Bat (scripts/manual/) | Target | Para que sirve |
 |-----|--------|-----------------|
-| `status.bat` | Railway | Ver estado de Railway |
-| `status_local.bat` | Local | Ver estado del local |
-| `cron_paso1_precios.bat` | Local | Solo paso 1 manual |
-| `cron_paso2_features.bat` | Local | Solo paso 2 manual |
-| `cron_paso3_scanner.bat` | Local | Solo paso 3 manual |
-| `recovery_pipeline_local.bat` | Local | Paso 1+2+3 secuencial en una corrida |
-| `poblar_opciones.bat` | Railway (¡cuidado!) | Cargar opciones US manual |
-| `sync_local.bat` | Railway -> Local | Bajar datos de Railway a local |
-| `sync_to_railway.bat` | Local -> Railway | Subir datos de local a Railway |
+| `status_local.bat` | Local | Estado de la DB local (la que importa) |
+| `status.bat` | Railway | Estado de Railway (sobre todo opciones) |
+| `cron_paso1_precios_yq.bat` | Local | **Paso 1**: precios + futuros + indicadores + z-scores (yahooquery, incremental) |
+| `cron_paso2_features.bat` | Local | **Paso 2**: features PA + Market Structure |
+| `cron_paso3_scanner.bat` | Local | **Paso 3**: scanner ML + alertas + Telegram |
+| `recovery_incremental.bat` | Local | Motor del Paso 1 directo (detecta pendientes via MAX(fecha) y baja solo lo faltante) |
+| `sync_opciones_railway_to_local.bat` | Railway -> Local | Baja las 3 tablas de opciones a local (incremental) |
+| `poblar_opciones_yq.bat` | Railway | Carga manual del snapshot de opciones US (yahooquery) |
+| `recover_opciones_tickers.py` | Railway | Recovery quirurgico de opciones de tickers puntuales |
+| `sync_local.bat` | Railway -> Local | Sync completo Railway -> local (todas las tablas) |
+| `sync_to_railway.bat` | Local -> Railway | Subir local -> Railway (raro bajo Plan C) |
 
 ---
 
-## CASO A: El cron de Oracle del pipeline diario fallo
+## Flujo diario normal (no es recovery)
 
-**Sintoma**: no recibis los mensajes de Telegram con "Paso 1/2/3 OK", o `status.bat`
-muestra `Fecha max < ayer`.
+Post-cierre NYSE (despues de 21:00 UTC), desde Windows, en orden:
 
-### Paso 1: Diagnostico
-1. Ejecutar `status.bat` (Railway): ver hasta que fecha tiene cada tabla
-2. Confirmar dia habil: si el ultimo dia faltante es feriado o weekend, no hay nada que hacer
-
-### Paso 2: Verificar Oracle
-Si te animas a SSH:
-```bash
-ssh -i "C:/Users/juand/.ssh/ssh-key-2026-05-05.key" ubuntu@141.148.57.58
-tail -100 /tmp/cron_pipeline_diario.log
-crontab -l   # verificar que la entrada de 22:00 UTC sigue ahi
+```
+1. cron_paso1_precios_yq.bat   (precios + futuros + indicadores + z-scores, LOCAL)
+2. cron_paso2_features.bat     (features PA + Market Structure, LOCAL)
+3. cron_paso3_scanner.bat      (scanner ML + alertas + Telegram, LOCAL)
+4. sync_opciones_railway_to_local.bat  (baja las opciones del dia desde Railway)
 ```
 
-### Paso 3: Recovery local
-**Antes de empezar**: asegurarse que `pipeline_automatico.bat` (Windows Task Scheduler)
-NO este corriendo. Verificar en `taskschd.msc` y/o `taskkill /F /IM python.exe` si hace falta.
+Con esto los datos crudos quedan completos y frescos en local. El z-score de acciones
+corre solo al final del Paso 1 (ya no es manual). El semanal (RSI/MACD/SMC 1W) se
+calcula al vuelo en el dashboard y en mtf_context; no requiere paso.
 
-1. Ejecutar `scripts\manual\recovery_pipeline_local.bat`
-2. Esperar ~95 min
-3. **No correrlo durante market hours** (NYSE 13:30-20:00 UTC) si la IP esta calentada;
-   esperar post-cierre
+---
 
-### Paso 4: Verificar que recovery local quedo COMPLETO
-**Critico**: el recovery puede ser parcial sin que el script lo diga claro.
+## CASO A: faltan precios / features / scanner en LOCAL
 
-```bash
-# verificacion manual
+**Sintoma**: `status_local.bat` muestra `Fecha max < ultimo dia habil`, o no llegaron
+los mensajes de Telegram del scanner.
+
+### Paso 1 -- Diagnostico
+1. `status_local.bat` -> ver hasta que fecha tiene cada tabla.
+2. Confirmar dia habil NYSE: `python scripts/manual/check_fecha.py` (si el dia faltante
+   es feriado/weekend, no hay nada que hacer).
+
+### Paso 2 -- Recovery de precios (Paso 1)
+**Antes**: que no haya otro script yfinance/yahooquery corriendo (el rate limit es por
+IP; el `yfinance_lock` aborta si detecta concurrencia).
+
+```
+cron_paso1_precios_yq.bat
+```
+Detecta los tickers con MAX(fecha) atrasada y baja SOLO los pendientes (no los 199
+ciego). Reporta los que NO logro completar. Incluye z-scores de acciones al final.
+
+### Paso 3 -- Verificar que quedo COMPLETO
+```
 status_local.bat
 ```
+Buscar: `Fecha max = <esperada> [OK]` y la lista de "Tickers desactualizados" VACIA.
+Si quedan pendientes: esperar ~30 min (rate limit) y re-correr el Paso 1 (es idempotente).
 
-Buscar en el output:
-- `Total tickers : 199` (o 200 si esta el SE duplicado)
-- `Fecha max : <fecha esperada> [OK]`
-- **Lista de "Tickers desactualizados" debe estar VACIA** o solo tener nombres conocidos
-
-Si hay tickers con fecha vieja:
-1. Esperar 30 min para que se libere el rate limit
-2. Volver a ejecutar `recovery_pipeline_local.bat`
-3. yfinance hace upsert idempotente; los tickers ya OK no se tocan
-
-Repetir hasta que la lista de desactualizados quede limpia.
-
-### Paso 5: Subir a Railway
-```bash
-scripts\sync_to_railway.bat
+### Paso 4 -- Features y scanner
+```
+cron_paso2_features.bat     (features sobre los precios nuevos)
+cron_paso3_scanner.bat      (alertas ML)
 ```
 
-Hace 4 sub-pasos: precios -> indicadores -> features -> scanner. Confirma cada uno con `s`.
-
-### Paso 6: Verificacion final
-```bash
-status.bat            # Railway
-status_local.bat      # Local
-```
-
-Ambas deberian mostrar las fechas al dia y los tickers desactualizados vacios.
+Bajo Plan C **no se sube a Railway** (Railway no es la verdad para esto).
 
 ---
 
-## CASO B: El cron del snapshot de Opciones US fallo
+## CASO B: falta el snapshot de Opciones US
 
-**Sintoma**: `status.bat` muestra `OPCIONES SNAPSHOT` con `!! FALTA` en algun dia.
+**Sintoma**: `status.bat` (Railway) muestra `OPCIONES SNAPSHOT` con `!! FALTA` en
+algun dia, o `sync_opciones_railway_to_local.bat` no trae la fecha esperada.
 
-### Paso 1: Diagnostico
-1. Ejecutar `status.bat` y mirar la seccion `OPCIONES SNAPSHOT`
-2. Identificar las fechas faltantes
-3. Verificar que NO sea feriado NYSE
+### Paso 1 -- Diagnostico
+1. `status.bat` -> seccion `OPCIONES SNAPSHOT`, identificar fechas faltantes.
+2. Verificar dia habil NYSE.
 
-### Paso 2: Verificar timing
-**El snapshot solo funciona post-cierre NYSE** (20:00 UTC en adelante).
-Si es antes del cierre, Yahoo Finance no tiene datos completos -> esperar.
+### Paso 2 -- Timing (critico)
+El snapshot solo es valido **post-cierre NYSE** (20:00 UTC en adelante) y **antes de
+que abra el mercado del dia siguiente** (Yahoo solo sirve la chain vigente; al abrir,
+las strikes del cierre anterior dejan de estar disponibles -> irrecuperable).
 
-### Paso 3: Recovery manual
-**OJO con el target**: `poblar_opciones.bat` apunta al destino definido en `.env.local`,
-que es Railway. Si quieres traerlo a local primero hay que cambiar de approach.
-
-#### Opcion B1: cargar directo en Railway (recomendado)
-```bash
-scripts\manual\poblar_opciones.bat
+### Paso 3 -- Recovery a Railway
 ```
-1. Pide la fecha (YYYY-MM-DD)
-2. Hace dry-run primero
-3. Pide confirmacion antes de escribir
-
-#### Opcion B2: cargar primero en local, despues subir
-1. Modificar manualmente el target (o cambiar .env.local a apuntar local)
-2. Correr `poblar_opciones.bat`
-3. Subir con `sync_to_railway.bat`
-
-### Paso 4: Verificar
-```bash
-status.bat
+poblar_opciones_yq.bat          (carga el snapshot a Railway via yahooquery; idempotente)
 ```
-La fecha que cargaste deberia aparecer con `OK` y filas >= 10,000.
+Para tickers puntuales que fallaron: `python scripts/manual/recover_opciones_tickers.py`.
+
+### Paso 4 -- Bajar a local
+```
+sync_opciones_railway_to_local.bat
+```
+
+### Paso 5 -- Verificar
+`status.bat` (la fecha aparece con OK) y `status_local.bat` (opciones bajadas).
 
 ---
 
-## CASO C: Falta el scan diario (alertas_scanner)
+## CASO C: falta el scan diario (alertas_scanner) en LOCAL
 
-**Sintoma**: `status.bat` muestra solo algunas fechas en `ALERTAS SCANNER` (huecos).
+**Sintoma**: huecos en `ALERTAS SCANNER` de `status_local.bat`.
 
-### Requisito previo
-Las alertas se calculan a partir de:
-- `precios_diarios` actualizado
-- `features_precio_accion` actualizado
-- `features_market_structure` actualizado
+Las alertas dependen de: `precios_diarios` + `features_precio_accion` +
+`features_market_structure` al dia.
 
-### Recovery
-1. Verificar que los 3 prerequisitos esten al dia (`status.bat`)
-2. Si faltan: ir al CASO A primero
-3. Si estan OK, correr:
-   ```bash
-   scripts\manual\cron_paso3_scanner.bat
+1. `status_local.bat` -> verificar los 3 prerequisitos.
+2. Si faltan precios/features: hacer CASO A primero (pasos 1-2 y features).
+3. Con prerequisitos OK:
    ```
-4. Despues `sync_to_railway.bat` (solo paso 4: scanner)
+   cron_paso3_scanner.bat
+   ```
 
 ---
 
-## CASO D: Recovery completo de un dia perdido
-
-Si te perdiste un dia entero (precios + opciones + scanner):
+## CASO D: dia perdido completo (precios + opciones + scanner)
 
 ```
-1. status.bat              -> identificar todos los huecos
-2. recovery_pipeline_local.bat  -> precios+features+scanner local
-3. status_local.bat        -> verificar que recovery quedo completo
-4. poblar_opciones.bat     -> cargar el snapshot de opciones a Railway
-5. sync_to_railway.bat     -> subir TODO a Railway
-6. status.bat              -> verificacion final
+1. status_local.bat                    -> huecos en local
+2. cron_paso1_precios_yq.bat           -> precios + futuros + indicadores + z-scores
+3. status_local.bat                    -> confirmar Paso 1 completo
+4. cron_paso2_features.bat             -> features
+5. cron_paso3_scanner.bat              -> scanner + alertas
+6. poblar_opciones_yq.bat              -> opciones US a Railway (si falto)
+7. sync_opciones_railway_to_local.bat  -> bajar opciones a local
+8. status_local.bat + status.bat       -> verificacion final
 ```
-
-Duracion total estimada: 2-3 horas.
 
 ---
 
 ## Reglas de oro
 
-### A. NUNCA correr 2 cosas a la vez contra yfinance
-- Si Windows Task Scheduler corre `pipeline_automatico.bat`, NO corras nada manual al mismo tiempo
-- Yahoo rate-limita la IP completa, no por proceso
+### A. NUNCA correr 2 cosas a la vez contra Yahoo
+yahooquery y yfinance comparten provider; Yahoo rate-limita la IP completa, no por
+proceso. El `src/utils/yfinance_lock.py` aborta si detecta otro script activo.
 
-### B. NUNCA dar por valido un OK del script
-Cuando `cron_diario.py` dice "199/199 tickers con datos", verificar igual con:
-```bash
-status_local.bat
-```
-La lista de "Tickers desactualizados" es la verdad. Si tiene nombres = recovery incompleto.
+### B. NUNCA dar por valido un "OK" sin verificar
+`status_local.bat` y su lista de "Tickers desactualizados" son la verdad. Si tiene
+nombres, el recovery quedo incompleto aunque el script haya dicho OK.
 
 ### C. NUNCA correr scripts pre-mercado
-NYSE abre 13:30 UTC (10:30 ART). `fast_info` y `yf.download()` antes de la apertura
-devuelven el cierre del dia anterior, pero los scripts lo etiquetan con la fecha de hoy
--> **datos corruptos**. Correr siempre **post-cierre (20:00 UTC en adelante)** o el dia
-siguiente temprano antes de la pre-apertura.
+NYSE abre 13:30 UTC. Bajar precios antes de la apertura devuelve el cierre anterior
+pero algunos scripts lo etiquetan con la fecha de hoy -> datos corruptos. Correr
+siempre **post-cierre (>=21:00 UTC)** o temprano al dia siguiente antes de la apertura.
 
-### D. SIEMPRE verificar status_local DESPUES de un recovery
-Antes de subir a Railway, asegurate que el local este bien. Si subes datos parciales,
-mezclas verdad con basura en Railway y se complica.
+### D. OHLCV es prerequisito de todo lo demas
+features_* dependen de precios_diarios; scanner depende de features_*; z-scores
+dependen de precios_diarios. Orden siempre:
+**precios -> indicadores -> features -> scanner**. Opciones corre en paralelo.
 
-### E. OHLCV es prerequisito de todo lo demas
-- features_* dependen de precios_diarios
-- scanner depende de features_*
-- HV (en opciones) depende de precios_diarios
-- Z-scores dependen de precios_diarios
-
-Orden de recovery siempre: **precios -> indicadores -> features -> scanner -> opciones**
-(opciones puede correr independiente pero los calculos derivados de IV vs HV requieren
-precios al dia).
+### E. Opciones es lo unico irrecuperable
+Si el snapshot del dia no se tomo antes de la apertura siguiente, se perdio. Por eso
+hay 4 intentos de cron. El resto (precios/features/scanner) se recalcula cuando sea.
 
 ---
 
 ## Comandos de verificacion rapida
 
-### Estado de Railway en un vistazo
-```bash
-status.bat
+```
+status_local.bat     (estado del local = la fuente de verdad)
+status.bat           (estado de Railway = opciones)
+python scripts/manual/check_fecha.py    (es dia habil NYSE?)
 ```
 
-### Estado de local en un vistazo
-```bash
-status_local.bat
-```
-
-### Query ad-hoc a Railway
+### Query ad-hoc al local (Python, .env cargado, sin DATABASE_URL)
 ```python
-# desde Python (.env.local cargado)
-from sqlalchemy import create_engine, text
 import os
-e = create_engine(os.environ["DATABASE_URL"])
-print(e.connect().execute(text("SELECT MAX(fecha) FROM precios_diarios")).scalar())
-```
-
-### Query ad-hoc al local
-```python
-# desde Python (.env cargado)
 from sqlalchemy import create_engine, text
-import os
-url = f"postgresql+psycopg2://{os.environ['DB_USER']}:{os.environ['DB_PASSWORD']}@{os.environ['DB_HOST']}:{os.environ['DB_PORT']}/{os.environ['DB_NAME']}"
+url = (f"postgresql+psycopg2://{os.environ['DB_USER']}:{os.environ['DB_PASSWORD']}"
+       f"@{os.environ['DB_HOST']}:{os.environ['DB_PORT']}/{os.environ['DB_NAME']}")
 e = create_engine(url)
 print(e.connect().execute(text("SELECT MAX(fecha) FROM precios_diarios")).scalar())
 ```
 
-### Matar procesos Python en Windows
-```bash
-taskkill /F /IM python.exe
+### Procesos Python en Windows
 ```
-
-### Ver procesos Python activos
-```powershell
-Get-Process python -ErrorAction SilentlyContinue | Select Id, StartTime
+taskkill /F /IM python.exe                 (matar)
+Get-Process python | Select Id, StartTime  (listar, PowerShell)
 ```
