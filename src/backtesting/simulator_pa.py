@@ -408,7 +408,7 @@ def ejecutar_backtesting_pa_incremental(tickers: list = None,
         dict con {"cerradas": n, "actualizadas": n, "nuevas": n}
 
     Prerequisito: columnas stop_loss y take_profit deben existir en operaciones_bt_pa.
-    Ejecutar scripts/21_migrar_bt_incremental.py la primera vez.
+    Ejecutar scripts/oneshot/21_migrar_bt_incremental.py la primera vez.
     """
     import psycopg2.extras
 

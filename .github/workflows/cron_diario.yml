@@ -162,31 +162,5 @@ jobs:
           PYTHONPATH:   ${{ github.workspace }}
         run: python scripts/cron_diario.py --step verificar
 
-  # ── Paso 5: Google Sheets (paralelo a verificar, no critico) ─────────────
-  sheets:
-    name: "Paso 5 -- Google Sheets"
-    needs: scanner
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-
-    steps:
-      - name: Checkout repositorio
-        uses: actions/checkout@v4
-
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Instalar dependencias
-        run: pip install -r requirements.txt
-
-      - name: Exportar a Google Sheets
-        env:
-          DATABASE_URL:        ${{ secrets.DATABASE_URL }}
-          GOOGLE_SHEETS_KEY:   ${{ secrets.GOOGLE_SHEETS_KEY }}
-          GOOGLE_SHEETS_ID:    ${{ secrets.GOOGLE_SHEETS_ID }}
-          PYTHONPATH:          ${{ github.workspace }}
-        run: python scripts/sheets_export.py
+  # Paso 5 (Google Sheets) eliminado el 28/5/2026: Sheets pausado bajo Plan C y
+  # scripts/sheets_export.py borrado. Este workflow esta deshabilitado en GH.

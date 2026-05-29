@@ -116,10 +116,8 @@ Usar estos bats cuando el cron automatico de GitHub Actions falla en un paso esp
 
 ## GOOGLE SHEETS
 
-### `actualizar_sheets.bat` *(ubicado en `scripts/`)*
-- **Tarea:** Exporta los datos de alertas y scoring a Google Sheets. Corre `sheets_export.py` y muestra el resultado en pantalla.
-- **Cuando ejecutar:** Manualmente, cuando se necesite actualizar el dashboard de Sheets. No tiene schedule automatico.
-- **Prerequisito:** El scanner del dia debe haber corrido para que los datos exportados sean los mas recientes.
+Eliminado el 28/5/2026: Sheets pausado bajo Plan C; `actualizar_sheets.bat` y
+`scripts/sheets_export.py` borrados.
 
 ---
 
