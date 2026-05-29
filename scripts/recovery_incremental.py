@@ -593,6 +593,22 @@ def main():
     if not args.skip_futuros:
         pend_futuros = recover_futuros(engine, target_date, args, downloader)
 
+    # Z-SCORES de acciones (familia E del dashboard / actividad inusual).
+    # Deriva de precios_diarios LOCAL (window functions SQL, sin Yahoo). Mantiene
+    # ticker_zscore_diario al dia para el cruce accion+opciones del radar. Solo en
+    # target=local (en Railway esa tabla esta congelada bajo Plan C). No critico.
+    if not args.dry_run and args.target == "local":
+        try:
+            from sqlalchemy import text as _text
+            from src.utils.zscore_pipeline import backfill_zscore_tickers, init_tablas
+            init_tablas(engine)
+            with engine.connect() as _c:
+                _ult = _c.execute(_text("SELECT MAX(fecha) FROM ticker_zscore_diario")).scalar()
+            _n = backfill_zscore_tickers(engine, desde=_ult)
+            log(f"\nZ-SCORES acciones: {_n} filas (desde {_ult}) -> ticker_zscore_diario")
+        except Exception as e:
+            log(f"\nZ-SCORES acciones: ERROR (no critico): {str(e)[:120]}")
+
     # ── REPORTE FINAL ─────────────────────────────────────────────────────────
     print()
     print(SEP)

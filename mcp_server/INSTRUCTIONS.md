@@ -121,7 +121,7 @@ interprete; no sintetizar en un unico juicio.
 |---|---|---|
 | Estructura SMC corto plazo | features_market_structure.estructura_5 | -1 bajista / 0 neutral / +1 alcista |
 | Estructura SMC medio plazo | features_market_structure.estructura_10 | idem |
-| Tendencia semanal | features_market_structure_1w.estructura_10 | idem |
+| Tendencia semanal | features_market_structure_1w.estructura_10 | idem -- OJO: tabla CONGELADA (pipeline 1w deprecado 28/5/2026). get_ticker_sintesis marca el semanal como desactualizado si la fecha es vieja. |
 | Score ML | alertas_scanner.alert_score | 0-100 |
 | Nivel ML | alertas_scanner.alert_nivel | COMPRA_FUERTE / COMPRA / NEUTRO / VENTA / VENTA_FUERTE |
 | Sesgo PCR volumen | opciones_resumen_diario.pcr_vol | <0.7 ALCISTA / 0.7-1.0 NEUTRO / >1.0 BAJISTA |

@@ -27,6 +27,12 @@ Documentacion que existe hoy en docs/:
 - docs/estrategias_ft.md  : estrategias de forward testing
 - docs/forward_testing/   : detalle de forward testing
 - docs/checklist_recovery_manual.md : flujos de recovery manual
+- dashboard/README.md     : spec del Dashboard (informe descriptivo por ticker).
+                            v1 + Fase 2 v1 desarrollados 28/5/2026 en rama
+                            feature/dashboard: Streamlit local (modos Informe y
+                            Radar del dia), export JPG (informe) y PDF (papel de
+                            trabajo). Corre bajo el venv. Ver memory/dashboard.md
+                            ("Como correrlo / retomarlo").
 
 Politica de documentacion: un doc de dominio se crea SOLO cuando hay
 conocimiento real que no se puede derivar leyendo el codigo (ej.
@@ -157,18 +163,18 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 |--------|----------|
 | `scripts/manual/recovery_incremental.bat` | Recovery incremental local (precios + futuros) |
 | `scripts/manual/status_local.bat` / `status.bat` | Status DB local / Railway |
-| `scripts/manual/poblar_opciones.bat` | Carga manual opciones US (UNA pasada, sin dry-run) |
+| `scripts/manual/poblar_opciones_yq.bat` | Carga manual opciones US via yahooquery (UNA pasada) |
 | `scripts/manual/recover_opciones_tickers.py` | Recovery quirurgico de tickers especificos |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
-| `scripts/migrations/clean_railway_may12.py` | One-shot one-off |
+| `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
-| `scripts/migrations/create_earnings_calendar.py` | Crea la tabla earnings_calendar (Railway + local) |
-| `scripts/migrations/migrate_ft_railway_to_local.py` | Migracion puntual de tablas ft_* Railway -> local |
+| `scripts/oneshot/create_earnings_calendar.py` | Crea la tabla earnings_calendar (one-shot, archivado en scripts/oneshot/) |
+| `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
 | `scripts/reports/make_infografia.bat <TICKER>` | Infografia PNG para X (datos del MCP, sin LLM). Ver docs/reportes.md |
 | `scripts/reports/build_yaml.bat <TICKER>` + `make_report.bat <yaml>` | Reporte PDF detallado con narrativa del LLM |
 
@@ -185,7 +191,10 @@ Las criticas:
 - `opciones_pcr_plazo_diario` (PCR vol/OI + muros S/R por ventana corto/medio/largo,
   por ticker; fuente src/utils/opciones_plazo.py)
 - `opciones_sector_pcr_plazo_diario` (PCR sectorial por ventana + z-score)
-- `indicadores_tecnicos_1w` (RSI/MACD semanal)
+- `indicadores_tecnicos_1w` (RSI/MACD semanal) -- CONGELADA 2026-04-02: pipeline
+  semanal (scripts 23-30) deprecado 28/5/2026 (Plan C), movido a scripts/legacy_1w/.
+  El timeframe semanal se calcula AL VUELO desde precios_diarios (dashboard +
+  mtf_context). Solo el MCP get_ticker_sintesis aun lee esta tabla (follow-up).
 - `futuros_diarios` | `indicadores_tecnicos_futuros`
 - `features_regimen_macro` | `features_ml` | `features_sector`
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
@@ -197,11 +206,13 @@ Las criticas:
 
 ```
 1. status.bat               (ver Railway: que dias faltan)
-2. recovery_incremental.bat (LOCAL: bajar precios faltantes via yfinance)
+2. recovery_incremental.bat (LOCAL: bajar precios faltantes via yfinance/yahooquery)
+   -> incluye z-scores de acciones automaticamente al final (target=local):
+      backfill_zscore_tickers desde MAX(fecha) de ticker_zscore_diario. Ya NO es
+      paso manual. (28/5/2026; antes era el paso 6 de abajo.)
 3. status_local.bat         (verificar 0 tickers desactualizados)
 4. cron_diario --step features  (calcular features sobre los nuevos precios)
 5. cron_diario --step scanner   (generar alertas)
-6. Para z-scores: usar src/utils/zscore_pipeline.backfill_zscore_tickers(engine, desde=date)
 ```
 
 Ver `docs/checklist_recovery_manual.md` para casos detallados (A: Oracle cron
@@ -234,6 +245,10 @@ Fases completadas:
   (RSI/MACD diario y semanal clasificados) x opciones por plazo (PCR_vol,
   muros de OI como S/R) x sentimiento sectorial, mas reglas de interpretacion.
   Recalcula los muros con el close real (defensa ante precio_subyacente viejo).
+  Staleness guard del semanal (28/5/2026): indicadores_tecnicos_1w quedo congelada
+  (pipeline 1w deprecado); si la fecha del 1w esta vieja vs el diario, marca el
+  semanal "desactualizado" y lo OMITE de las reglas D-vs-W (no presenta data vieja
+  como vigente). Migrar el semanal del MCP a on-the-fly = follow-up pendiente.
 
 Tools registradas hasta hoy (16):
 - ping

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+</head>
+<body>
+  <div class="header">
+    <div class="ticker">{{ enc.ticker }}</div>
+    <div class="meta">{{ enc.sector }}{% if enc.industry %} / {{ enc.industry }}{% endif %}
+      &nbsp;|&nbsp; ${{ enc.close }} &nbsp;|&nbsp; cierre {{ enc.fecha }}</div>
+  </div>
+
+  <div class="veredicto" style="background: {{ enc.color }};">
+    VEREDICTO: {{ enc.estado }} - {{ enc.frase }}
+  </div>
+
+  <div class="seccion">
+    <div class="titulo">Tecnico</div>
+    <div class="sub">Diario al {{ tec.fecha_d }} &nbsp;|&nbsp; Semanal (W-FRI cerrada) al {{ tec.fecha_w }}</div>
+    <table>
+      <thead><tr><th>Indicador</th><th>Diario</th><th>Semanal</th></tr></thead>
+      <tbody>
+        {% for ind, d, w in tec.filas %}
+        <tr><td>{{ ind }}</td><td>{{ d }}</td><td>{{ w }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="fila2">
+    <div class="seccion mitad">
+      <div class="titulo">Opciones - Sesgo (ticker)</div>
+      {% if opciones %}
+      <table>
+        <thead><tr><th>Plazo</th><th>PCR_vol</th><th>PCR_oi</th><th>Sesgo</th></tr></thead>
+        <tbody>
+          {% for p, pv, po, s in opciones %}
+          <tr><td>{{ p }}</td><td>{{ pv }}</td><td>{{ po }}</td><td>{{ s }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="sub">Sin datos de opciones por plazo.</div>{% endif %}
+    </div>
+
+    <div class="seccion mitad">
+      <div class="titulo">Niveles - Muros de OI (ticker)</div>
+      {% if muros %}
+      <table>
+        <thead><tr><th>Plazo</th><th>Soporte</th><th>Resistencia</th></tr></thead>
+        <tbody>
+          {% for p, sop, res in muros %}
+          <tr><td>{{ p }}</td><td>{{ sop }}</td><td>{{ res }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<div class="sub">Sin datos de opciones por plazo.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="seccion">
+    <div class="titulo">Sentimiento - Sector ({{ sector.sector }})</div>
+    {% if sector.filas %}
+    <table>
+      <thead><tr><th>Plazo</th><th>PCR_vol_sec</th><th>Sesgo</th><th>Inusual?</th></tr></thead>
+      <tbody>
+        {% for p, pv, s, inu in sector.filas %}
+        <tr><td>{{ p }}</td><td>{{ pv }}</td><td>{{ s }}</td><td>{{ inu }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="pie">z = desvios del PCR_vol del sector vs su media historica.
+      z&gt;+1 cobertura inusual (bajista atipico); z&lt;-1 optimismo inusual; |z|&lt;1 normal.</div>
+    {% else %}<div class="sub">Sin datos sectoriales.</div>{% endif %}
+  </div>
+
+  <div class="seccion">
+    <div class="titulo">Conclusion</div>
+    <div class="subtitulo">Rapida</div>
+    <ul>
+      {% for b in conclusion.rapida %}<li>{{ b }}</li>{% endfor %}
+    </ul>
+    <div class="subtitulo">Detallada</div>
+    <p>{{ conclusion.detallada }}</p>
+  </div>
+
+  <div class="footer">Informe descriptivo (no predictivo). Complemento de TradingView.</div>
+</body>
+</html>

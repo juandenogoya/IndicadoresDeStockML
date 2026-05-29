@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"></head>
+<body>
+  <div class="header">
+    <span class="ticker">{{ enc.ticker }}</span>
+    <span class="meta">Papel de trabajo &nbsp;|&nbsp; {{ enc.sector }} &nbsp;|&nbsp;
+      ${{ enc.close }} &nbsp;|&nbsp; cierre {{ enc.fecha }} &nbsp;|&nbsp; veredicto {{ enc.estado }}</span>
+  </div>
+  <div class="intro">Trazabilidad de cada metrica del informe: valor mostrado, dato crudo,
+    como se calcula, ventana, fuente (tabla.columna) y umbral de interpretacion.</div>
+
+  {% for sec in papel %}
+  <div class="seccion">
+    <div class="titulo">{{ sec.seccion }}</div>
+    <table>
+      <thead>
+        <tr>
+          <th class="c-met">Metrica</th>
+          <th class="c-val">Valor</th>
+          <th class="c-cru">Crudo</th>
+          <th class="c-cal">Como se calcula</th>
+          <th class="c-ven">Ventana</th>
+          <th class="c-fue">Fuente</th>
+          <th class="c-umb">Umbral</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in sec.filas %}
+        <tr>
+          <td class="c-met">{{ f.metrica }}</td>
+          <td class="c-val">{{ f.valor }}</td>
+          <td class="c-cru">{{ f.crudo }}</td>
+          <td class="c-cal">{{ f.formula }}</td>
+          <td class="c-ven">{{ f.ventana }}</td>
+          <td class="c-fue">{{ f.fuente }}</td>
+          <td class="c-umb">{{ f.umbral }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+
+  <div class="footer">Informe descriptivo (no predictivo). Papel de trabajo generado por el dashboard.</div>
+</body>
+</html>

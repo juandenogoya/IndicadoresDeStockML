@@ -1,0 +1,83 @@
+/* informe.css - estilos de la exportacion a imagen del informe descriptivo.
+   Pagina unica vertical; render via WeasyPrint -> PDF -> JPG (pymupdf).
+   Altura holgada (1980px) para que TODO el informe entre en UNA pagina y no se
+   parta en 2 (el apilado multi-pagina dejaria un hueco blanco al medio). Puede
+   quedar algo de margen blanco abajo en informes cortos: aceptable. */
+
+@page {
+    size: 1080px 1980px;
+    margin: 0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: #1a1a1a;
+    margin: 0;
+    padding: 44px 48px;
+    background: #ffffff;
+    font-size: 21px;
+    line-height: 1.35;
+}
+
+.header { margin-bottom: 14px; }
+.header .ticker { font-size: 44px; font-weight: 700; letter-spacing: 0.5px; }
+.header .meta { font-size: 22px; color: #555; margin-top: 4px; }
+
+.veredicto {
+    color: #fff;
+    font-size: 26px;
+    font-weight: 700;
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin: 14px 0 26px 0;
+}
+
+.seccion { margin-bottom: 24px; }
+.titulo {
+    font-size: 25px;
+    font-weight: 700;
+    border-bottom: 2px solid #e2e2e2;
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+}
+.subtitulo { font-size: 22px; font-weight: 700; margin: 12px 0 4px 0; }
+.sub { font-size: 18px; color: #777; margin-bottom: 8px; }
+.pie { font-size: 16px; color: #888; margin-top: 8px; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 21px;
+}
+thead th {
+    text-align: left;
+    background: #f3f4f6;
+    color: #333;
+    font-weight: 600;
+    padding: 9px 12px;
+    border-bottom: 2px solid #d9d9d9;
+}
+tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+}
+tbody tr:nth-child(even) { background: #fafafa; }
+
+/* Dos cuadros lado a lado (Opciones | Niveles) */
+.fila2 { display: flex; gap: 28px; }
+.fila2 .mitad { flex: 1; }
+
+ul { margin: 4px 0 0 0; padding-left: 24px; }
+li { margin-bottom: 5px; }
+p { margin: 4px 0 0 0; }
+
+.footer {
+    margin-top: 28px;
+    font-size: 15px;
+    color: #aaa;
+    text-align: center;
+    border-top: 1px solid #eee;
+    padding-top: 10px;
+}

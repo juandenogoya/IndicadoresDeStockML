@@ -4,7 +4,7 @@ REM ============================================================
 REM  recovery_incremental.bat
 REM  Wrapper Windows del recovery incremental de precios + futuros.
 REM
-REM  Diferencia con cron_paso1_precios.bat / recovery_pipeline_local.bat:
+REM  A diferencia de un pipeline ciego de 199 tickers:
 REM    - NO descarga los 199 tickers ciegamente
 REM    - Detecta cuales tienen MAX(fecha) < ultimo dia habil
 REM    - Descarga SOLO los pendientes (batches de 3 por defecto)

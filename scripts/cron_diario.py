@@ -19,7 +19,8 @@ Pasos y tiempos estimados (199 tickers):
     Paso 4 verificar: ~2 min   (retornos post-facto)
 
 Notas:
-    Backtesting PA removido del cron (23/4/2026) — ver scripts/34_bt_pa_manual.py
+    Backtesting PA removido del cron (23/4/2026); su runner manual y el codigo
+    muerto asociado se eliminaron el 28/5/2026 (Plan C).
     Push a main cada <60 dias para mantener GH Actions scheduled activo.
 """
 
@@ -299,42 +300,6 @@ def paso_actualizar_features_db() -> dict:
     log(f"  features_market_structure OK: {len(df_ms):,} filas")
 
     return {"pa": len(df_pa), "ms": len(df_ms)}
-
-
-def _paso_backtesting_pa_REMOVIDO() -> int:
-    """
-    REMOVIDO DEL CRON DIARIO el 23/4/2026.
-    Ejecutar manualmente con: python scripts/34_bt_pa_manual.py
-
-    Paso 3: Actualiza el backtesting PA de forma incremental (solo el dia actual).
-
-    Procesa la ultima barra disponible para cada ticker:
-    - Cierra posiciones FIN_SEGMENTO que cumplen condicion de salida hoy.
-    - Actualiza precio/dias/retorno de posiciones que siguen abiertas.
-    - Abre nuevas posiciones para combos con senal de entrada hoy.
-
-    Mucho mas rapido que el full rerun: O(posiciones_abiertas) en lugar de
-    O(tickers x barras_historicas x 16).
-
-    Prerequisito: paso_actualizar_features_db() debe haber corrido primero.
-    Prerequisito: scripts/21_migrar_bt_incremental.py ejecutado (columnas stop_loss/take_profit).
-    """
-    from src.backtesting.simulator_pa import ejecutar_backtesting_pa_incremental
-    from src.backtesting.metrics_pa import calcular_y_guardar_resultados_pa
-    from src.data.database import query_df
-
-    stats = ejecutar_backtesting_pa_incremental()
-    log(f"  BT Incremental: {stats['cerradas']} cerradas, "
-        f"{stats['actualizadas']} actualizadas, "
-        f"{stats['nuevas']} nuevas.")
-
-    # Recalcular metricas con todas las ops (incluye FIN_SEGMENTO con precio actual)
-    df_ops = query_df("SELECT * FROM operaciones_bt_pa ORDER BY fecha_entrada")
-    if not df_ops.empty:
-        calcular_y_guardar_resultados_pa(df_ops)
-        log("  Resultados PA actualizados.")
-
-    return stats["cerradas"] + stats["nuevas"]
 
 
 def paso_scanner() -> list:
