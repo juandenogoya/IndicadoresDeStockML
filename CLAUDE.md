@@ -191,7 +191,10 @@ Las criticas:
 - `opciones_pcr_plazo_diario` (PCR vol/OI + muros S/R por ventana corto/medio/largo,
   por ticker; fuente src/utils/opciones_plazo.py)
 - `opciones_sector_pcr_plazo_diario` (PCR sectorial por ventana + z-score)
-- `indicadores_tecnicos_1w` (RSI/MACD semanal)
+- `indicadores_tecnicos_1w` (RSI/MACD semanal) -- CONGELADA 2026-04-02: pipeline
+  semanal (scripts 23-30) deprecado 28/5/2026 (Plan C), movido a scripts/legacy_1w/.
+  El timeframe semanal se calcula AL VUELO desde precios_diarios (dashboard +
+  mtf_context). Solo el MCP get_ticker_sintesis aun lee esta tabla (follow-up).
 - `futuros_diarios` | `indicadores_tecnicos_futuros`
 - `features_regimen_macro` | `features_ml` | `features_sector`
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
