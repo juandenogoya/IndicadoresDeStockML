@@ -64,16 +64,29 @@ def _encabezado(datos, sintesis) -> dict:
     }
 
 
+def _etiqueta_smc(smc: dict) -> str:
+    if not smc:
+        return DASH
+    return clasificar_estructura_smc(
+        smc.get("estructura_10"), smc.get("choch_bull_10"), smc.get("choch_bear_10"),
+        smc.get("bos_bull_10"), smc.get("bos_bear_10"),
+    )["etiqueta"] or DASH
+
+
 def _tecnico(datos) -> dict:
     d = datos["tecnico"].get("diario") or {}
     w = datos["tecnico"].get("semanal") or {}
-    smc = datos.get("estructura") or {}
-    et_smc = DASH
-    if smc:
-        et_smc = clasificar_estructura_smc(
-            smc.get("estructura_10"), smc.get("choch_bull_10"), smc.get("choch_bear_10"),
-            smc.get("bos_bull_10"), smc.get("bos_bear_10"),
-        )["etiqueta"]
+    smc_d = datos.get("estructura") or {}                       # SMC diaria (dim F)
+    ts = datos.get("tendencia_superior") or {}
+    smc_w = ts.get("smc_semanal") or {}                         # SMC semanal (tendencia_1w)
+    mensual = ts.get("mensual") or {}
+
+    # Tendencia mensual: etiqueta + retorno entre parentesis
+    if mensual.get("tendencia"):
+        tend_m = f"{mensual['tendencia']} ({mensual['retorno_4s_pct']:+.1f}% 4s)"
+    else:
+        tend_m = DASH
+
     filas = [
         ("RSI",
          clasificar_rsi(d.get("rsi")) or DASH,
@@ -85,7 +98,8 @@ def _tecnico(datos) -> dict:
          clasificar_tendencia_sma(d.get("close"), d.get("sma21"), d.get("sma50"), d.get("sma200")) or DASH,
          DASH),
         ("Fuerza (ADX)", clasificar_adx(d.get("adx")) or DASH, DASH),
-        ("Estructura (SMC)", et_smc or DASH, DASH),
+        ("Estructura (SMC)", _etiqueta_smc(smc_d), _etiqueta_smc(smc_w)),
+        ("Tendencia mensual", DASH, tend_m),
     ]
     return {
         "fecha_d": str(d.get("fecha")) if d.get("fecha") else DASH,

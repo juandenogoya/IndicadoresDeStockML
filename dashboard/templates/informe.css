@@ -1,8 +1,11 @@
 /* informe.css - estilos de la exportacion a imagen del informe descriptivo.
-   Pagina unica vertical; render via WeasyPrint -> PDF -> JPG (pymupdf). */
+   Pagina unica vertical; render via WeasyPrint -> PDF -> JPG (pymupdf).
+   Altura holgada (1980px) para que TODO el informe entre en UNA pagina y no se
+   parta en 2 (el apilado multi-pagina dejaria un hueco blanco al medio). Puede
+   quedar algo de margen blanco abajo en informes cortos: aceptable. */
 
 @page {
-    size: 1080px 1620px;
+    size: 1080px 1980px;
     margin: 0;
 }
 

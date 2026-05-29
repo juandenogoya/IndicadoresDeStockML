@@ -59,6 +59,11 @@ CONCLUSION
   **Veredicto de 1 linea arriba** (escaneo rapido) + conclusion al final.
 - **Sector** para el analisis (10 grupos); industria solo como dato de encabezado.
 - **Semanal**: W-FRI, semana CERRADA, con fecha visible (se actualiza los viernes).
+- **Contexto de TF superior (28/5/2026)**: la fila Estructura (SMC) muestra tambien
+  la columna Semanal (tendencia_1w = SMC sobre barras semanales) y se suma fila
+  "Tendencia mensual" (retorno 4 semanas). Todo calculado AL VUELO desde
+  precios_diarios (resample W-FRI + market_structure_1w), sin tablas _1w. Es
+  CONTEXTO: no modifica el veredicto.
 
 ## Estado (veredicto)
 

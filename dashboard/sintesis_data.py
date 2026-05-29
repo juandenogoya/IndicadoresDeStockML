@@ -122,12 +122,31 @@ def _tecnico_diario(ticker: str) -> dict:
     }
 
 
-def _tecnico_semanal(ticker: str) -> dict:
+# Umbral de retorno 4 semanas para clasificar tendencia mensual (homogeneo con
+# src/indicators/mtf_context.py, que el scanner usa para tendencia_1m).
+_TEND_1M_UMBRAL_PCT = 2.0
+
+
+def _semanal_bundle(ticker: str) -> dict:
     """
-    Calcula RSI14 + MACD semanal AL VUELO desde precios_diarios local.
-    Resamplea a W-FRI (semana en curso excluida) y aplica ta sobre el close
-    semanal. Devuelve la ultima semana CERRADA. {} si no hay historia suficiente.
+    Calcula TODO lo del timeframe superior AL VUELO desde precios_diarios local,
+    resampleando a W-FRI una sola vez (semana en curso excluida):
+      - tecnico semanal: RSI14 + MACD (la ultima semana cerrada)
+      - smc_semanal: estructura SMC sobre barras semanales (tendencia_1w; reusa
+        _calcular_ticker_1w de market_structure_1w, sin tocar las tablas _1w)
+      - mensual: retorno de 4 semanas -> tendencia_1m (Alcista/Bajista/Neutral)
+
+    No depende de indicadores_tecnicos_1w / features_market_structure_1w /
+    precios_semanales (tablas congeladas bajo Plan C). Todo se deriva de
+    precios_diarios LOCAL.
+
+    Returns:
+        {"tecnico": {fecha, rsi, macd, macd_signal} | {},
+         "smc_semanal": {fecha, estructura_10, choch_bull_10, choch_bear_10,
+                         bos_bull_10, bos_bear_10} | {},
+         "mensual": {fecha, retorno_4s_pct, tendencia} | {}}
     """
+    vacio = {"tecnico": {}, "smc_semanal": {}, "mensual": {}}
     df = query_df(
         """
         SELECT fecha, open, high, low, close, volume, adj_close
@@ -138,26 +157,68 @@ def _tecnico_semanal(ticker: str) -> dict:
         params={"t": ticker},
     )
     if df.empty:
-        return {}
+        return vacio
 
     sem = resample_a_semanal(df)
-    if sem.empty or len(sem) < MACD_SLOW + MACD_SIGNAL:
-        # Sin suficientes semanas para un MACD estable -> semanal "sin datos".
-        return {}
+    if sem.empty:
+        return vacio
 
-    close = sem["close"].astype(float)
-    rsi = ta.momentum.RSIIndicator(close=close, window=RSI_PERIOD).rsi()
-    macd_ind = ta.trend.MACD(close=close, window_fast=MACD_FAST,
-                             window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
-    macd = macd_ind.macd()
-    signal = macd_ind.macd_signal()
+    out = {"tecnico": {}, "smc_semanal": {}, "mensual": {}}
+    fecha_sem = sem["fecha_semana"].iloc[-1]
 
-    return {
-        "fecha":       sem["fecha_semana"].iloc[-1],
-        "rsi":         _f(rsi.iloc[-1]),
-        "macd":        _f(macd.iloc[-1]),
-        "macd_signal": _f(signal.iloc[-1]),
-    }
+    # 1. Tecnico semanal (RSI/MACD)
+    if len(sem) >= MACD_SLOW + MACD_SIGNAL:
+        close = sem["close"].astype(float)
+        rsi = ta.momentum.RSIIndicator(close=close, window=RSI_PERIOD).rsi()
+        macd_ind = ta.trend.MACD(close=close, window_fast=MACD_FAST,
+                                 window_slow=MACD_SLOW, window_sign=MACD_SIGNAL)
+        out["tecnico"] = {
+            "fecha":       fecha_sem,
+            "rsi":         _f(rsi.iloc[-1]),
+            "macd":        _f(macd_ind.macd().iloc[-1]),
+            "macd_signal": _f(macd_ind.macd_signal().iloc[-1]),
+        }
+
+    # 2. SMC semanal (tendencia_1w): estructura sobre barras semanales.
+    # _calcular_ticker_1w espera columnas fecha/open/high/low/close/volume.
+    if len(sem) >= 21:  # ventana 10 necesita 2*10+1 barras para pivots
+        try:
+            from src.indicators.market_structure_1w import _calcular_ticker_1w
+            df_w = sem.rename(columns={"fecha_semana": "fecha"})[
+                ["fecha", "open", "high", "low", "close", "volume"]
+            ].copy()
+            ms = _calcular_ticker_1w(df_w)
+            ult = ms.iloc[-1]
+            out["smc_semanal"] = {
+                "fecha":         fecha_sem,
+                "estructura_10": int(ult["estructura_10"]) if ult["estructura_10"] is not None else None,
+                "choch_bull_10": int(ult["choch_bull_10"]),
+                "choch_bear_10": int(ult["choch_bear_10"]),
+                "bos_bull_10":   int(ult["bos_bull_10"]),
+                "bos_bear_10":   int(ult["bos_bear_10"]),
+            }
+        except Exception:
+            out["smc_semanal"] = {}
+
+    # 3. Mensual (tendencia_1m): retorno de 4 semanas (close[-1] vs close[-4]).
+    if len(sem) >= 4:
+        c_now = _f(sem["close"].iloc[-1])
+        c_4s = _f(sem["close"].iloc[-4])
+        if c_now is not None and c_4s and c_4s != 0:
+            ret = (c_now - c_4s) / c_4s * 100
+            if ret >= _TEND_1M_UMBRAL_PCT:
+                tend = "Alcista"
+            elif ret <= -_TEND_1M_UMBRAL_PCT:
+                tend = "Bajista"
+            else:
+                tend = "Neutral"
+            out["mensual"] = {
+                "fecha":          fecha_sem,
+                "retorno_4s_pct": round(ret, 2),
+                "tendencia":      tend,
+            }
+
+    return out
 
 
 def _opciones_plazo(ticker: str, close) -> dict:
@@ -261,7 +322,8 @@ def cargar_datos_ticker(ticker: str) -> dict:
     """
     Arma el dict completo de un ticker para el dashboard:
     secciones de display (perfil, precio) + las que consume el cerebro
-    (tecnico, opciones_plazo, sector_plazo, price_action, estructura).
+    (tecnico, opciones_plazo, sector_plazo, price_action, estructura) +
+    tendencia_superior (contexto TF semanal/mensual, NO vota el veredicto).
     """
     ticker = (ticker or "").strip().upper()
     perfil = _perfil(ticker)
@@ -275,18 +337,25 @@ def cargar_datos_ticker(ticker: str) -> dict:
     if diario is not None:
         diario["close"] = close
 
+    sem = _semanal_bundle(ticker)
+
     return {
         "ticker":         ticker,
         "perfil":         perfil,
         "precio":         precio,
         "tecnico": {
             "diario":  diario,
-            "semanal": _tecnico_semanal(ticker),
+            "semanal": sem["tecnico"],
         },
         "opciones_plazo": _opciones_plazo(ticker, close),
         "sector_plazo":   _sector_plazo(perfil.get("sector")),
         "price_action":   _price_action(ticker),
         "estructura":     _estructura(ticker),
+        # Contexto de timeframe superior (al vuelo; no modifica el veredicto):
+        "tendencia_superior": {
+            "smc_semanal": sem["smc_semanal"],
+            "mensual":     sem["mensual"],
+        },
     }
 
 

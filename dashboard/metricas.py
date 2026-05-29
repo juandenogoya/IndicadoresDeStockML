@@ -53,6 +53,19 @@ DICCIONARIO = {
         "fuente":  "features_market_structure.estructura_10, choch_*_10, bos_*_10",
         "umbral":  "CHoCH bull->Alcista, bear->Bajista; estructura 1/-1/0",
     },
+    "smc_semanal": {
+        "formula": "Misma SMC pero sobre barras SEMANALES (tendencia_1w). Calculada "
+                   "al vuelo: resample W-FRI de precios_diarios + market_structure_1w.",
+        "ventana": "10 semanas (estrategico)",
+        "fuente":  "precios_diarios -> resample semanal (NO usa features_market_structure_1w)",
+        "umbral":  "CHoCH bull->Alcista, bear->Bajista; estructura 1/-1/0",
+    },
+    "tendencia_mensual": {
+        "formula": "Retorno de 4 semanas: (close_semana - close_4_semanas_atras) / close_4s.",
+        "ventana": "4 semanas (~1 mes)",
+        "fuente":  "precios_diarios -> resample semanal (close)",
+        "umbral":  ">=+2% Alcista | <=-2% Bajista | intermedio Neutral",
+    },
     "pcr_vol": {
         "formula": "PCR_vol = put_vol / call_vol (volumen del dia) por ventana.",
         "ventana": "corto 1-14 | medio 15-45 | largo 46-90 dias al vencimiento",
@@ -115,6 +128,9 @@ def _seccion_tecnico(datos) -> list:
     d = datos["tecnico"].get("diario") or {}
     w = datos["tecnico"].get("semanal") or {}
     smc = datos.get("estructura") or {}
+    ts = datos.get("tendencia_superior") or {}
+    smc_w = ts.get("smc_semanal") or {}
+    mensual = ts.get("mensual") or {}
 
     filas = []
     # Diario
@@ -144,6 +160,20 @@ def _seccion_tecnico(datos) -> list:
                        f"RSI = {fmt(w.get('rsi'), 1)}", "rsi"))
     filas.append(_fila("MACD (W)", clasificar_macd(w.get("macd"), w.get("macd_signal")),
                        f"MACD {fmt(w.get('macd'))} vs signal {fmt(w.get('macd_signal'))}", "macd"))
+    # Tendencia de timeframe superior (al vuelo; contexto, no vota)
+    if smc_w:
+        et_w = clasificar_estructura_smc(
+            smc_w.get("estructura_10"), smc_w.get("choch_bull_10"), smc_w.get("choch_bear_10"),
+            smc_w.get("bos_bull_10"), smc_w.get("bos_bear_10"),
+        )["etiqueta"]
+        crudo_w = (f"estructura_10={smc_w.get('estructura_10')}; "
+                   f"CHoCH b/s={int(bool(smc_w.get('choch_bull_10')))}/{int(bool(smc_w.get('choch_bear_10')))}; "
+                   f"BOS b/s={int(bool(smc_w.get('bos_bull_10')))}/{int(bool(smc_w.get('bos_bear_10')))}")
+    else:
+        et_w, crudo_w = DASH, DASH
+    filas.append(_fila("Estructura SMC (W)", et_w, crudo_w, "smc_semanal"))
+    filas.append(_fila("Tendencia mensual", mensual.get("tendencia"),
+                       f"retorno 4 semanas = {fmt(mensual.get('retorno_4s_pct'))}%", "tendencia_mensual"))
     return filas
 
 
