@@ -58,9 +58,12 @@ def _render(vista: dict):
 
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Opciones - Sesgo (ticker)")
+        st.subheader("Opciones por plazo (ticker)")
         if vista["opciones"]:
-            _tabla(vista["opciones"], ["Plazo", "PCR_vol", "PCR_oi", "Sesgo"])
+            _tabla(vista["opciones"], ["Plazo", "PCR_vol (dia)", "PCR_oi (posic.)", "Sesgo (OI)"])
+            st.caption("Sesgo = lectura del PCR_oi (posicionamiento acumulado; <1 = sesgo a "
+                       "calls). PCR_vol = actividad del dia, direccionalmente ambigua. Si vol y "
+                       "oi cruzan el 1.0 en lados opuestos, leer ambas (divergencia dia vs OI).")
         else:
             st.caption("Sin datos de opciones por plazo.")
     with c2:
@@ -74,7 +77,7 @@ def _render(vista: dict):
     sec = vista["sector"]
     st.subheader(f"Sentimiento - Sector ({sec['sector']})")
     if sec["filas"]:
-        _tabla(sec["filas"], ["Plazo", "PCR_vol_sec", "Sesgo", "Inusual?"])
+        _tabla(sec["filas"], ["Plazo", "PCR_vol_sec", "Sesgo (OI)", "Inusual?"])
         st.caption("z = desvios del PCR_vol del sector vs su media historica. "
                    "z>+1 cobertura inusual (bajista atipico); z<-1 optimismo inusual; |z|<1 normal.")
     else:

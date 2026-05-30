@@ -29,16 +29,18 @@
 
   <div class="fila2">
     <div class="seccion mitad">
-      <div class="titulo">Opciones - Sesgo (ticker)</div>
+      <div class="titulo">Opciones por plazo (ticker)</div>
       {% if opciones %}
       <table>
-        <thead><tr><th>Plazo</th><th>PCR_vol</th><th>PCR_oi</th><th>Sesgo</th></tr></thead>
+        <thead><tr><th>Plazo</th><th>PCR_vol (dia)</th><th>PCR_oi (posic.)</th><th>Sesgo (OI)</th></tr></thead>
         <tbody>
           {% for p, pv, po, s in opciones %}
           <tr><td>{{ p }}</td><td>{{ pv }}</td><td>{{ po }}</td><td>{{ s }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
+      <div class="pie">Sesgo = lectura del PCR_oi (posicionamiento; &lt;1 = sesgo a calls).
+        PCR_vol = actividad del dia, direccionalmente ambigua.</div>
       {% else %}<div class="sub">Sin datos de opciones por plazo.</div>{% endif %}
     </div>
 
@@ -61,7 +63,7 @@
     <div class="titulo">Sentimiento - Sector ({{ sector.sector }})</div>
     {% if sector.filas %}
     <table>
-      <thead><tr><th>Plazo</th><th>PCR_vol_sec</th><th>Sesgo</th><th>Inusual?</th></tr></thead>
+      <thead><tr><th>Plazo</th><th>PCR_vol_sec</th><th>Sesgo (OI)</th><th>Inusual?</th></tr></thead>
       <tbody>
         {% for p, pv, s, inu in sector.filas %}
         <tr><td>{{ p }}</td><td>{{ pv }}</td><td>{{ s }}</td><td>{{ inu }}</td></tr>
