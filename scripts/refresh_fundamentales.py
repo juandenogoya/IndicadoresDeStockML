@@ -3,8 +3,23 @@ refresh_fundamentales.py
 Carga / refresca las 4 tablas fundamentales_* desde yahooquery.
 
 Trae los ultimos N trimestres (default 8) por ticker de las 3 statements +
-valuation_measures y hace upsert con ON CONFLICT DO UPDATE -- esto cubre
-restatements (Yahoo a veces revisa cifras de Q ya reportados).
+valuation_measures y hace upsert con ON CONFLICT DO UPDATE.
+
+Arquitectura (Plan C):
+    Los fundamentales son RECUPERABLES (yahooquery los sirve historicos en
+    cualquier momento), por lo que viven SOLO en local -- a diferencia de
+    opciones_snapshot que requiere Railway por ser irrecuperable. Esto
+    elimina la necesidad de cron Oracle, sync Railway->local y mantenimiento
+    de schema en dos lados.
+
+    Uso normal: --target local (default). El modo --target railway/both
+    queda como opcion residual si en algun momento se necesita exponer
+    fundamentales a un consumidor que viva en Railway.
+
+Restatements (manejo nativo):
+    Cada refresh re-lee los ultimos N Q y hace UPSERT. Si Yahoo revisa
+    cifras de un Q viejo (restatement), la correccion entra automaticamente
+    en la proxima corrida. No hace falta logica especial ni --full-resync.
 
 Estrategia anti-rate-limit:
     - chunks de 20 tickers (yahooquery async dentro del chunk)
@@ -14,6 +29,7 @@ Estrategia anti-rate-limit:
       hasta 3 reintentos antes de marcar el chunk como FAIL
     - yfinance_lock.acquire() al inicio (yahooquery y yfinance comparten
       provider e IP rate-limit)
+    - Tiempo tipico full 199 tickers: ~3.5-4 min
 
 Cobertura de columnas:
     - 12-15 columnas dedicadas por tabla (las mas usadas para ratios)
@@ -23,20 +39,26 @@ Cobertura de columnas:
 Multi-moneda:
     Los ADRs reportan en su moneda local (BABA en CNY, PBR en BRL, etc.).
     Se guarda reporting_currency por fila (campo currencyCode que viene en
-    cada statement). La decision de filtrar/convertir queda al consumidor.
+    cada statement). De los 199 tickers: 170 USD + 29 monedas locales.
+    Para analisis cross-ticker hay que filtrar por reporting_currency='USD'
+    o normalizar via FX. La decision queda al consumidor.
+
+Cadencia sugerida:
+    Manual cuando se quiera. Las earnings llegan distribuidas, no hay
+    urgencia. Wrapper conveniente: scripts/manual/refresh_fundamentales.bat
 
 Uso:
-    # Test con 3 tickers contra local
-    python scripts/refresh_fundamentales.py --target local --tickers AAPL,BABA,JPM
+    # Full universo a local (modo canonico)
+    python scripts/refresh_fundamentales.py
 
-    # Full universo a local
-    python scripts/refresh_fundamentales.py --target local
-
-    # Full a ambos (Railway + local)
-    python scripts/refresh_fundamentales.py --target both
+    # Test con tickers especificos
+    python scripts/refresh_fundamentales.py --tickers AAPL,BABA,JPM
 
     # Dry-run (no escribe, solo loguea)
-    python scripts/refresh_fundamentales.py --target local --dry-run
+    python scripts/refresh_fundamentales.py --dry-run
+
+    # Profundidad distinta (default 8 Q)
+    python scripts/refresh_fundamentales.py --lookback-q 12
 """
 
 import sys

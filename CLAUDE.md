@@ -173,7 +173,10 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
+| `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
+| `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/oneshot/create_earnings_calendar.py` | Crea la tabla earnings_calendar (one-shot, archivado en scripts/oneshot/) |
+| `scripts/oneshot/create_fundamentales_tables.py` | Crea las 4 tablas fundamentales_* (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
 | `scripts/reports/make_infografia.bat <TICKER>` | Infografia PNG para X (datos del MCP, sin LLM). Ver docs/reportes.md |
 | `scripts/reports/build_yaml.bat <TICKER>` + `make_report.bat <yaml>` | Reporte PDF detallado con narrativa del LLM |
@@ -200,6 +203,15 @@ Las criticas:
 - `features_regimen_macro` | `features_ml` | `features_sector`
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
   desde Nasdaq por `refresh_earnings_calendar.py`)
+- `fundamentales_income_q` | `fundamentales_balance_q` | `fundamentales_cashflow_q`
+  | `fundamentales_valuation_q` -- 4 tablas de analisis fundamental trimestral,
+  ultimos 8 Q por ticker (income/balance/cashflow + ratios PE/PB/PS/PEG/EV-EBITDA).
+  Schema wide con ~12-15 cols dedicadas + raw_json JSONB. PK natural
+  (ticker, fiscal_period_end). LOCAL-only (Plan C: yahooquery sirve historicos
+  recuperables, no necesita Railway). Refresh manual via
+  scripts/manual/refresh_fundamentales.bat (~3.5 min full universo).
+  Multi-moneda: reporting_currency por fila (170 USD + 29 monedas locales en
+  ADRs); filtrar por USD o normalizar via FX para analisis cross-ticker.
 - `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
   metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
 
