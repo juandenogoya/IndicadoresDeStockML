@@ -138,19 +138,31 @@ def obtener_indicadores_con_sector() -> list:
 
 
 def obtener_estado_tecnico_tickers(tickers: list[str]) -> dict[str, dict]:
-    """Para posiciones abiertas: trae indicadores actuales para evaluar score de salida."""
+    """
+    Para posiciones abiertas: trae los indicadores actuales para evaluar el
+    score de salida.
+
+    IMPORTANTE: devuelve close (via JOIN precios_diarios) + SMAs ABSOLUTAS
+    (sma21/50/200), no dist_sma*. calcular_score_tecnico necesita esos
+    campos exactos para evaluar la Capa 1 (close > sma200). Antes esta query
+    devolvia dist_sma* y sin close, lo que forzaba score = 0.0 siempre y
+    disparaba SCORE_DEGRADADO_0.0 todos los dias.
+    """
     if not tickers:
         return {}
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT DISTINCT ON (ticker)
-                   ticker, dist_sma21, dist_sma50, dist_sma200,
-                   rsi14, macd, macd_signal, macd_hist,
-                   adx, vol_relativo, atr14
-            FROM indicadores_tecnicos
-            WHERE ticker = ANY(:tickers)
-            ORDER BY ticker, fecha DESC
+            SELECT DISTINCT ON (i.ticker)
+                   i.ticker, p.close,
+                   i.sma21, i.sma50, i.sma200,
+                   i.rsi14, i.macd, i.macd_signal,
+                   (i.macd - i.macd_signal) AS macd_hist,
+                   i.atr14
+            FROM indicadores_tecnicos i
+            JOIN precios_diarios p ON p.ticker = i.ticker AND p.fecha = i.fecha
+            WHERE i.ticker = ANY(:tickers)
+            ORDER BY i.ticker, i.fecha DESC
         """), {"tickers": tickers}).fetchall()
     return {r.ticker: dict(r._mapping) for r in rows}
 

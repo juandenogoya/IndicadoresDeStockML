@@ -290,19 +290,27 @@ def obtener_indicadores_con_sector() -> list[dict]:
 
 
 def obtener_estado_tecnico_tickers(tickers: list[str]) -> dict[str, dict]:
-    """Indicadores actuales para posiciones abiertas (evaluar score de salida)."""
+    """
+    Indicadores actuales para posiciones abiertas (evaluar score de salida).
+    Incluye close (via JOIN precios_diarios) para que calcular_score_tecnico
+    pueda evaluar la Capa 1 (close > sma200). Sin close el score siempre
+    devolvia 0.0 y la decision quedaba dominada por el filtro PCR.
+    """
     if not tickers:
         return {}
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
-            SELECT DISTINCT ON (ticker)
-                   ticker, sma21, sma50, sma200,
-                   rsi14, macd, macd_signal,
-                   (macd - macd_signal) AS macd_hist, atr14
-            FROM indicadores_tecnicos
-            WHERE ticker = ANY(:tickers)
-            ORDER BY ticker, fecha DESC
+            SELECT DISTINCT ON (i.ticker)
+                   i.ticker, p.close,
+                   i.sma21, i.sma50, i.sma200,
+                   i.rsi14, i.macd, i.macd_signal,
+                   (i.macd - i.macd_signal) AS macd_hist,
+                   i.atr14
+            FROM indicadores_tecnicos i
+            JOIN precios_diarios p ON p.ticker = i.ticker AND p.fecha = i.fecha
+            WHERE i.ticker = ANY(:tickers)
+            ORDER BY i.ticker, i.fecha DESC
         """), {"tickers": tickers}).fetchall()
     return {r.ticker: dict(r._mapping) for r in rows}
 

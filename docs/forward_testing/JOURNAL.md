@@ -177,6 +177,51 @@ v1 cortaba, sin perder el control de la perdida.
 
 ---
 
+### 2026-05-30 — BUG FIX
+**Score tecnico = 0.0 en evaluacion de salida de 4 bots sectoriales**
+La query `obtener_estado_tecnico_tickers()` de TECH_SECTOR_v1, TECH_SECTOR_v2,
+TECH_SECTOR_OPTIONS_v1 y TECH_SECTOR_OPTIONS_v2 no devolvia `close` (faltaba
+el JOIN con precios_diarios) y, en el caso de v1, devolvia `dist_sma*` en
+lugar de `sma*` absolutas. `calcular_score_tecnico` evaluaba Capa 1 con
+`close=0 > sma200=0` -> False -> score = 0.0 todos los dias.
+
+**Manifestacion (por que solo se vio en v1)**:
+- TECH_SECTOR_v1: cerraba TODAS sus posiciones diariamente con motivo
+  `SCORE_DEGRADADO_0.0`. Sin capa intermedia que enmascarara el bug.
+- TECH_SECTOR_v2: el `score=0` constante disparaba siempre la capa de
+  retencion por candle_5d/up_vol_5d -> cierres etiquetados
+  `SCORE_DEGRADADO_SIN_MOMENTUM` que parecian motivados pero no lo estaban.
+- OPTIONS_v1/v2: el `score=0` constante disparaba siempre el filtro PCR ->
+  retenciones (`RETENCION_OPCIONES`) o cierres (`SCORE_DEGRADADO_OPCIONES`)
+  cuya decision era 100% PCR, sin contribucion real del score tecnico.
+
+**Por que COMBO_v1, TECH_v1 y los SMC no estaban afectados**: TECH_v1 reusa
+el `indicadores_map` de la entrada (que SI tiene close+SMAs). COMBO_v1 tiene
+la query de exit con JOIN a precios_diarios. ML/SMC usan otro sistema de
+scoring.
+
+**Fix**: reemplazar la query de exit en los 4 bots con la misma forma que
+usa la query de entrada y COMBO_v1 — JOIN precios_diarios para `close` +
+SMAs absolutas (no `dist_sma*`).
+
+**Verificado en dry-run (2026-05-30)**:
+- v1: "Sin posiciones a cerrar" (vs 20+ cierres `SCORE_DEGRADADO_0.0` antes).
+- v2: 1 cierre real (STOP_LOSS_ATR) vs 12 `SIN_MOMENTUM` antes.
+- OPTIONS_v1: 1 TAKE_PROFIT + 8 retenciones con scores reales 0.0-3.5
+  (los tickers SI tienen score degradado, no porque close=0).
+- OPTIONS_v2: 0 cierres + 5 retenciones con scores reales.
+
+**Implicaciones**: las curvas historicas de las 4 estrategias estan
+sesgadas por este bug — las decisiones de salida se tomaron con `score=0`
+todos los dias durante toda la historia del FT. Desde el fix los
+resultados reflejan la logica documentada.
+
+**Commit**: en esta sesion (4 archivos: ft_bot_tech_sectorial.py,
+ft_bot_tech_sectorial_v2.py, ft_bot_tech_sectorial_options_v1.py,
+ft_bot_tech_sectorial_options_v2.py).
+
+---
+
 ## Template de entrada
 
 ```
