@@ -222,6 +222,56 @@ ft_bot_tech_sectorial_options_v2.py).
 
 ---
 
+### 2026-05-30 — DECISION
+**Split de validez 30/5/2026 — NO resetear estrategias tras el bug fix**
+
+Tras el fix del score=0 en la query de salida de v1/v2/OPTIONS v1/v2, surge
+la pregunta: ¿reseteamos esas 4 a $100k y empezamos de cero para no
+arrastrar curvas contaminadas?
+
+**Decision: opcion A (seguir sin reset).** Ninguna estrategia se resetea.
+
+**Razones**:
+1. **Las 6 estrategias no afectadas** (ML_SCANNER, TECH_v1, SMC_v1,
+   COMBO_v1, SMC_v2, OIEXIT_v1) tienen ~5 semanas de historia valida desde
+   sus respectivas fechas de inicio. Resetearlas seria perder signal real
+   sin beneficio alguno.
+2. **Las posiciones abiertas en las 4 afectadas son testbed gratuito**
+   para la logica de salida corregida. Cerrarlas hoy al precio actual
+   pierde ese experimento natural en curso.
+3. **El "dia cero" sintetico** (resetear todo hoy) no es mas limpio en
+   sentido fuerte: serian aperturas a precios arbitrarios de hoy, no
+   necesariamente representativos.
+
+**ALERTA para analisis cuantitativo de rendimientos**:
+
+Para las 4 estrategias afectadas (id 4, 6, 8, 9), los datos historicos
+**antes del 2026-05-30** estan sesgados por el bug. Concretamente:
+
+| Estrategia (id) | Sesgo dominante en datos pre-30/5/2026 |
+|---|---|
+| TECH_SECTOR_v1 (4) | Cerraba **TODAS** las posiciones diariamente con `SCORE_DEGRADADO_0.0`. Churn artificial constante. |
+| TECH_SECTOR_v2 (6) | El score=0 ficticio disparaba siempre la capa de retencion -> cierres `SCORE_DEGRADADO_SIN_MOMENTUM` eran artefactos del bug, no del agotamiento real de momentum. |
+| TECH_SECTOR_OPTIONS_v1 (8) | El score=0 ficticio dominaba el filtro PCR -> retenciones (`RETENCION_OPCIONES`) y cierres (`SCORE_DEGRADADO_OPCIONES`) decididos 100% por PCR, sin contribucion real del score tecnico. |
+| TECH_SECTOR_OPTIONS_v2 (9) | Idem v1. |
+
+**Para evaluar rendimiento "real" de estas 4 a futuro**:
+- Filtrar `ft_operaciones` por `estrategia_id IN (4,6,8,9) AND fecha_salida >= '2026-05-30'`.
+- O equivalente: filtrar `ft_metricas_diarias` por `estrategia_id IN (4,6,8,9) AND fecha >= '2026-05-30'`.
+- Las curvas de equity de esas 4 antes del 30/5 son artefactos de bug, no comportamiento real de la estrategia documentada.
+
+**Para las 6 estrategias no afectadas (id 1, 2, 3, 5, 7, 10)**: historia
+valida desde su `fecha_inicio` respectiva, sin filtro adicional.
+
+**Evidencia del impacto del fix (corrida 30/5/2026 vs 29/5/2026)**:
+- TECH_SECTOR_v1: 26 cierres por SCORE_DEGRADADO_0.0 -> 3 cierres por SCORE_DEGRADADO_3.0 (score real legitimo, -88%).
+- TECH_SECTOR_v2: 14 cierres (10 SIN_MOMENTUM enmascarando bug) -> 3 cierres (2 rot + 1 SL, sin SIN_MOMENTUM).
+- OPTIONS v1/v2: menos cambio absoluto porque sus motivos dominantes (SL/TP) eran correctos desde antes.
+
+**Ref**: commit 4394f2d.
+
+---
+
 ## Template de entrada
 
 ```
