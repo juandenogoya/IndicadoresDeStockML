@@ -8,8 +8,13 @@ REM  Trae los ultimos 8 trimestres (default) de income/balance/
 REM  cashflow + valuation_measures para los 199 tickers y hace
 REM  UPSERT en local. Cada corrida captura restatements.
 REM
+REM  Al terminar el refresh raw, recomputa fundamentales_ratios_q
+REM  (capa derivada: ROE/ROA/ROIC/margenes/PER/P-B/BVPS/BPA/FCF +
+REM  crecimiento QoQ/YoY). El compute es instantaneo y local. Si se
+REM  pasa --dry-run, el compute de ratios se omite.
+REM
 REM  Default: target = LOCAL (Plan C: fundamentales son recuperables).
-REM  Tiempo tipico: 3.5-4 minutos.
+REM  Tiempo tipico: 3.5-4 minutos (refresh) + segundos (ratios).
 REM
 REM  Argumentos opcionales:
 REM    --dry-run             solo loguea, no escribe
@@ -27,6 +32,7 @@ REM ============================================================
 SET "ROOT=%~dp0..\..\"
 SET "PYTHON=%ROOT%venv\Scripts\python.exe"
 SET "SCRIPT=%ROOT%scripts\refresh_fundamentales.py"
+SET "SCRIPT_RATIOS=%ROOT%scripts\compute_fundamentales_ratios.py"
 SET "LOGDIR=%ROOT%logs"
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
@@ -43,6 +49,17 @@ echo.
 
 "%PYTHON%" "%SCRIPT%" %* 2>&1 | tee "%LOGFILE%"
 SET EXITCODE=%ERRORLEVEL%
+
+REM -- Recomputar ratios derivados (omitir si fue --dry-run) --
+echo %* | findstr /I /C:"--dry-run" >nul
+if errorlevel 1 (
+    echo.
+    echo --- Computando ratios derivados (fundamentales_ratios_q) ---
+    "%PYTHON%" "%SCRIPT_RATIOS%" 2>&1 | tee -a "%LOGFILE%"
+) else (
+    echo.
+    echo DRY-RUN: se omite el computo de ratios.
+)
 
 echo.
 echo ============================================================

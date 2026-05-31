@@ -175,6 +175,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
+| `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
+| `scripts/oneshot/create_fundamentales_ratios_table.py` | Crea la tabla fundamentales_ratios_q (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/create_earnings_calendar.py` | Crea la tabla earnings_calendar (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/create_fundamentales_tables.py` | Crea las 4 tablas fundamentales_* (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
@@ -212,6 +214,23 @@ Las criticas:
   scripts/manual/refresh_fundamentales.bat (~3.5 min full universo).
   Multi-moneda: reporting_currency por fila (170 USD + 29 monedas locales en
   ADRs); filtrar por USD o normalizar via FX para analisis cross-ticker.
+- `fundamentales_ratios_q` -- capa DERIVADA (funcion pura de las 4 raw,
+  recomputable sin re-fetch). 1 fila por (ticker, fiscal_period_end). Vista
+  PARALELA/DESCRIPTIVA del fundamental: NO se mezcla con el score tecnico ni
+  los bots. Crecimiento en base TRIMESTRAL (QoQ vs Q-1, YoY vs Q-4);
+  rentabilidad/retornos/margenes en base TTM. Incluye PER/P-B/P-S/EV-EBITDA,
+  BVPS, BPA (eps_q/eps_ttm), ROE/ROA/ROIC, margenes bruto/op/neto + deltas YoY,
+  opex/revenue, FCF (ttm/margen/growth), current_ratio/working_capital/D-E/
+  net_debt. ROIC standard: NOPAT_ttm=EBIT_ttm*(1-tax) / (deuda+equity-caja),
+  NULL si pretax<=0 o sin EBIT. sector/industry denormalizados de activos
+  (habilita GROUP BY sector). Los RATIOS son inmunes a escala/moneda; los
+  ABSOLUTOS (BVPS/eps/fcf/working_capital/net_debt/*_ttm) quedan en moneda de
+  reporte (no comparables cross-ticker sin FX). Caveat ADR: BVPS (por accion
+  ordinaria) y EPS de Yahoo (por ADR) estan en bases distintas -- usar ratios
+  para comparar. Bancos: ROIC/margen-op/current_ratio NULL (sin EBIT/estructura
+  corriente); ROE/ROA/net_margin/PER si computan. ~4 tickers semestrales
+  (HMY/RIO/UL/VOD) sin Q -> sin ratios. Compute: scripts/compute_fundamentales_
+  ratios.py (encadenado al refresh .bat; validacion de escala con WARN).
 - `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
   metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
 
