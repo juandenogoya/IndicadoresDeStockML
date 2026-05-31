@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <title>{{ ticker }} — Infografia fundamental {{ ultimo_q }}</title>
+    <link rel="stylesheet" href="infografia_fundamental.css">
+</head>
+<body>
+<div class="fg-container">
+
+    {# ── Encabezado ─────────────────────────────────────────── #}
+    <header class="fg-header">
+        <div class="ticker-big">{{ ticker }}</div>
+        <div class="header-meta">
+            <div class="sector">{{ sector }}{% if region and region != '?' %} · {{ region }}{% endif %}</div>
+            {% if cierre is not none %}
+            <div class="cierre">Cierre USD {{ "%.2f"|format(cierre) }} <span class="fecha">({{ fecha_cierre }})</span></div>
+            {% endif %}
+            <div class="qmeta">Ultimo Q reportado: {{ ultimo_q }} · moneda de reporte: {{ moneda }}</div>
+        </div>
+    </header>
+
+    {# ── KPIs margenes (banda) ──────────────────────────────── #}
+    <section class="fg-kpis">
+        {% for k in kpis %}
+        <div class="kpi">
+            <div class="kpi-val">{{ k.valor }}</div>
+            <div class="kpi-lbl">{{ k.label }}</div>
+        </div>
+        {% endfor %}
+        <div class="kpi-foot">margenes sobre 12 meses (TTM)</div>
+    </section>
+
+    {# ── Serie Revenue & FCF + Crecimiento ──────────────────── #}
+    <div class="fg-2col">
+        <section class="fg-bloque">
+            <h2>Ingresos y FCF</h2>
+            <div class="leyenda">
+                <span class="ln ln-rev">— Ingresos</span>
+                <span class="ln ln-fcf">— FCF</span>
+                <span class="leyenda-nota">forma de la serie (hasta 8 Q)</span>
+            </div>
+            {{ spark_svg | safe }}
+        </section>
+
+        <section class="fg-bloque">
+            <h2>Crecimiento interanual</h2>
+            <table class="tabla-simple">
+                {% for c in crecimiento %}
+                <tr>
+                    <td class="lbl">{{ c.label }}</td>
+                    <td class="val">{{ c.valor }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            <div class="nota">YoY = ultimo Q vs mismo Q del ano anterior.</div>
+        </section>
+    </div>
+
+    {# ── Valuacion + Calidad (con vs sector) ────────────────── #}
+    <div class="fg-2col">
+        <section class="fg-bloque">
+            <h2>Valuacion</h2>
+            <table class="tabla-cmp">
+                <thead><tr><th>Metrica</th><th>Valor</th><th>vs sector</th></tr></thead>
+                <tbody>
+                {% for f in valuacion %}
+                <tr>
+                    <td class="lbl">{{ f.label }}</td>
+                    <td class="val">{{ f.valor }}</td>
+                    <td class="vs {{ 'good' if f.color == 'good' else ('bad' if f.color == 'bad' else '') }}">{{ f.vs or '—' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </section>
+
+        <section class="fg-bloque">
+            <h2>Calidad / Rentabilidad</h2>
+            <table class="tabla-cmp">
+                <thead><tr><th>Metrica</th><th>Valor</th><th>vs sector</th></tr></thead>
+                <tbody>
+                {% for f in calidad %}
+                <tr>
+                    <td class="lbl">{{ f.label }}</td>
+                    <td class="val">{{ f.valor }}</td>
+                    <td class="vs {{ 'good' if f.color == 'good' else ('bad' if f.color == 'bad' else '') }}">{{ f.vs or '—' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    <div class="peer-txt">Comparacion {{ peer_txt }}. Verde = mejor que la mediana de pares; rojo = peor.</div>
+
+    {# ── Solvencia ──────────────────────────────────────────── #}
+    <section class="fg-bloque fg-solvencia">
+        <h2>Solvencia</h2>
+        <div class="solv-row">
+            {% for s in solvencia %}
+            <div class="solv-item">
+                <div class="solv-val">{{ s.valor }}</div>
+                <div class="solv-lbl">{{ s.label }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    {# ── Footer ─────────────────────────────────────────────── #}
+    <footer class="fg-footer">
+        <span class="handle">{{ handle }}</span>
+        <span class="sep">·</span>
+        <span>Foto fundamental — datos reales del ultimo trimestre. No es recomendacion de inversion.</span>
+    </footer>
+
+</div>
+</body>
+</html>
