@@ -423,12 +423,17 @@ def cargar_financiero_ticker(ticker: str) -> dict:
                 "peer_n":      int(row["peer_n"]) if row["peer_n"] is not None else None,
             }
 
+    # Precio de cierre del ultimo dia en precios_diarios (dato informativo:
+    # precio de mercado en USD vs valor libro/BPA que estan en moneda de reporte).
+    precio = _precio(ticker)
+
     return {
         "ratios":             ratios,
         "vs_sector":          vs_map,
         "peer_meta":          peer_meta,
         "fiscal_period_end":  ratios.get("fiscal_period_end"),
         "reporting_currency": ratios.get("reporting_currency"),
+        "precio":             precio,
     }
 
 

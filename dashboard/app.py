@@ -261,7 +261,13 @@ def _vista_financiera(tickers):
         cur = data.get("reporting_currency") or "?"
         fpe = data.get("fiscal_period_end")
         sector = ratios.get("sector") or "?"
-        st.markdown(f"**{tk}** | {sector} | ult. Q: {fpe} | moneda: {cur}")
+        precio = data.get("precio") or {}
+        cierre = precio.get("close")
+        fecha_cierre = precio.get("fecha")
+        linea = f"**{tk}** | {sector} | ult. Q: {fpe} | moneda: {cur}"
+        if cierre is not None:
+            linea += f" | cierre USD {cierre:,.2f} ({fecha_cierre})"
+        st.markdown(linea)
         st.caption(texto_peer_basis(data))
 
         bloques = construir_bloques_ticker(data)
