@@ -20,10 +20,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import pandas as pd
 import streamlit as st
 
-from dashboard.sintesis_data import cargar_datos_ticker, listar_tickers, cargar_radar
+from dashboard.sintesis_data import (
+    cargar_datos_ticker, listar_tickers, cargar_radar,
+    cargar_financiero_ticker, cargar_screener_sector,
+    listar_sectores_fundamentales, listar_regiones_fundamentales,
+)
 from dashboard.view import construir_vista
 from dashboard.metricas import construir_papel
 from dashboard.radar import construir_radar
+from dashboard.financiero import (
+    construir_bloques_ticker, texto_peer_basis, construir_screener,
+)
 from dashboard.export_jpg import generar_jpg, generar_papel_pdf
 from src.utils.dashboard_sintesis import sintetizar
 
@@ -204,6 +211,101 @@ def _vista_radar():
         st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
 
 
+def _tabla_financiera(filas, columnas_orden):
+    """Tabla con coloreo good/bad en la columna vs_mediana."""
+    def _estilo(row):
+        color = row.get("_color")
+        css = ""
+        if color == "good":
+            css = "color: #1a7f37; font-weight: 600;"
+        elif color == "bad":
+            css = "color: #cf222e; font-weight: 600;"
+        return [css if c == "vs Sector" else "" for c in columnas_orden]
+
+    df = pd.DataFrame(filas)
+    # Mapear nombres internos -> etiquetas de columna
+    df_disp = pd.DataFrame({
+        "Metrica":    df["metrica"],
+        "Valor":      df["valor"],
+        "vs Sector":  df["vs_mediana"],
+        "Mediana":    df["mediana"],
+        "Percentil":  df["percentil"],
+        "_color":     df["color"],
+    })
+    styler = df_disp.style.apply(_estilo, axis=1)
+    st.dataframe(styler, hide_index=True, use_container_width=True,
+                 column_config={"_color": None})
+
+
+def _vista_financiera(tickers):
+    st.subheader("Analisis Financiero")
+    st.caption("Foto fundamental del ultimo trimestre reportado: valuacion, "
+               "calidad, crecimiento y solvencia, comparada con la mediana de "
+               "pares de la misma region. Descriptivo, no recomienda.")
+
+    modo = st.radio("Modo", ["Por ticker", "Screener sectorial"],
+                    horizontal=True, key="fin_modo")
+
+    if modo == "Por ticker":
+        tk = st.selectbox("Ticker", tickers, key="fin_ticker")
+        data = cargar_financiero_ticker(tk)
+        if not data.get("ratios"):
+            st.warning(f"Sin datos fundamentales para {tk}. "
+                       "Correr scripts/manual/refresh_fundamentales.bat.")
+            return
+
+        ratios = data["ratios"]
+        cur = data.get("reporting_currency") or "?"
+        fpe = data.get("fiscal_period_end")
+        sector = ratios.get("sector") or "?"
+        st.markdown(f"**{tk}** | {sector} | ult. Q: {fpe} | moneda: {cur}")
+        st.caption(texto_peer_basis(data))
+
+        bloques = construir_bloques_ticker(data)
+        for b in bloques:
+            st.markdown(f"**{b['bloque']}**")
+            _tabla_financiera(b["filas"],
+                              ["Metrica", "Valor", "vs Sector", "Mediana", "Percentil"])
+        st.caption("vs Sector: distancia a la mediana de pares (verde=mejor, "
+                   "rojo=peor, segun la metrica). Percentil: posicion dentro del "
+                   "sector. Absolutos (BPA, valor libro) en moneda de reporte: no "
+                   "comparables cross-ticker. Bancos: ROIC/margen oper./liquidez "
+                   "pueden ser '-' (sin estructura aplicable).")
+
+    else:  # Screener sectorial
+        sectores = listar_sectores_fundamentales()
+        if not sectores:
+            st.error("No hay datos en fundamentales_ratios_q.")
+            return
+        regiones = ["Todas"] + listar_regiones_fundamentales()
+        c1, c2 = st.columns(2)
+        with c1:
+            sector = st.selectbox("Sector", sectores, key="fin_sector")
+        with c2:
+            region = st.selectbox("Region", regiones, key="fin_region")
+
+        if st.button("Generar", use_container_width=False):
+            st.session_state["fin_run"] = True
+
+        if st.session_state.get("fin_run"):
+            rows = cargar_screener_sector(sector, region)
+            if not rows:
+                st.info("Sin tickers para ese sector/region.")
+                return
+            screener = construir_screener(rows)
+            st.caption(f"{screener['n']} tickers en {sector}"
+                       f"{'' if region == 'Todas' else ' / ' + region}. "
+                       "PER/P-B mas bajo = mas barato; ROE/ROIC/margen/crecimiento "
+                       "mas alto = mejor. Orden por PER asc.")
+            df = pd.DataFrame(screener["filas"], columns=screener["columnas"])
+            # Anexar fila mediana
+            df_med = pd.DataFrame([screener["mediana"]], columns=screener["columnas"])
+            df_full = pd.concat([df, df_med], ignore_index=True)
+            st.dataframe(df_full, hide_index=True, use_container_width=True)
+            st.caption("Ultima fila = mediana del sector (sobre valores "
+                       "disponibles). '-' = metrica no disponible para ese ticker.")
+
+
 def main():
     st.set_page_config(page_title="Informe descriptivo por ticker", layout="wide")
 
@@ -222,10 +324,14 @@ def main():
         st.error("No hay tickers en la DB local (precios_diarios vacia).")
         return
 
-    modo = st.sidebar.radio("Vista", ["Informe por ticker", "Radar del dia"], key="modo")
+    modo = st.sidebar.radio("Vista",
+                            ["Informe por ticker", "Radar del dia", "Analisis Financiero"],
+                            key="modo")
     st.sidebar.divider()
     if modo == "Radar del dia":
         _vista_radar()
+    elif modo == "Analisis Financiero":
+        _vista_financiera(tickers)
     else:
         _vista_informe(tickers)
 

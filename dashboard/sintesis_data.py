@@ -349,6 +349,125 @@ def listar_tickers() -> list:
     return df["ticker"].tolist() if not df.empty else []
 
 
+# ── Analisis Financiero (fundamentales) ──────────────────────────────────────
+
+def listar_sectores_fundamentales() -> list:
+    """Sectores presentes en fundamentales_ratios_q (para el screener)."""
+    df = query_df(
+        "SELECT DISTINCT sector FROM fundamentales_ratios_q "
+        "WHERE sector IS NOT NULL ORDER BY sector"
+    )
+    return df["sector"].tolist() if not df.empty else []
+
+
+def listar_regiones_fundamentales() -> list:
+    """Regiones disponibles en ticker_pais (para el filtro del screener)."""
+    df = query_df(
+        "SELECT DISTINCT region FROM ticker_pais "
+        "WHERE region IS NOT NULL ORDER BY region"
+    )
+    return df["region"].tolist() if not df.empty else []
+
+
+def cargar_financiero_ticker(ticker: str) -> dict:
+    """
+    Foto fundamental del ULTIMO Q de un ticker: ratios + comparacion vs sector.
+
+    Returns:
+        {ratios: {col: val}, vs_sector: {metric: {...}}, peer_meta: {...},
+         fiscal_period_end, reporting_currency}
+    """
+    ticker = (ticker or "").strip().upper()
+    r = query_df(
+        """
+        SELECT * FROM fundamentales_ratios_q
+        WHERE ticker = :t
+        ORDER BY fiscal_period_end DESC
+        LIMIT 1
+        """,
+        params={"t": ticker},
+    )
+    if r.empty:
+        return {"ratios": {}, "vs_sector": {}, "peer_meta": {}}
+    ratios = r.iloc[0].to_dict()
+
+    vs = query_df(
+        """
+        SELECT metric, peer_median, peer_p25, peer_p75, vs_median_pct,
+               percentile, peer_n, peer_basis, peer_region, low_sample
+        FROM fundamentales_ticker_vs_sector
+        WHERE ticker = :t
+          AND fiscal_period_end = (
+              SELECT MAX(fiscal_period_end) FROM fundamentales_ticker_vs_sector
+              WHERE ticker = :t
+          )
+        """,
+        params={"t": ticker},
+    )
+    vs_map = {}
+    peer_meta = {}
+    for _, row in vs.iterrows():
+        vs_map[row["metric"]] = {
+            "peer_median":   _f(row["peer_median"]),
+            "vs_median_pct": _f(row["vs_median_pct"]),
+            "percentile":    _f(row["percentile"]),
+            "peer_n":        int(row["peer_n"]) if row["peer_n"] is not None else None,
+            "peer_basis":    row["peer_basis"],
+            "low_sample":    bool(row["low_sample"]),
+        }
+        # peer_meta: tomar el de cualquier fila (es el mismo basis/region/n por ticker)
+        if not peer_meta:
+            peer_meta = {
+                "peer_basis":  row["peer_basis"],
+                "peer_region": row["peer_region"],
+                "peer_n":      int(row["peer_n"]) if row["peer_n"] is not None else None,
+            }
+
+    return {
+        "ratios":             ratios,
+        "vs_sector":          vs_map,
+        "peer_meta":          peer_meta,
+        "fiscal_period_end":  ratios.get("fiscal_period_end"),
+        "reporting_currency": ratios.get("reporting_currency"),
+    }
+
+
+def cargar_screener_sector(sector: str, region: str | None = None) -> list:
+    """
+    Ultimo Q de cada ticker de un sector (opcionalmente filtrado por region),
+    con sus ratios clave. region=None o 'Todas' => sin filtro de region.
+
+    Returns: lista de dicts (un ticker c/u) con columnas de ratios.
+    """
+    params = {"sector": sector}
+    region_clause = ""
+    if region and region not in ("Todas", "Todas las regiones"):
+        region_clause = "AND p.region = :region"
+        params["region"] = region
+
+    df = query_df(
+        f"""
+        WITH ult AS (
+          SELECT DISTINCT ON (ticker) *
+          FROM fundamentales_ratios_q
+          WHERE sector = :sector
+          ORDER BY ticker, fiscal_period_end DESC
+        )
+        SELECT u.ticker, u.reporting_currency, p.region,
+               u.pe_ratio, u.pb_ratio, u.ps_ratio, u.ev_ebitda,
+               u.roe_ttm, u.roa_ttm, u.roic_ttm,
+               u.net_margin_ttm, u.operating_margin_ttm,
+               u.revenue_yoy_pct, u.revenue_qoq_pct
+        FROM ult u
+        LEFT JOIN ticker_pais p ON p.ticker = u.ticker
+        WHERE TRUE {region_clause}
+        ORDER BY u.ticker
+        """,
+        params=params,
+    )
+    return df.to_dict("records") if not df.empty else []
+
+
 def cargar_radar() -> dict:
     """
     Datos para el Radar (familia E): z-scores de actividad de opciones de TODO el

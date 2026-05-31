@@ -253,6 +253,10 @@ Las criticas:
   escalonados -> fechas difieren unos dias). Motor PARAMETRIZABLE por region
   (--regions USA,Europa) para curaduria del usuario. Compute:
   scripts/compute_fundamentales_sector.py (encadenado al refresh .bat).
+  Consumo: vista "Analisis Financiero" del dashboard (dashboard/financiero.py:
+  modo "Por ticker" = 4 bloques valuacion/calidad/crecimiento/solvencia con
+  coloreo vs mediana de pares; modo "Screener sectorial" = tabla ordenable por
+  sector+region con fila mediana). Solo lectura, no recalcula.
 - `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
   metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
 
