@@ -176,7 +176,10 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
+| `scripts/refresh_ticker_pais.py` | Trae country/region por ticker (yahooquery assetProfile) -> tabla ticker_pais. Encadenado al refresh .bat |
+| `scripts/compute_fundamentales_sector.py` | Computa fundamentales_ticker_vs_sector (ticker vs mediana de pares regionales; parametrizable --regions). Encadenado al refresh .bat |
 | `scripts/oneshot/create_fundamentales_ratios_table.py` | Crea la tabla fundamentales_ratios_q (one-shot, archivado en scripts/oneshot/) |
+| `scripts/oneshot/create_fundamentales_sector_table.py` | Crea la tabla fundamentales_ticker_vs_sector (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/create_earnings_calendar.py` | Crea la tabla earnings_calendar (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/create_fundamentales_tables.py` | Crea las 4 tablas fundamentales_* (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
@@ -231,6 +234,25 @@ Las criticas:
   corriente); ROE/ROA/net_margin/PER si computan. ~4 tickers semestrales
   (HMY/RIO/UL/VOD) sin Q -> sin ratios. Compute: scripts/compute_fundamentales_
   ratios.py (encadenado al refresh .bat; validacion de escala con WARN).
+- `ticker_pais` (ticker PK, country, region, fetched_at) -- pais real de cada
+  ticker desde yahooquery assetProfile.country, con region derivada
+  (USA/Europa/China/Resto via REGION_MAP en refresh_ticker_pais.py). Base para
+  el comparativo sectorial regional (reporting_currency es proxy imperfecto:
+  empresas extranjeras que reportan en USD caerian mal clasificadas). LOCAL-only.
+  Distribucion: USA 146, Resto 25, Europa 21, China 6 (+1 sin pais: FISV).
+- `fundamentales_ticker_vs_sector` -- comparativa de cada metrica del ticker vs
+  la mediana de sus PARES de la MISMA region (no mezclar prima de riesgo pais).
+  Formato LONG (1 fila por ticker x metrica; 10 metricas: PER/P-B/P-S/EV-EBITDA
+  + ROE/ROA/ROIC/net_margin/operating_margin + revenue_yoy). Columnas: value,
+  peer_median/p25/p75, vs_median_pct, percentile, peer_n, peer_basis, low_sample.
+  Politica de peer-set (umbral N=5): (1) bucket (sector,region) n>=5 ->
+  basis='region'; (2) no-USA en bucket chico con sector USA n>=5 ->
+  basis='usa_fallback' (flag honesto); (3) resto -> basis='none' (leyenda
+  "pocas empresas"). Resultado: 169 tickers region / 22 usa_fallback / 4 none
+  (REITs+utility USA). Snapshot del ultimo Q de cada ticker (earnings
+  escalonados -> fechas difieren unos dias). Motor PARAMETRIZABLE por region
+  (--regions USA,Europa) para curaduria del usuario. Compute:
+  scripts/compute_fundamentales_sector.py (encadenado al refresh .bat).
 - `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
   metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
 
