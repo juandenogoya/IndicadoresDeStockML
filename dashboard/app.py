@@ -220,7 +220,10 @@ def _tabla_financiera(filas, columnas_orden):
             css = "color: #1a7f37; font-weight: 600;"
         elif color == "bad":
             css = "color: #cf222e; font-weight: 600;"
-        return [css if c == "vs Sector" else "" for c in columnas_orden]
+        # Styler.apply(axis=1) exige un estilo por CADA columna del DataFrame
+        # (incluye la columna oculta _color) -> iterar sobre row.index, no sobre
+        # columnas_orden (que tiene 5 y el df 6).
+        return [css if c == "vs Sector" else "" for c in row.index]
 
     df = pd.DataFrame(filas)
     # Mapear nombres internos -> etiquetas de columna
