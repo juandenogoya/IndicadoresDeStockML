@@ -26,6 +26,12 @@ Documentacion que existe hoy en docs/:
                             infografias para compartir analisis en X
 - docs/estrategias_ft.md  : estrategias de forward testing
 - docs/forward_testing/   : detalle de forward testing
+- docs/fundamentales_calculo.md : diseno v2 del calculo de ratios fundamentales
+                            -- inventario de claves crudas de yahooquery,
+                            perfiles banco/no-banco (clasificacion multi-Q +
+                            override curado), formulas por perfil. PREVIO a
+                            codificar. Validado contra balances oficiales
+                            MU/XP/JPM (crudos exactos al millon).
 - docs/checklist_recovery_manual.md : flujos de recovery manual
 - dashboard/README.md     : spec del Dashboard (informe descriptivo por ticker).
                             v1 + Fase 2 v1 desarrollados 28/5/2026 en rama
