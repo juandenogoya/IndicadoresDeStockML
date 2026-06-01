@@ -94,6 +94,32 @@
 
     <div class="peer-txt">Comparacion {{ peer_txt }}. Verde = mejor que la mediana de pares; rojo = peor.</div>
 
+    {# ── Dividendos + Tendencia de margenes ─────────────────── #}
+    <div class="fg-2col">
+        <section class="fg-bloque">
+            <h2>Dividendos</h2>
+            {% if dividendos.paga %}
+            <div class="div-row">
+                <div class="div-item">
+                    <div class="div-val">{{ dividendos.yield }}</div>
+                    <div class="div-lbl">Rentabilidad (TTM)</div>
+                </div>
+                <div class="div-item">
+                    <div class="div-val">{{ dividendos.payout }}</div>
+                    <div class="div-lbl">Payout (TTM)</div>
+                </div>
+            </div>
+            {% else %}
+            <div class="div-nopaga">No distribuye dividendos</div>
+            {% endif %}
+        </section>
+
+        <section class="fg-bloque">
+            <h2>{{ margen_titulo }}</h2>
+            {{ margen_svg | safe }}
+        </section>
+    </div>
+
     {# ── Solvencia ──────────────────────────────────────────── #}
     <section class="fg-bloque fg-solvencia">
         <h2>Solvencia</h2>

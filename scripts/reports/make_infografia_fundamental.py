@@ -64,6 +64,20 @@ def _f(v):
         return None
 
 
+def _jget(rj, key):
+    """Lee una clave de raw_json (dict o str JSON). None si falta/NaN."""
+    if rj is None:
+        return None
+    if isinstance(rj, str):
+        try:
+            import json as _json
+            rj = _json.loads(rj)
+        except Exception:
+            return None
+    v = rj.get(key) if isinstance(rj, dict) else None
+    return _f(v)
+
+
 def _pct(v, decimales=1):
     """Fraccion -> 'XX.X%'. None -> '-'."""
     v = _f(v)
@@ -127,6 +141,14 @@ def cargar_datos(ticker: str) -> dict:
     cierre = _f(px.iloc[0]["close"]) if not px.empty else None
     fecha_cierre = str(px.iloc[0]["fecha"]) if not px.empty else None
 
+    # MarketCap (ultimo Q 3M de valuation) para el dividend yield
+    mc = query_df(
+        "SELECT market_cap FROM fundamentales_valuation_q WHERE ticker = :t "
+        "AND period_type='3M' ORDER BY period_end DESC LIMIT 1",
+        params={"t": ticker},
+    )
+    market_cap = _f(mc.iloc[0]["market_cap"]) if not mc.empty else None
+
     # Serie Revenue & FCF (hasta 8 Q, orden cronologico)
     serie = query_df(
         """
@@ -137,6 +159,25 @@ def cargar_datos(ticker: str) -> dict:
           ON c.ticker = i.ticker AND c.fiscal_period_end = i.fiscal_period_end
         WHERE i.ticker = :t
         ORDER BY i.fiscal_period_end
+        """,
+        params={"t": ticker},
+    )
+
+    # Dividendos: CashDividendsPaid (cashflow, viene negativo) ultimos 8 Q +
+    # serie de margenes (de ratios_q: net_margin_ttm y roe_ttm) para tendencia.
+    divcf = query_df(
+        """
+        SELECT fiscal_period_end AS fpe, raw_json
+        FROM fundamentales_cashflow_q WHERE ticker = :t
+        ORDER BY fiscal_period_end DESC LIMIT 4
+        """,
+        params={"t": ticker},
+    )
+    serie_margen = query_df(
+        """
+        SELECT fiscal_period_end AS fpe, net_margin_ttm, roe_ttm
+        FROM fundamentales_ratios_q WHERE ticker = :t
+        ORDER BY fiscal_period_end
         """,
         params={"t": ticker},
     )
@@ -164,7 +205,8 @@ def cargar_datos(ticker: str) -> dict:
     return {
         "ratios": ratios, "region": region, "cierre": cierre,
         "fecha_cierre": fecha_cierre, "serie": serie, "vs_map": vs_map,
-        "peer_meta": peer_meta,
+        "peer_meta": peer_meta, "divcf": divcf, "serie_margen": serie_margen,
+        "market_cap": market_cap,
     }
 
 
@@ -228,6 +270,53 @@ def _sparkline_dual(serie, w=560, h=210, pad=34, solo_revenue=False) -> str:
     </svg>'''
 
 
+def _sparkline_pct(serie_df, col, w=560, h=170, pad=34) -> str:
+    """
+    Mini grafico de UNA serie de porcentajes (margen neto o ROE) en el tiempo.
+    Etiqueta el primer y ultimo valor con su %. Para la tendencia de margenes.
+    """
+    rows = [(str(r["fpe"]), _f(r[col])) for _, r in serie_df.iterrows()]
+    rows = [r for r in rows if r[1] is not None]
+    if len(rows) < 2:
+        return '<div class="sin-datos">serie insuficiente</div>'
+    vals = [r[1] for r in rows]
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or abs(hi) or 1.0
+    n = len(rows)
+
+    def _x(i): return pad + (w - 2 * pad) * i / (n - 1)
+    def _y(v): return h - pad - (h - 2 * pad) * (v - lo) / rng
+
+    pts = " ".join(f"{_x(i):.1f},{_y(r[1]):.1f}" for i, r in enumerate(rows))
+    # color de la linea segun tendencia (ultimo vs primero)
+    sube = rows[-1][1] >= rows[0][1]
+    color = "#1a7f37" if sube else "#cf222e"
+    v0 = f"{rows[0][1]*100:.0f}%"; v1 = f"{rows[-1][1]*100:.0f}%"
+    return f'''<svg viewBox="0 0 {w} {h}" class="spark" xmlns="http://www.w3.org/2000/svg">
+      <polyline points="{pts}" fill="none" stroke="{color}" stroke-width="3"/>
+      <text x="{pad}" y="{h - 6}" class="spark-lbl">{v0}</text>
+      <text x="{w - pad}" y="{h - 6}" class="spark-lbl" text-anchor="end">{v1}</text>
+    </svg>'''
+
+
+def _calc_dividendos(data) -> dict:
+    """Yield TTM + payout TTM desde CashDividendsPaid (caja, 4Q) / MarketCap / NI.
+    Devuelve {paga, yield_pct, payout_pct}. paga=False si no distribuye."""
+    divcf = data.get("divcf")
+    if divcf is None or divcf.empty:
+        return {"paga": False}
+    divs = [_jget(rj, "CashDividendsPaid") for rj in divcf["raw_json"]]
+    divs = [abs(d) for d in divs if d is not None]
+    div_ttm = sum(divs) if divs else 0.0
+    if div_ttm <= 0:
+        return {"paga": False}
+    ni_ttm = _f(data["ratios"].get("net_income_ttm"))
+    mcap = _f(data.get("market_cap"))
+    yld = (div_ttm / mcap) if (mcap and mcap > 0) else None
+    payout = (div_ttm / ni_ttm) if (ni_ttm and ni_ttm > 0) else None
+    return {"paga": True, "yield_pct": yld, "payout_pct": payout}
+
+
 # ── Construccion del contexto para el template ────────────────────────────────
 
 def _fila_cmp(label, metric, valor_fmt, data, mejor_si_alto):
@@ -262,6 +351,17 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         peer_txt = "pocas empresas del sector en seguimiento"
 
     es_fin = (r.get("profile") == "financiero")
+
+    # Dividendos (ambos perfiles)
+    _d = _calc_dividendos(data)
+    if not _d["paga"]:
+        div = {"paga": False}
+    else:
+        div = {
+            "paga": True,
+            "yield": _pct(_d["yield_pct"]) if _d["yield_pct"] is not None else "-",
+            "payout": _pct(_d["payout_pct"]) if _d["payout_pct"] is not None else "-",
+        }
 
     # Valuacion: igual en ambos perfiles (sin EV/EBITDA en banca: no aplica)
     valuacion = [
@@ -359,6 +459,10 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         "crecimiento": crecimiento,
         "solvencia": solvencia,
         "spark_svg": _sparkline_dual(data["serie"], solo_revenue=es_fin),
+        "dividendos": div,
+        "margen_titulo": "Tendencia ROE (TTM)" if es_fin else "Tendencia margen neto (TTM)",
+        "margen_svg": _sparkline_pct(data.get("serie_margen"),
+                                     "roe_ttm" if es_fin else "net_margin_ttm"),
         "handle": handle,
         "fecha_legible": datetime.now().strftime("%d/%m/%Y"),
     }

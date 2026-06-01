@@ -123,6 +123,34 @@ El prototipo funciona pero nacio en formato 820x1180. Para redes:
 NO se toca en v1: el set de indicadores (congelado), la estructura de 5 bloques,
 la logica de perfiles, la fuente de datos.
 
+## 7b. Diseno v2 -- bloques nuevos (decidido 1/6/2026)
+
+Tras comparar con TradingView (capturas de JPM): TV gana en datos de banca
+regulatoria (prestamos/depositos/CET1) que yahooquery NO expone (0/18). NO
+competimos ahi. Nuestro plus sigue siendo el comparativo sectorial. Rol elegido:
+**foto fundamental completa y autonoma** (se entiende sola, comparativo = plus).
+
+Se agregan 2 bloques (manteniendo formato 4:5, opcion A -- apretar si hace falta):
+
+### Bloque "Dividendos" (ambos perfiles)
+- **Dividend yield TTM** = CashDividendsPaid_ttm / MarketCap.
+- **Payout ratio TTM** = CashDividendsPaid_ttm / NetIncome_ttm (NULL si NI<=0).
+- Si no paga dividendos -> "No distribuye dividendos" (honesto).
+- Validado vs TV: JPM yield 2.18%/payout 29% (TV 1.97%/28%); AAPL 0.42%/13%;
+  KO 3.35%/80%; XP/BABA no pagan -> None. Cobertura CashDividendsPaid 15/18 fin.
+- Caveat: usamos caja real (CashDividendsPaid) -> leve dif. vs dividendo
+  declarado anualizado de TV. Ambos validos.
+
+### Bloque "Tendencia de margenes" (mini-sparkline multi-Q)
+- Evolucion en los ultimos Q de: margen neto (no-banco) o ROE (banco).
+- Refuerza la lectura de TRAYECTORIA (acelera/desacelera), que un TTM no da.
+- Equivalente compacto al panel "Rendimiento" de TV.
+
+Lo que NO se hace (coherente con tener-o-no-tener el dato): prestamos/depositos/
+CET1 (no estan en yahooquery), waterfall ingresos->beneficio (alto esfuerzo SVG),
+descriptivos CEO/empleados/beta (no en las tablas fundamentales). Set de ratios
+existente NO se toca.
+
 ## 8. Estado / proximos pasos
 
 1. [HECHO] Prototipo funcional perfil-aware (make_infografia_fundamental.py).
@@ -141,5 +169,12 @@ la logica de perfiles, la fuente de datos.
    (PNG)" + preview + download_button. make_infografia_fundamental.py expone
    generar_infografia(ticker)->Path (API reutilizable); el dashboard la importa
    de forma diferida (al click) para no cargar weasyprint en el arranque.
-5. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
+5. [HECHO 1/6/2026] Bloques v2 (seccion 7b) implementados:
+   - Bloque Dividendos: yield TTM + payout TTM, o "No distribuye dividendos".
+   - Bloque Tendencia de margenes: mini-sparkline 1 serie (margen neto no-banco /
+     ROE banco), color verde/rojo segun direccion, etiqueta primer y ultimo valor.
+   - Layout 4:5 mantenido (opcion A: compactados paddings). Salida 1620x2025,
+     una sola pagina. Validado MU (paga, margen 28->41%), JPM (banco), BABA
+     (no paga -> leyenda, margen 9->10%).
+6. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
    Streamlit de reportes (scripts/reports/app.py).
