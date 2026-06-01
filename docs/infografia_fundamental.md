@@ -136,5 +136,10 @@ la logica de perfiles, la fuente de datos.
    - Caveat de moneda en ADRs (BABA: "absolutos en CNY, no USD" en rojo).
    - Sparkline reescalado 560x210.
    Validado: MU/JPM/BABA generados OK, los 3 a 4:5 exacto.
-4. [FUTURO] Logo de empresa; version horizontal 16:9; integrar a la app
-   Streamlit de reportes (scripts/reports/app.py) para generarla con un boton.
+4. [HECHO 1/6/2026] Boton en el dashboard: vista "Analisis Financiero" modo
+   "Por ticker" -> seccion "Compartir en redes" con boton "Generar infografia
+   (PNG)" + preview + download_button. make_infografia_fundamental.py expone
+   generar_infografia(ticker)->Path (API reutilizable); el dashboard la importa
+   de forma diferida (al click) para no cargar weasyprint en el arranque.
+5. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
+   Streamlit de reportes (scripts/reports/app.py).

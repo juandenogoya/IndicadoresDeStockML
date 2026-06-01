@@ -383,6 +383,23 @@ def html_a_png(html_str: str, output_path: Path) -> None:
     doc.close()
 
 
+def generar_infografia(ticker: str, output: str | None = None,
+                       handle: str = DEFAULT_HANDLE) -> Path:
+    """
+    API publica reutilizable (ej. desde el dashboard): genera el PNG y devuelve
+    su ruta. Misma logica que main() pero sin argparse ni prints.
+    """
+    ticker = ticker.upper()
+    data = cargar_datos(ticker)
+    ctx = build_context(ticker, data, handle)
+    html_str = render_html(ctx)
+    out = Path(output) if output else (
+        SCRIPT_DIR / "output" / f"{ticker}_{data['fecha_cierre']}_fundamental.png")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    html_a_png(html_str, out)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Infografia fundamental (datos reales locales)")
     ap.add_argument("ticker", help="Ticker (ej AAPL)")
@@ -390,15 +407,7 @@ def main():
     ap.add_argument("--handle", default=DEFAULT_HANDLE)
     args = ap.parse_args()
 
-    ticker = args.ticker.upper()
-    data = cargar_datos(ticker)
-    ctx = build_context(ticker, data, args.handle)
-    html_str = render_html(ctx)
-
-    out = Path(args.output) if args.output else (
-        SCRIPT_DIR / "output" / f"{ticker}_{data['fecha_cierre']}_fundamental.png")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    html_a_png(html_str, out)
+    out = generar_infografia(args.ticker, args.output, args.handle)
     print(f"OK -> {out}")
 
 

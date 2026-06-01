@@ -240,6 +240,35 @@ def _tabla_financiera(filas, columnas_orden):
                  column_config={"_color": None})
 
 
+def _export_infografia_fundamental(tk):
+    """Boton: genera la infografia fundamental (PNG 4:5 para RRSS) del ticker."""
+    st.divider()
+    st.markdown("**Compartir en redes**")
+    if st.button("Generar infografia (PNG)", key="fin_ig_btn"):
+        with st.spinner("Generando infografia..."):
+            try:
+                # Import diferido: el modulo hace os.environ.pop(DATABASE_URL) al
+                # cargar (inocuo en local) y trae weasyprint. Solo al pedirlo.
+                from scripts.reports.make_infografia_fundamental import generar_infografia
+                path = generar_infografia(tk)
+                with open(path, "rb") as f:
+                    st.session_state["fin_ig_bytes"] = f.read()
+                st.session_state["fin_ig_name"] = path.name
+                st.session_state["fin_ig_ticker"] = tk
+            except Exception as exc:
+                st.error(f"Error generando infografia: {exc}")
+
+    if (st.session_state.get("fin_ig_ticker") == tk
+            and st.session_state.get("fin_ig_bytes")):
+        st.image(st.session_state["fin_ig_bytes"], caption=st.session_state["fin_ig_name"])
+        st.download_button(
+            f"Descargar {st.session_state['fin_ig_name']}",
+            data=st.session_state["fin_ig_bytes"],
+            file_name=st.session_state["fin_ig_name"],
+            mime="image/png",
+        )
+
+
 def _vista_financiera(tickers):
     st.subheader("Analisis Financiero")
     st.caption("Foto fundamental del ultimo trimestre reportado: valuacion, "
@@ -280,6 +309,8 @@ def _vista_financiera(tickers):
                    "sector. Absolutos (BPA, valor libro) en moneda de reporte: no "
                    "comparables cross-ticker. Bancos: ROIC/margen oper./liquidez "
                    "pueden ser '-' (sin estructura aplicable).")
+
+        _export_infografia_fundamental(tk)
 
     else:  # Screener sectorial
         sectores = listar_sectores_fundamentales()
