@@ -170,7 +170,7 @@ def cargar_datos(ticker: str) -> dict:
 
 # ── Mini graficos SVG (sin libs de plotting; control total del estilo) ────────
 
-def _sparkline_dual(serie, w=440, h=170, pad=30, solo_revenue=False) -> str:
+def _sparkline_dual(serie, w=560, h=210, pad=34, solo_revenue=False) -> str:
     """
     Mini grafico de dos series (revenue + fcf) normalizadas a su rango conjunto.
     Devuelve SVG embebible. Normalizamos a [0,1] sobre el min/max combinado para
@@ -327,10 +327,10 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         caja_label, caja_val = "Deuda neta", f"{_money_b(nd)} {cur}"
 
     if es_fin:
-        # Banca: sin liquidez corriente (no aplica)
+        # Banca: sin liquidez corriente NI deuda neta (poco informativa:
+        # incluye depositos/funding). Solo Deuda/Patrimonio.
         solvencia = [
             {"label": "Deuda / Patrimonio", "valor": _ratio(r.get("debt_to_equity"))},
-            {"label": caja_label,           "valor": caja_val},
         ]
     else:
         solvencia = [
@@ -349,6 +349,7 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         "ultimo_q": fpe,
         "peer_txt": peer_txt,
         "es_financiero": es_fin,
+        "moneda_no_usd": (cur not in ("USD", "?", None)),
         "kpis": kpis,
         "kpis_foot": kpis_foot,
         "calidad_titulo": "Calidad / Rentabilidad (banca)" if es_fin else "Calidad / Rentabilidad",

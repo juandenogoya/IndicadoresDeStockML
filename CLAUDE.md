@@ -26,6 +26,10 @@ Documentacion que existe hoy en docs/:
                             infografias para compartir analisis en X
 - docs/estrategias_ft.md  : estrategias de forward testing
 - docs/forward_testing/   : detalle de forward testing
+- docs/infografia_fundamental.md : spec de diseno de la infografia fundamental
+                            para X/redes (formato 4:5, layout 5 bloques, set de
+                            indicadores por perfil banco/no-banco, decisiones).
+                            Motor: scripts/reports/make_infografia_fundamental.py
 - docs/fundamentales_calculo.md : diseno v2 del calculo de ratios fundamentales
                             -- inventario de claves crudas de yahooquery,
                             perfiles banco/no-banco (clasificacion multi-Q +

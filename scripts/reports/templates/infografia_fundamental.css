@@ -1,23 +1,25 @@
 /* ============================================================
    infografia_fundamental.css
    Infografia fundamental: foto del ultimo Q + comparacion sector.
+   Formato 4:5 (1080x1350) optimizado para feed de X/IG en movil.
    Paleta crema/alto contraste, consistente con infografia.css.
+   Ver spec: docs/infografia_fundamental.md
    ============================================================ */
 
 :root {
     --bg:          #faf8f3;
     --bg-bloque:   #ffffff;
-    --banda:       #ece6d8;   /* banda KPIs, tono arena como la referencia */
+    --banda:       #ece6d8;   /* banda KPIs, tono arena */
     --texto:       #1a1a1a;
     --texto-suave: #6b6b6b;
     --verde:       #1a7f37;
     --rojo:        #cf222e;
     --borde:       #e0ddd5;
     --acento:      #111;
-    --page-w:      820px;
+    --page-w:      1080px;
 }
 
-@page { size: 820px 1180px; margin: 0; }
+@page { size: 1080px 1350px; margin: 0; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -28,97 +30,97 @@ body {
     width: var(--page-w);
 }
 
-.fg-container { width: var(--page-w); padding: 28px 32px; }
+.fg-container { width: var(--page-w); padding: 40px 44px; }
 
 /* ── Encabezado ──────────────────────────────────────────── */
 .fg-header {
-    display: flex; align-items: center; gap: 22px;
-    border-bottom: 4px solid var(--acento);
-    padding-bottom: 16px; margin-bottom: 18px;
+    display: flex; align-items: center; gap: 30px;
+    border-bottom: 5px solid var(--acento);
+    padding-bottom: 22px; margin-bottom: 26px;
 }
-.ticker-big { font-size: 58px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+.ticker-big { font-size: 84px; font-weight: 800; letter-spacing: -2px; line-height: 1; }
 .header-meta { flex: 1; }
-.sector { font-size: 19px; font-weight: 700; color: var(--texto); }
-.cierre { font-size: 17px; margin-top: 4px; }
-.cierre .fecha { color: var(--texto-suave); font-size: 14px; }
-.qmeta { font-size: 13px; color: var(--texto-suave); margin-top: 4px; }
+.sector { font-size: 27px; font-weight: 700; color: var(--texto); }
+.cierre { font-size: 23px; margin-top: 6px; }
+.cierre .fecha { color: var(--texto-suave); font-size: 19px; }
+.qmeta { font-size: 17px; color: var(--texto-suave); margin-top: 6px; }
+.moneda-caveat { color: var(--rojo); font-weight: 600; }
 
-/* ── Banda KPIs ──────────────────────────────────────────── */
+/* ── Banda KPIs (el gancho) ──────────────────────────────── */
 .fg-kpis {
     display: flex; gap: 0; background: var(--banda);
-    border-radius: 10px; padding: 16px 10px; margin-bottom: 18px;
+    border-radius: 14px; padding: 26px 14px; margin-bottom: 26px;
     position: relative;
 }
 .kpi { flex: 1; text-align: center; border-right: 1px solid #d6cfbe; }
 .kpi:last-of-type { border-right: none; }
-.kpi-val { font-size: 30px; font-weight: 800; }
-.kpi-lbl { font-size: 13px; color: var(--texto-suave); margin-top: 2px; }
+.kpi-val { font-size: 46px; font-weight: 800; }
+.kpi-lbl { font-size: 18px; color: var(--texto-suave); margin-top: 4px; }
 .kpi-foot {
-    position: absolute; right: 14px; bottom: 3px;
-    font-size: 10px; color: var(--texto-suave); font-style: italic;
+    position: absolute; right: 18px; bottom: 5px;
+    font-size: 13px; color: var(--texto-suave); font-style: italic;
 }
 
 /* ── Bloques en 2 columnas ───────────────────────────────── */
-.fg-2col { display: flex; gap: 16px; margin-bottom: 16px; }
+.fg-2col { display: flex; gap: 22px; margin-bottom: 22px; }
 .fg-2col > .fg-bloque { flex: 1; }
 
 .fg-bloque {
     background: var(--bg-bloque); border: 1px solid var(--borde);
-    border-radius: 10px; padding: 16px 18px;
+    border-radius: 14px; padding: 22px 26px;
 }
 .fg-bloque h2 {
-    font-size: 18px; font-weight: 800; margin-bottom: 12px;
-    border-bottom: 2px solid var(--acento); padding-bottom: 6px;
+    font-size: 25px; font-weight: 800; margin-bottom: 16px;
+    border-bottom: 3px solid var(--acento); padding-bottom: 8px;
 }
 
 /* ── Tablas ──────────────────────────────────────────────── */
 .tabla-simple, .tabla-cmp { width: 100%; border-collapse: collapse; }
-.tabla-simple td, .tabla-cmp td, .tabla-cmp th { padding: 7px 4px; }
+.tabla-simple td, .tabla-cmp td, .tabla-cmp th { padding: 10px 6px; }
 .tabla-cmp th {
-    text-align: left; font-size: 12px; color: var(--texto-suave);
+    text-align: left; font-size: 16px; color: var(--texto-suave);
     border-bottom: 1px solid var(--borde); text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 .tabla-simple tr + tr td, .tabla-cmp tbody tr + tr td { border-top: 1px solid #f0ede5; }
-.lbl { color: var(--texto); font-size: 15px; }
-.val { text-align: right; font-weight: 700; font-size: 16px; font-variant-numeric: tabular-nums; }
+.lbl { color: var(--texto); font-size: 21px; }
+.val { text-align: right; font-weight: 700; font-size: 22px; font-variant-numeric: tabular-nums; }
 .tabla-cmp .val { text-align: center; }
-.vs { text-align: right; font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--texto-suave); }
+.vs { text-align: right; font-weight: 700; font-size: 21px; font-variant-numeric: tabular-nums; color: var(--texto-suave); }
 .vs.good { color: var(--verde); }
 .vs.bad  { color: var(--rojo); }
 
 /* ── Sparkline ───────────────────────────────────────────── */
-.leyenda { font-size: 13px; margin-bottom: 6px; }
-.ln { font-weight: 700; margin-right: 12px; }
+.leyenda { font-size: 18px; margin-bottom: 8px; }
+.ln { font-weight: 700; margin-right: 16px; }
 .ln-rev { color: #111; }
 .ln-fcf { color: #9aa0a6; }
-.leyenda-nota { color: var(--texto-suave); font-style: italic; font-size: 11px; }
+.leyenda-nota { color: var(--texto-suave); font-style: italic; font-size: 15px; }
 .spark { width: 100%; height: auto; }
-.spark-lbl { font-size: 11px; fill: var(--texto-suave); }
-.sin-datos { color: var(--texto-suave); font-style: italic; font-size: 13px; padding: 20px 0; }
-.nota, .leyenda-nota { font-size: 11px; color: var(--texto-suave); font-style: italic; }
-.nota { margin-top: 8px; }
+.spark-lbl { font-size: 15px; fill: var(--texto-suave); }
+.sin-datos { color: var(--texto-suave); font-style: italic; font-size: 18px; padding: 28px 0; }
+.nota { font-size: 15px; color: var(--texto-suave); font-style: italic; margin-top: 10px; }
 
 /* ── Peer txt ────────────────────────────────────────────── */
 .peer-txt {
-    font-size: 12px; color: var(--texto-suave); font-style: italic;
-    margin: -6px 2px 16px; text-align: center;
+    font-size: 17px; color: var(--texto-suave); font-style: italic;
+    margin: -4px 4px 22px; text-align: center;
 }
 
 /* ── Solvencia ───────────────────────────────────────────── */
-.fg-solvencia { margin-bottom: 18px; }
-.solv-row { display: flex; gap: 12px; }
+.fg-solvencia { margin-bottom: 26px; }
+.solv-row { display: flex; gap: 18px; }
 .solv-item {
     flex: 1; text-align: center; background: var(--banda);
-    border-radius: 8px; padding: 14px 8px;
+    border-radius: 12px; padding: 22px 12px;
 }
-.solv-val { font-size: 24px; font-weight: 800; }
-.solv-lbl { font-size: 13px; color: var(--texto-suave); margin-top: 3px; }
+.solv-val { font-size: 36px; font-weight: 800; }
+.solv-lbl { font-size: 18px; color: var(--texto-suave); margin-top: 5px; }
 
 /* ── Footer ──────────────────────────────────────────────── */
 .fg-footer {
-    border-top: 2px solid var(--acento); padding-top: 12px;
-    font-size: 12px; color: var(--texto-suave); text-align: center;
+    border-top: 3px solid var(--acento); padding-top: 18px;
+    font-size: 17px; color: var(--texto-suave); text-align: center;
 }
 .fg-footer .handle { font-weight: 700; color: var(--texto); }
-.fg-footer .sep { margin: 0 8px; }
+.fg-footer .sep { margin: 0 10px; }

@@ -16,7 +16,7 @@
             {% if cierre is not none %}
             <div class="cierre">Cierre USD {{ "%.2f"|format(cierre) }} <span class="fecha">({{ fecha_cierre }})</span></div>
             {% endif %}
-            <div class="qmeta">Ultimo Q reportado: {{ ultimo_q }} · moneda de reporte: {{ moneda }}</div>
+            <div class="qmeta">Ultimo Q reportado: {{ ultimo_q }} · moneda de reporte: {{ moneda }}{% if moneda_no_usd %} <span class="moneda-caveat">(absolutos en {{ moneda }}, no USD)</span>{% endif %}</div>
         </div>
     </header>
 
