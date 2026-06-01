@@ -261,10 +261,25 @@ SI aplican:
 | Deuda/Patrimonio | TotalDebt / CommonStockEquity | en bancos es alto por naturaleza |
 | PER, P/B, P/S | de Yahoo | validado OK en JPM (PER 14.7, P/B 2.3) |
 
-Pendiente v3 (set bancario propio, requiere mas curaduria de claves):
-- Net interest margin (NetInterestIncome / activos productivos)
-- Efficiency ratio (gastos no-interes / ingresos totales)
-- ROTCE (NI / TangibleBookValue) -- TangibleBookValue ya esta en crudos
+Set bancario propio (INCLUIDO en v2, decision usuario 2026-06-01):
+Disponibilidad verificada sobre los 18 financieros (raw_json):
+- NetInterestIncome 18/18, TangibleBookValue 18/18, NetIncomeCommonStockholders
+  18/18, TotalRevenue 18/18, PretaxIncome 18/18, TotalAssets 18/18 -> OK.
+- NetLoansReceivable / GrossLoan / TotalDeposits = 0/18 -> Yahoo NO expone la
+  cartera de prestamos ni depositos. Por eso el NIM "de libro" no es calculable.
+
+| Ratio bancario | Formula | Estado |
+|----------------|---------|--------|
+| **ROTCE TTM** | NetIncomeCommonStockholders_ttm / TangibleBookValue | OK (solido). Preview JPM 20.6% (oficial ROTCE 23%, dif. por TTM vs Q anualizado) |
+| **Efficiency ratio TTM** | (TotalRevenue_ttm - PretaxIncome_ttm) / TotalRevenue_ttm | APROXIMADO (proxy de gastos no-interes / ingresos). Preview JPM 60%, BAC 65% (rango bancario real); aseguradoras altas (AIG 85%, PGR 84%) por estructura distinta. Leyenda: "aproximado". |
+
+DESCARTADO -- NIM (net interest margin):
+NetInterestIncome / activos productivos. Sin loans+securities (0/18) el unico
+denominador posible es TotalAssets, que da basura (preview: XP -0.1%, AIG -0.3%,
+PGR -0.2%). Meter un NIM mal calculado viola la filosofia (mejor NO tenerlo que
+tenerlo falso). Si en el futuro se consigue la cartera (otra fuente), se agrega.
+
+Pendiente v3: NIM real (requiere cartera de prestamos de otra fuente).
 
 ### 5.4 Fix B2 (desfase de fecha) -- aplica a AMBOS perfiles
 Cuando el balance del Q exacto del income no existe, hacer **as-of join**: usar
@@ -283,14 +298,19 @@ Q a Q, asi que ROE/ROA/BVPS se pueden computar en el Q mas nuevo en vez de NULL.
 5. PER/PB/PS/EV-EBITDA: se mantienen de Yahoo (validados); migrar a propio = futuro.
 6. Persistir el perfil en columna `profile` (auditable). Override como lista
    explicita en el compute, documentada en 4.2/4.3.
-7. Set bancario propio (NIM, efficiency, ROTCE) -> v3.
+7. Set bancario propio INCLUIDO en v2: ROTCE (solido) + efficiency ratio
+   (aproximado, con leyenda). NIM DESCARTADO (sin cartera de prestamos en
+   yahooquery, 0/18; daria un numero falso). NIM real -> v3 (otra fuente).
 
 ## 7. Proximos pasos (orden acordado)
 1. [HECHO] Este documento (inventario + formulas + regla de perfiles).
 2. [HECHO] Curaduria: usuario confirmo la lista (4.3) -- 18 financieros, XP por
    override (opcion A), 7 no-financieros del sector financiero, 5 falsos
    positivos descartados (2026-06-01).
-3. [PENDIENTE] Revision: confirmar formulas por perfil (seccion 5) con el usuario.
+3. [HECHO] Revision de formulas (seccion 5) con el usuario (2026-06-01):
+   ROE/ROIC con CommonStockEquity OK; financieras NULL en margenes ind./ROIC/
+   liquidez/WC/FCF OK; set bancario INCLUIDO en v2 (ROTCE + efficiency; NIM
+   descartado por falta de cartera). Disponibilidad de claves verificada en DB.
 4. [PENDIENTE] Codificar v2 del compute: agregar columna `profile`, regla auto +
    override, formulas por perfil (5.2/5.3), as-of join (5.4), CommonStockEquity.
    Recompute + re-validar contra MU/XP/JPM (los 3 balances oficiales ya cruzados).
