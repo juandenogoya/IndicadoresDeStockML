@@ -30,9 +30,11 @@ METRIC_META = {
     "roe_ttm":              ("ROE (TTM)",    "pct", True),
     "roa_ttm":              ("ROA (TTM)",    "pct", True),
     "roic_ttm":             ("ROIC (TTM)",   "pct", True),
+    "rotce_ttm":            ("ROTCE (TTM)",  "pct", True),   # banca
     "gross_margin_ttm":     ("Margen bruto", "pct", True),
     "operating_margin_ttm": ("Margen oper.", "pct", True),
     "net_margin_ttm":       ("Margen neto",  "pct", True),
+    "efficiency_ratio_ttm": ("Ratio eficiencia", "pct", False),  # banca: mas bajo = mejor
     # Crecimiento (mas alto = mejor)
     "revenue_qoq_pct":      ("Ingresos QoQ", "pct", True),
     "revenue_yoy_pct":      ("Ingresos YoY", "pct", True),
@@ -45,8 +47,9 @@ METRIC_META = {
     "debt_to_equity":       ("Deuda/Patrim.",  "ratio", False),
 }
 
-# Bloques del informe por ticker (orden de aparicion)
-BLOQUES = {
+# Bloques del informe por ticker, SEGUN PERFIL (las financieras tienen
+# dinamica contable distinta: ver docs/fundamentales_calculo.md).
+BLOQUES_NO_FINANCIERO = {
     "Valuacion": ["pe_ratio", "pb_ratio", "ps_ratio", "ev_ebitda",
                   "book_value_per_share", "eps_ttm"],
     "Calidad / Rentabilidad": ["roe_ttm", "roa_ttm", "roic_ttm",
@@ -57,7 +60,25 @@ BLOQUES = {
                     "eps_qoq_pct", "eps_yoy_pct"],
     "Solvencia": ["current_ratio", "debt_to_equity"],
 }
+# Financieras: sin margenes industriales/ROIC/liquidez/WC. Con ROTCE + eficiencia.
+BLOQUES_FINANCIERO = {
+    "Valuacion": ["pe_ratio", "pb_ratio", "ps_ratio",
+                  "book_value_per_share", "eps_ttm"],
+    "Calidad / Rentabilidad (banca)": ["roe_ttm", "rotce_ttm", "roa_ttm",
+                                       "net_margin_ttm", "efficiency_ratio_ttm"],
+    "Crecimiento": ["revenue_yoy_pct", "net_income_qoq_pct",
+                    "net_income_yoy_pct", "eps_qoq_pct", "eps_yoy_pct"],
+    "Solvencia": ["debt_to_equity"],
+}
 
+
+def bloques_para(profile):
+    """Devuelve el set de bloques segun el perfil del ticker."""
+    return BLOQUES_FINANCIERO if profile == "financiero" else BLOQUES_NO_FINANCIERO
+
+# Columnas del screener sectorial segun perfil dominante del sector
+SCREENER_METRICS_FIN = ["pe_ratio", "pb_ratio", "roe_ttm", "rotce_ttm",
+                        "net_margin_ttm", "efficiency_ratio_ttm", "revenue_yoy_pct"]
 # Columnas del screener sectorial (metricas comparables)
 SCREENER_METRICS = ["pe_ratio", "pb_ratio", "roe_ttm", "roic_ttm",
                     "net_margin_ttm", "revenue_yoy_pct"]
@@ -121,8 +142,9 @@ def construir_bloques_ticker(data: dict) -> list:
     """
     ratios = data.get("ratios") or {}
     vs = data.get("vs_sector") or {}
+    profile = ratios.get("profile")
     bloques = []
-    for nombre, metrics in BLOQUES.items():
+    for nombre, metrics in bloques_para(profile).items():
         filas = []
         for m in metrics:
             label = METRIC_META[m][0]
@@ -165,16 +187,24 @@ def texto_peer_basis(data: dict) -> str:
 def construir_screener(rows: list) -> dict:
     """
     rows = lista de dicts (un ticker c/u) con sus ratios + columnas vs-sector.
-    Devuelve {filas:[...], mediana:{...}, columnas:[...]}. La fila mediana se
-    calcula sobre valores no-null de cada metrica.
+    Devuelve {filas:[...], mediana:{...}, columnas:[...], perfil:...}. La fila
+    mediana se calcula sobre valores no-null de cada metrica.
+
+    Las columnas se eligen segun el perfil DOMINANTE de las filas: si la mayoria
+    son financieras, se muestran metricas de banca (ROTCE/eficiencia) en vez de
+    ROIC; si no, las estandar. Asi un sector mixto (ej Financial Services con
+    JPM + V) usa el set del grupo mas numeroso.
     """
-    cols = ["ticker"] + SCREENER_METRICS
+    n_fin = sum(1 for r in rows if r.get("profile") == "financiero")
+    es_fin = n_fin > len(rows) / 2 if rows else False
+    metrics = SCREENER_METRICS_FIN if es_fin else SCREENER_METRICS
+
     filas = []
-    acumulado = {m: [] for m in SCREENER_METRICS}
+    acumulado = {m: [] for m in metrics}
 
     for r in rows:
         fila = {"ticker": r.get("ticker")}
-        for m in SCREENER_METRICS:
+        for m in metrics:
             v = _f(r.get(m))
             fila[m] = v
             if v is not None:
@@ -190,13 +220,13 @@ def construir_screener(rows: list) -> dict:
         mid = n // 2
         return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
 
-    mediana = {m: _median(acumulado[m]) for m in SCREENER_METRICS}
+    mediana = {m: _median(acumulado[m]) for m in metrics}
 
     # Formatear filas para display (y ordenar por PER asc por defecto)
     filas_fmt = []
     for f in filas:
         ff = {"ticker": f["ticker"]}
-        for m in SCREENER_METRICS:
+        for m in metrics:
             ff[METRIC_META[m][0]] = fmt_valor(m, f[m])
         ff["_pe_sort"] = f.get("pe_ratio") if f.get("pe_ratio") is not None else 1e12
         filas_fmt.append(ff)
@@ -205,9 +235,9 @@ def construir_screener(rows: list) -> dict:
         f.pop("_pe_sort", None)
 
     fila_med = {"ticker": "— MEDIANA —"}
-    for m in SCREENER_METRICS:
+    for m in metrics:
         fila_med[METRIC_META[m][0]] = fmt_valor(m, mediana[m])
 
-    columnas = ["ticker"] + [METRIC_META[m][0] for m in SCREENER_METRICS]
+    columnas = ["ticker"] + [METRIC_META[m][0] for m in metrics]
     return {"filas": filas_fmt, "mediana": fila_med, "columnas": columnas,
-            "n": len(filas)}
+            "n": len(filas), "perfil": "financiero" if es_fin else "no_financiero"}

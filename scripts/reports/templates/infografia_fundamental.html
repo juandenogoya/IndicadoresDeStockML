@@ -28,16 +28,16 @@
             <div class="kpi-lbl">{{ k.label }}</div>
         </div>
         {% endfor %}
-        <div class="kpi-foot">margenes sobre 12 meses (TTM)</div>
+        <div class="kpi-foot">{{ kpis_foot }}</div>
     </section>
 
-    {# ── Serie Revenue & FCF + Crecimiento ──────────────────── #}
+    {# ── Serie Ingresos (+FCF si no-banca) + Crecimiento ─────── #}
     <div class="fg-2col">
         <section class="fg-bloque">
-            <h2>Ingresos y FCF</h2>
+            <h2>{{ serie_titulo }}</h2>
             <div class="leyenda">
                 <span class="ln ln-rev">— Ingresos</span>
-                <span class="ln ln-fcf">— FCF</span>
+                {% if not es_financiero %}<span class="ln ln-fcf">— FCF</span>{% endif %}
                 <span class="leyenda-nota">forma de la serie (hasta 8 Q)</span>
             </div>
             {{ spark_svg | safe }}
@@ -76,7 +76,7 @@
         </section>
 
         <section class="fg-bloque">
-            <h2>Calidad / Rentabilidad</h2>
+            <h2>{{ calidad_titulo }}</h2>
             <table class="tabla-cmp">
                 <thead><tr><th>Metrica</th><th>Valor</th><th>vs sector</th></tr></thead>
                 <tbody>

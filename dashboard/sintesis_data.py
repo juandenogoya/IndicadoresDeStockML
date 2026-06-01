@@ -458,10 +458,10 @@ def cargar_screener_sector(sector: str, region: str | None = None) -> list:
           WHERE sector = :sector
           ORDER BY ticker, fiscal_period_end DESC
         )
-        SELECT u.ticker, u.reporting_currency, p.region,
+        SELECT u.ticker, u.reporting_currency, p.region, u.profile,
                u.pe_ratio, u.pb_ratio, u.ps_ratio, u.ev_ebitda,
-               u.roe_ttm, u.roa_ttm, u.roic_ttm,
-               u.net_margin_ttm, u.operating_margin_ttm,
+               u.roe_ttm, u.roa_ttm, u.roic_ttm, u.rotce_ttm,
+               u.net_margin_ttm, u.operating_margin_ttm, u.efficiency_ratio_ttm,
                u.revenue_yoy_pct, u.revenue_qoq_pct
         FROM ult u
         LEFT JOIN ticker_pais p ON p.ticker = u.ticker

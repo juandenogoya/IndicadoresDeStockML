@@ -170,14 +170,17 @@ def cargar_datos(ticker: str) -> dict:
 
 # ── Mini graficos SVG (sin libs de plotting; control total del estilo) ────────
 
-def _sparkline_dual(serie, w=440, h=170, pad=30) -> str:
+def _sparkline_dual(serie, w=440, h=170, pad=30, solo_revenue=False) -> str:
     """
     Mini grafico de dos series (revenue + fcf) normalizadas a su rango conjunto.
     Devuelve SVG embebible. Normalizamos a [0,1] sobre el min/max combinado para
     que ambas curvas compartan eje (la comparacion visual es de forma, no de
     nivel absoluto -- las magnitudes van en los KPIs).
+
+    solo_revenue=True (banca): grafica solo ingresos (FCF no es metrica de banco).
     """
-    rows = [(str(r["fpe"]), _f(r["revenue"]), _f(r["fcf"])) for _, r in serie.iterrows()]
+    rows = [(str(r["fpe"]), _f(r["revenue"]),
+             None if solo_revenue else _f(r["fcf"])) for _, r in serie.iterrows()]
     rows = [r for r in rows if r[1] is not None or r[2] is not None]
     if len(rows) < 2:
         return '<div class="sin-datos">serie insuficiente</div>'
@@ -258,34 +261,61 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
     else:
         peer_txt = "pocas empresas del sector en seguimiento"
 
-    kpis = [
-        {"label": "Margen bruto",      "valor": _pct(r.get("gross_margin_ttm"))},
-        {"label": "Margen operativo",  "valor": _pct(r.get("operating_margin_ttm"))},
-        {"label": "Margen neto",       "valor": _pct(r.get("net_margin_ttm"))},
-        {"label": "Margen FCF",        "valor": _pct(r.get("fcf_margin_ttm"))},
-    ]
+    es_fin = (r.get("profile") == "financiero")
 
+    # Valuacion: igual en ambos perfiles (sin EV/EBITDA en banca: no aplica)
     valuacion = [
         _fila_cmp("PER",       "pe_ratio",  _ratio(r.get("pe_ratio")),  data, mejor_si_alto=False),
         _fila_cmp("P/B",       "pb_ratio",  _ratio(r.get("pb_ratio")),  data, mejor_si_alto=False),
         _fila_cmp("P/S",       "ps_ratio",  _ratio(r.get("ps_ratio")),  data, mejor_si_alto=False),
-        _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda")), data, mejor_si_alto=False),
     ]
+    if not es_fin:
+        valuacion.append(
+            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda")), data, mejor_si_alto=False))
 
-    calidad = [
-        _fila_cmp("ROE",         "roe_ttm",        _pct(r.get("roe_ttm")),        data, mejor_si_alto=True),
-        _fila_cmp("ROA",         "roa_ttm",        _pct(r.get("roa_ttm")),        data, mejor_si_alto=True),
-        _fila_cmp("ROIC",        "roic_ttm",       _pct(r.get("roic_ttm")),       data, mejor_si_alto=True),
-        _fila_cmp("Margen neto", "net_margin_ttm", _pct(r.get("net_margin_ttm")), data, mejor_si_alto=True),
-    ]
-
-    # Crecimiento YoY (sin comparacion sectorial; es trayectoria propia)
-    crecimiento = [
-        {"label": "Ingresos YoY", "valor": _signo_pct(r.get("revenue_yoy_pct")) or "-"},
-        {"label": "Ut. neta YoY", "valor": _signo_pct(r.get("net_income_yoy_pct")) or "-"},
-        {"label": "BPA YoY",      "valor": _signo_pct(r.get("eps_yoy_pct")) or "-"},
-        {"label": "FCF YoY",      "valor": _signo_pct(r.get("fcf_yoy_pct")) or "-"},
-    ]
+    if es_fin:
+        # Perfil FINANCIERO: KPIs y calidad propios de banca
+        kpis = [
+            {"label": "Margen neto",      "valor": _pct(r.get("net_margin_ttm"))},
+            {"label": "ROE (TTM)",        "valor": _pct(r.get("roe_ttm"))},
+            {"label": "ROTCE (TTM)",      "valor": _pct(r.get("rotce_ttm"))},
+            {"label": "Ratio eficiencia", "valor": _pct(r.get("efficiency_ratio_ttm"))},
+        ]
+        kpis_foot = "metricas de banca sobre 12 meses (TTM)"
+        calidad = [
+            _fila_cmp("ROE",             "roe_ttm",             _pct(r.get("roe_ttm")),             data, mejor_si_alto=True),
+            _fila_cmp("ROTCE",           "rotce_ttm",           _pct(r.get("rotce_ttm")),           data, mejor_si_alto=True),
+            _fila_cmp("ROA",             "roa_ttm",             _pct(r.get("roa_ttm")),             data, mejor_si_alto=True),
+            _fila_cmp("Margen neto",     "net_margin_ttm",      _pct(r.get("net_margin_ttm")),      data, mejor_si_alto=True),
+            _fila_cmp("Ratio eficiencia","efficiency_ratio_ttm",_pct(r.get("efficiency_ratio_ttm")),data, mejor_si_alto=False),
+        ]
+        # Crecimiento (banca: FCF no aplica)
+        crecimiento = [
+            {"label": "Ingresos YoY", "valor": _signo_pct(r.get("revenue_yoy_pct")) or "-"},
+            {"label": "Ut. neta YoY", "valor": _signo_pct(r.get("net_income_yoy_pct")) or "-"},
+            {"label": "BPA YoY",      "valor": _signo_pct(r.get("eps_yoy_pct")) or "-"},
+        ]
+    else:
+        # Perfil NO-FINANCIERO: margenes industriales + ROIC + FCF
+        kpis = [
+            {"label": "Margen bruto",      "valor": _pct(r.get("gross_margin_ttm"))},
+            {"label": "Margen operativo",  "valor": _pct(r.get("operating_margin_ttm"))},
+            {"label": "Margen neto",       "valor": _pct(r.get("net_margin_ttm"))},
+            {"label": "Margen FCF",        "valor": _pct(r.get("fcf_margin_ttm"))},
+        ]
+        kpis_foot = "margenes sobre 12 meses (TTM)"
+        calidad = [
+            _fila_cmp("ROE",         "roe_ttm",        _pct(r.get("roe_ttm")),        data, mejor_si_alto=True),
+            _fila_cmp("ROA",         "roa_ttm",        _pct(r.get("roa_ttm")),        data, mejor_si_alto=True),
+            _fila_cmp("ROIC",        "roic_ttm",       _pct(r.get("roic_ttm")),       data, mejor_si_alto=True),
+            _fila_cmp("Margen neto", "net_margin_ttm", _pct(r.get("net_margin_ttm")), data, mejor_si_alto=True),
+        ]
+        crecimiento = [
+            {"label": "Ingresos YoY", "valor": _signo_pct(r.get("revenue_yoy_pct")) or "-"},
+            {"label": "Ut. neta YoY", "valor": _signo_pct(r.get("net_income_yoy_pct")) or "-"},
+            {"label": "BPA YoY",      "valor": _signo_pct(r.get("eps_yoy_pct")) or "-"},
+            {"label": "FCF YoY",      "valor": _signo_pct(r.get("fcf_yoy_pct")) or "-"},
+        ]
 
     # Solvencia. net_debt<0 => caja neta (se muestra como positivo "caja neta")
     nd = _f(r.get("net_debt"))
@@ -296,11 +326,18 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
     else:
         caja_label, caja_val = "Deuda neta", f"{_money_b(nd)} {cur}"
 
-    solvencia = [
-        {"label": "Liquidez corriente", "valor": _ratio(r.get("current_ratio"))},
-        {"label": "Deuda / Patrimonio", "valor": _ratio(r.get("debt_to_equity"))},
-        {"label": caja_label,           "valor": caja_val},
-    ]
+    if es_fin:
+        # Banca: sin liquidez corriente (no aplica)
+        solvencia = [
+            {"label": "Deuda / Patrimonio", "valor": _ratio(r.get("debt_to_equity"))},
+            {"label": caja_label,           "valor": caja_val},
+        ]
+    else:
+        solvencia = [
+            {"label": "Liquidez corriente", "valor": _ratio(r.get("current_ratio"))},
+            {"label": "Deuda / Patrimonio", "valor": _ratio(r.get("debt_to_equity"))},
+            {"label": caja_label,           "valor": caja_val},
+        ]
 
     return {
         "ticker": ticker,
@@ -311,12 +348,16 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         "moneda": cur,
         "ultimo_q": fpe,
         "peer_txt": peer_txt,
+        "es_financiero": es_fin,
         "kpis": kpis,
+        "kpis_foot": kpis_foot,
+        "calidad_titulo": "Calidad / Rentabilidad (banca)" if es_fin else "Calidad / Rentabilidad",
+        "serie_titulo": "Ingresos" if es_fin else "Ingresos y FCF",
         "valuacion": valuacion,
         "calidad": calidad,
         "crecimiento": crecimiento,
         "solvencia": solvencia,
-        "spark_svg": _sparkline_dual(data["serie"]),
+        "spark_svg": _sparkline_dual(data["serie"], solo_revenue=es_fin),
         "handle": handle,
         "fecha_legible": datetime.now().strftime("%d/%m/%Y"),
     }
