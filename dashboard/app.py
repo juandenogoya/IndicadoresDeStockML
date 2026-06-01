@@ -240,11 +240,12 @@ def _tabla_financiera(filas, columnas_orden):
                  column_config={"_color": None})
 
 
-def _export_infografia_fundamental(tk):
-    """Boton: genera la infografia fundamental (PNG 4:5 para RRSS) del ticker."""
-    st.divider()
-    st.markdown("**Compartir en redes**")
-    if st.button("Generar infografia (PNG)", key="fin_ig_btn"):
+def _sidebar_export_infografia(tk):
+    """Export de la infografia fundamental en el SIDEBAR (homogeneo con el
+    informe tecnico, que usa _sidebar_export)."""
+    st.sidebar.divider()
+    st.sidebar.markdown("**Exportar**")
+    if st.sidebar.button("Infografia (PNG)", use_container_width=True, key="fin_ig_btn"):
         with st.spinner("Generando infografia..."):
             try:
                 # Import diferido: el modulo hace os.environ.pop(DATABASE_URL) al
@@ -256,16 +257,16 @@ def _export_infografia_fundamental(tk):
                 st.session_state["fin_ig_name"] = path.name
                 st.session_state["fin_ig_ticker"] = tk
             except Exception as exc:
-                st.error(f"Error generando infografia: {exc}")
+                st.sidebar.error(f"Error generando infografia: {exc}")
 
     if (st.session_state.get("fin_ig_ticker") == tk
             and st.session_state.get("fin_ig_bytes")):
-        st.image(st.session_state["fin_ig_bytes"], caption=st.session_state["fin_ig_name"])
-        st.download_button(
+        st.sidebar.download_button(
             f"Descargar {st.session_state['fin_ig_name']}",
             data=st.session_state["fin_ig_bytes"],
             file_name=st.session_state["fin_ig_name"],
             mime="image/png",
+            use_container_width=True,
         )
 
 
@@ -285,6 +286,8 @@ def _vista_financiera(tickers):
             st.warning(f"Sin datos fundamentales para {tk}. "
                        "Correr scripts/manual/refresh_fundamentales.bat.")
             return
+
+        _sidebar_export_infografia(tk)
 
         ratios = data["ratios"]
         cur = data.get("reporting_currency") or "?"
@@ -309,8 +312,6 @@ def _vista_financiera(tickers):
                    "sector. Absolutos (BPA, valor libro) en moneda de reporte: no "
                    "comparables cross-ticker. Bancos: ROIC/margen oper./liquidez "
                    "pueden ser '-' (sin estructura aplicable).")
-
-        _export_infografia_fundamental(tk)
 
     else:  # Screener sectorial
         sectores = listar_sectores_fundamentales()
