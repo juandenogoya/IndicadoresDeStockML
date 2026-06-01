@@ -57,21 +57,25 @@ echo.
 SET EXITCODE=%ERRORLEVEL%
 
 REM -- Capas derivadas (omitir si fue --dry-run) --
+REM Nota: sin parentesis literales en los echo dentro del bloque if(...) -->
+REM cmd.exe los interpreta como cierre del bloque y rompe el flujo.
 echo %* | findstr /I /C:"--dry-run" >nul
-if errorlevel 1 (
-    echo.
-    echo --- 1/3 Ratios derivados (fundamentales_ratios_q) ---
-    "%PYTHON%" "%SCRIPT_RATIOS%" 2>&1 | tee -a "%LOGFILE%"
-    echo.
-    echo --- 2/3 Pais/region por ticker (ticker_pais) ---
-    "%PYTHON%" "%SCRIPT_PAIS%" 2>&1 | tee -a "%LOGFILE%"
-    echo.
-    echo --- 3/3 Comparativo vs sector (fundamentales_ticker_vs_sector) ---
-    "%PYTHON%" "%SCRIPT_SECTOR%" 2>&1 | tee -a "%LOGFILE%"
-) else (
-    echo.
-    echo DRY-RUN: se omiten las capas derivadas (ratios, pais, sector).
-)
+if errorlevel 1 goto :derivadas
+echo.
+echo DRY-RUN: se omiten las capas derivadas ratios/pais/sector.
+goto :fin_derivadas
+
+:derivadas
+echo.
+echo --- 1/3 Ratios derivados [fundamentales_ratios_q] ---
+"%PYTHON%" "%SCRIPT_RATIOS%" 2>&1 | tee -a "%LOGFILE%"
+echo.
+echo --- 2/3 Pais/region por ticker [ticker_pais] ---
+"%PYTHON%" "%SCRIPT_PAIS%" 2>&1 | tee -a "%LOGFILE%"
+echo.
+echo --- 3/3 Comparativo vs sector [fundamentales_ticker_vs_sector] ---
+"%PYTHON%" "%SCRIPT_SECTOR%" 2>&1 | tee -a "%LOGFILE%"
+:fin_derivadas
 
 echo.
 echo ============================================================
