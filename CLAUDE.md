@@ -236,10 +236,21 @@ Las criticas:
   ABSOLUTOS (BVPS/eps/fcf/working_capital/net_debt/*_ttm) quedan en moneda de
   reporte (no comparables cross-ticker sin FX). Caveat ADR: BVPS (por accion
   ordinaria) y EPS de Yahoo (por ADR) estan en bases distintas -- usar ratios
-  para comparar. Bancos: ROIC/margen-op/current_ratio NULL (sin EBIT/estructura
-  corriente); ROE/ROA/net_margin/PER si computan. ~4 tickers semestrales
-  (HMY/RIO/UL/VOD) sin Q -> sin ratios. Compute: scripts/compute_fundamentales_
-  ratios.py (encadenado al refresh .bat; validacion de escala con WARN).
+  para comparar. ~4 tickers semestrales (HMY/RIO/UL/VOD) sin Q -> sin ratios.
+  Compute: scripts/compute_fundamentales_ratios.py (encadenado al refresh .bat;
+  validacion de escala con WARN).
+  v2 (1/6/2026 -- perfiles banco/no-banco, ver docs/fundamentales_calculo.md):
+  columna `profile` por estructura contable SOSTENIDA (multi-Q: gross 0/N y
+  opinc 0/N + NII -> financiero) + override curado. 18 financieros (incl. XP por
+  override) / 177 no. Financieras: margenes industriales/ROIC/liquidez/WC/FCF
+  = NULL; en su lugar rotce_ttm (NI_common/TangibleBookValue) y
+  efficiency_ratio_ttm ((rev-pretax)/rev, aprox). NIM descartado (yahooquery sin
+  cartera de prestamos). Ambos perfiles usan CommonStockEquity (NO equity total)
+  y NetIncomeCommonStockholders en ROE/BVPS/ROIC -> corrige preferentes. As-of
+  join del balance (mas reciente <= fecha income) -> ROE no queda NULL si el
+  balance del Q exacto no salio. Validado vs balances OFICIALES MU/XP/JPM (JPM
+  BVPS 128.38 = oficial; XP ROE 22.3% vs ROAE oficial 21.7%). PER/PB/PS/EV-EBITDA
+  siguen de Yahoo (validados OK).
 - `ticker_pais` (ticker PK, country, region, fetched_at) -- pais real de cada
   ticker desde yahooquery assetProfile.country, con region derivada
   (USA/Europa/China/Resto via REGION_MAP en refresh_ticker_pais.py). Base para

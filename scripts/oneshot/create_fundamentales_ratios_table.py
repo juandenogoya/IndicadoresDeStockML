@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS fundamentales_ratios_q (
     reporting_currency          VARCHAR(5),
     sector                      VARCHAR(100),
     industry                    VARCHAR(100),
+    profile                     VARCHAR(15),     -- 'financiero' | 'no_financiero'
 
     -- P1) Mercado vs valor real
     pe_ratio                    NUMERIC(18,6),
@@ -114,6 +115,10 @@ CREATE TABLE IF NOT EXISTS fundamentales_ratios_q (
     net_debt                    NUMERIC(20,2),   -- absoluto
     net_debt_to_ebitda_ttm      NUMERIC(18,6),
 
+    -- Set bancario (perfil financiero; NULL en no-financiero)
+    rotce_ttm                   NUMERIC(18,6),   -- NI_common_ttm / TangibleBookValue
+    efficiency_ratio_ttm        NUMERIC(18,6),   -- (rev-pretax)/rev (aprox, banco)
+
     -- Agregados TTM crudos (contexto, moneda de reporte)
     revenue_ttm                 NUMERIC(20,2),
     net_income_ttm              NUMERIC(20,2),
@@ -136,6 +141,14 @@ INDICES = [
     "ON fundamentales_ratios_q (sector)",
 ]
 
+# Columnas agregadas en v2 (ALTER idempotente para tablas que ya existen).
+# Postgres soporta ADD COLUMN IF NOT EXISTS.
+ALTERS_V2 = [
+    "ALTER TABLE fundamentales_ratios_q ADD COLUMN IF NOT EXISTS profile VARCHAR(15)",
+    "ALTER TABLE fundamentales_ratios_q ADD COLUMN IF NOT EXISTS rotce_ttm NUMERIC(18,6)",
+    "ALTER TABLE fundamentales_ratios_q ADD COLUMN IF NOT EXISTS efficiency_ratio_ttm NUMERIC(18,6)",
+]
+
 
 def crear_en(engine, etiqueta: str, dry_run: bool):
     tabla = "fundamentales_ratios_q"
@@ -149,14 +162,18 @@ def crear_en(engine, etiqueta: str, dry_run: bool):
 
         if existe:
             n = conn.execute(text(f"SELECT COUNT(*) FROM {tabla}")).scalar()
-            log(f"[{etiqueta}] {tabla}: ya existe ({n} filas). Verificando indices...")
+            log(f"[{etiqueta}] {tabla}: ya existe ({n} filas). "
+                f"Verificando indices + columnas v2...")
             if dry_run:
-                log(f"[{etiqueta}]   DRY-RUN: verificaria {len(INDICES)} indices.")
+                log(f"[{etiqueta}]   DRY-RUN: verificaria {len(INDICES)} indices "
+                    f"+ {len(ALTERS_V2)} columnas v2.")
                 return
             for stmt in INDICES:
                 conn.execute(text(stmt))
+            for stmt in ALTERS_V2:
+                conn.execute(text(stmt))
             conn.commit()
-            log(f"[{etiqueta}]   indices OK.")
+            log(f"[{etiqueta}]   indices + columnas v2 OK (profile/rotce/efficiency).")
             return
 
         if dry_run:
