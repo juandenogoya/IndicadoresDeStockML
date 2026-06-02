@@ -373,14 +373,17 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         }
 
     # Valuacion: igual en ambos perfiles (sin EV/EBITDA en banca: no aplica)
+    # Valuacion AL CIERRE del dia (*_px): el multiplo se recalcula con el precio
+    # actual (compute_multiplos_px); el de Yahoo (pe_ratio) congela el precio del Q.
+    # La mediana del sector (vs_map) ya viene recalculada con *_px. NULL -> "-".
     valuacion = [
-        _fila_cmp("PER",       "pe_ratio",  _ratio(r.get("pe_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
-        _fila_cmp("P/B",       "pb_ratio",  _ratio(r.get("pb_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
-        _fila_cmp("P/S",       "ps_ratio",  _ratio(r.get("ps_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("PER",       "pe_ratio",  _ratio(r.get("pe_ratio_px")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("P/B",       "pb_ratio",  _ratio(r.get("pb_ratio_px")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("P/S",       "ps_ratio",  _ratio(r.get("ps_ratio_px")),  data, mejor_si_alto=False, fmt_fn=_ratio),
     ]
     if not es_fin:
         valuacion.append(
-            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda")), data, mejor_si_alto=False, fmt_fn=_ratio))
+            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda_px")), data, mejor_si_alto=False, fmt_fn=_ratio))
 
     if es_fin:
         # Perfil FINANCIERO: KPIs y calidad propios de banca

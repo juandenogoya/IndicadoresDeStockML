@@ -205,6 +205,35 @@ def _upsert(env, rows):
         conn.close()
 
 
+# Metricas de valuacion que dependen del precio -> tienen variante *_px (cierre
+# del dia). Las demas (ROE/ROA/margenes/...) no dependen del precio.
+_VALUACION_PX = {
+    "pe_ratio": "pe_ratio_px", "pb_ratio": "pb_ratio_px",
+    "ps_ratio": "ps_ratio_px", "ev_ebitda": "ev_ebitda_px",
+}
+
+
+def compute_sector_valuacion_px(engine) -> int:
+    """
+    Recalcula SOLO el comparativo sectorial de las 4 metricas de valuacion usando
+    los multiplos al CIERRE del dia (*_px de fundamentales_ratios_q). Pisa esas 4
+    filas (metric pe_ratio/pb_ratio/ps_ratio/ev_ebitda) en fundamentales_ticker_vs_sector
+    con value+mediana al precio actual; el resto de metricas (ROE/margenes/...) no se toca.
+
+    Pensada para correr a diario tras compute_multiplos_px (recovery_incremental).
+    Reusa la logica de peer-set/mediana de compute(): se pisan las columnas base
+    con sus *_px y se filtran las filas de valuacion. Retorna filas UPSERTeadas.
+    """
+    df = _load(engine)  # trae tambien las *_px (SELECT u.*)
+    for base, px in _VALUACION_PX.items():
+        if px in df.columns:
+            df[base] = df[px]   # usar el multiplo al cierre como la metrica
+    rows = [r for r in compute(df, regions_filter=None) if r["metric"] in _VALUACION_PX]
+    rows = _clean(rows)
+    env = _parse_env_file(os.path.join(ROOT, ".env"))
+    return _upsert(env, rows)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Computa fundamentales_ticker_vs_sector")
     parser.add_argument("--regions", default=None,

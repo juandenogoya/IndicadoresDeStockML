@@ -187,6 +187,12 @@ existente NO se toca.
      (USD, mismo plano que cierre/yield; util incluso en ADRs). div-val 33px para
      entrar 3 items. Validado VALE (USD 1.06), JPM (USD 6.46 = 2.18% x 296.58).
    - NO se toco: el set de indicadores, perfiles, fuente de datos, layout 4:5.
-7. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
+7. [HECHO 2/6/2026] Valuacion AL CIERRE del dia: PER/P-B/P-S/EV-EBITDA usan las
+   columnas *_px (recalculadas con el precio actual, no el congelado de Yahoo). El
+   bloque Valuacion lee r["pe_ratio_px"]/etc. y la columna Sector usa la mediana
+   recalculada (compute_sector_valuacion_px). NULL -> "-" (sin fallback a Yahoo).
+   Ver docs/fundamentales_calculo.md ("Multiplos al cierre"). Ej CVS: PER 51.7->39.9.
+8. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
    Streamlit de reportes (scripts/reports/app.py). Dots por trimestre en los
-   sparklines (evaluado 2/6, no implementado: el grafico ya es multi-Q).
+   sparklines (evaluado 2/6, no implementado: el grafico ya es multi-Q). EV/EBITDA:
+   revisar el EBITDA_ttm (denominador) que difiere de TV en algunos tickers.

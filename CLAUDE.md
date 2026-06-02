@@ -186,6 +186,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
+| `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental. Ver docs/fundamentales_calculo.md |
+| `src/utils/multiplos_px.py` | Logica pura del recalculo de multiplos al cierre (sin DB) |
 | `scripts/refresh_ticker_pais.py` | Trae country/region por ticker (yahooquery assetProfile) -> tabla ticker_pais. Encadenado al refresh .bat |
 | `scripts/compute_fundamentales_sector.py` | Computa fundamentales_ticker_vs_sector (ticker vs mediana de pares regionales; parametrizable --regions). Encadenado al refresh .bat |
 | `scripts/oneshot/create_fundamentales_ratios_table.py` | Crea la tabla fundamentales_ratios_q (one-shot, archivado en scripts/oneshot/) |
@@ -289,6 +291,10 @@ Las criticas:
    -> incluye z-scores de acciones automaticamente al final (target=local):
       backfill_zscore_tickers desde MAX(fecha) de ticker_zscore_diario. Ya NO es
       paso manual. (28/5/2026; antes era el paso 6 de abajo.)
+   -> incluye multiplos al cierre del dia (2/6/2026, target=local):
+      compute_multiplos_px (PER/PB/PS/EV-EBITDA *_px en fundamentales_ratios_q con
+      el cierre actual) + compute_sector_valuacion_px (comparativo de valuacion).
+      Recompute DB->local, sin Yahoo. Ver docs/fundamentales_calculo.md.
 3. status_local.bat         (verificar 0 tickers desactualizados)
 4. cron_diario --step features  (calcular features sobre los nuevos precios)
 5. cron_diario --step scanner   (generar alertas)
