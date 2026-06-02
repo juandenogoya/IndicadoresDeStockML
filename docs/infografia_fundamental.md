@@ -192,7 +192,8 @@ existente NO se toca.
    bloque Valuacion lee r["pe_ratio_px"]/etc. y la columna Sector usa la mediana
    recalculada (compute_sector_valuacion_px). NULL -> "-" (sin fallback a Yahoo).
    Ver docs/fundamentales_calculo.md ("Multiplos al cierre"). Ej CVS: PER 51.7->39.9.
-8. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
+8. [HECHO 2/6/2026] EV/EBITDA: ebitda_ttm pasa a NormalizedEBITDA (excluye one-offs)
+   -> EV/EBITDA coincide con TV (CVS 11.2 vs 10.21; antes 16.5 por el cargo del Q3'25).
+9. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
    Streamlit de reportes (scripts/reports/app.py). Dots por trimestre en los
-   sparklines (evaluado 2/6, no implementado: el grafico ya es multi-Q). EV/EBITDA:
-   revisar el EBITDA_ttm (denominador) que difiere de TV en algunos tickers.
+   sparklines (evaluado 2/6, no implementado: el grafico ya es multi-Q).

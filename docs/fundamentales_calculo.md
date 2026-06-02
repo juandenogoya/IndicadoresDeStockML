@@ -15,11 +15,18 @@
 > (DB->local, sin Yahoo), enganchado al final de recovery_incremental (target local),
 > junto con el comparativo sectorial de valuacion (compute_sector_valuacion_px, pisa
 > las 4 filas de valuacion en fundamentales_ticker_vs_sector con value+mediana al cierre).
-> Validado vs TradingView (CVS PER 39.9 vs 39.79; P/B 1.5 vs 1.49; P/S 0.28 vs 0.28).
-> Los pe_ratio/etc. de Yahoo NO se pisan (se conserva la foto del Q). EV/EBITDA puede
-> diferir de TV por el EBITDA_ttm (denominador, tema aparte). Consumidores (infografia
-> fundamental + dashboard financiero) leen *_px; si NULL (eps<=0/sin dato, ~30 tickers
-> en PER) muestran "-" (sin fallback al multiplo desfasado de Yahoo). El MCP no usa multiplos.
+> Validado vs TradingView (CVS PER 39.9 vs 39.79; P/B 1.5 vs 1.49; P/S 0.28 vs 0.28;
+> EV/EBITDA 11.2 vs 10.21). Los pe_ratio/etc. de Yahoo NO se pisan (foto del Q).
+> Consumidores (infografia fundamental + dashboard financiero) leen *_px; si NULL
+> (eps<=0/sin dato, ~30 tickers en PER) muestran "-" (sin fallback al multiplo desfasado
+> de Yahoo). El MCP no usa multiplos.
+>
+> EBITDA: ebitda_ttm usa **NormalizedEBITDA** (excluye cargos extraordinarios one-off),
+> con fallback al EBITDA reportado. Motivo: el reportado puede ser negativo en un Q con
+> impairment (CVS Q3'25 EBITDA -1.56B) y deformar el TTM -> EV/EBITDA inflado. El
+> normalizado coincide con TV y refleja capacidad operativa recurrente. Afecta tambien
+> net_debt_to_ebitda_ttm. (compute_fundamentales_ratios.py, clave NormalizedEBITDA del
+> raw_json income; recomputable sin re-fetch.)
 
 > Documento de diseno PREVIO a codificar la v2 del calculo de ratios. Sigue la
 > regla del proyecto: documentar antes de implementar. Captura conocimiento que
