@@ -24,6 +24,7 @@ from dashboard.sintesis_data import (
     cargar_datos_ticker, listar_tickers, cargar_radar,
     cargar_financiero_ticker, cargar_screener_sector,
     listar_sectores_fundamentales, listar_regiones_fundamentales,
+    cargar_veredictos_universo, fecha_datos, listar_sectores,
 )
 from dashboard.view import construir_vista
 from dashboard.metricas import construir_papel
@@ -180,35 +181,90 @@ def _vista_informe(tickers):
     _sidebar_export(ticker, datos, sintesis)
 
 
+def _nav_a_informe(tk):
+    """Marca navegacion pendiente al modo Informe con el ticker tk."""
+    st.session_state["_ir_informe"] = True
+    st.session_state["_nav_ticker"] = tk
+    st.rerun()
+
+
+@st.cache_data(show_spinner=False)
+def _veredictos_cache(fecha_key: str):
+    """Veredictos del universo, cacheados por fecha de datos (1 calculo/dia).
+    fecha_key entra solo como clave de cache; el calculo lee la DB local."""
+    return cargar_veredictos_universo()
+
+
 def _vista_radar():
+    # ── 1. Radar de anomalias de opciones ──────────────────────────────────
     st.subheader("Radar del dia - actividad inusual en opciones")
     data = cargar_radar()
     st.caption(f"Anomalias del {data.get('fecha')}. z = desvios del valor de hoy vs la "
                "historia del propio ticker; filtra ruido por percentil de volumen (>=50).")
     z = st.slider("Umbral z (inusual)", min_value=1.0, max_value=4.0, value=2.0, step=0.5)
     filas = construir_radar(data, z=z)
-    if not filas:
-        st.info("Sin anomalias con el umbral actual.")
-        return
-
-    cols = {"ticker": "Ticker", "sector": "Sector", "tipo": "Tipo",
-            "magnitud": "Magnitud (z)", "vol_z": "vol z", "iv_z": "IV z",
-            "pcr_z": "PCR z", "accion_z": "Accion z", "sector_acompana": "Sector acompana?"}
-    df = pd.DataFrame(filas)[list(cols.keys())].rename(columns=cols)
-    st.caption(f"{len(df)} tickers con actividad inusual (orden por magnitud). "
-               "Tags: Volumen inusual / IV en alza / Sesgo a calls / Cobertura (puts).")
-
-    event = st.dataframe(df, hide_index=True, use_container_width=True,
-                         on_select="rerun", selection_mode="single-row")
-    rows = event.selection.rows if event and getattr(event, "selection", None) else []
-    if rows:
-        tk = df.iloc[rows[0]]["Ticker"]
-        if st.button(f"Abrir informe de {tk}", use_container_width=False):
-            st.session_state["_ir_informe"] = True
-            st.session_state["_nav_ticker"] = tk
-            st.rerun()
+    if filas:
+        cols = {"ticker": "Ticker", "sector": "Sector", "tipo": "Tipo",
+                "magnitud": "Magnitud (z)", "vol_z": "vol z", "iv_z": "IV z",
+                "pcr_z": "PCR z", "accion_z": "Accion z", "sector_acompana": "Sector acompana?"}
+        df = pd.DataFrame(filas)[list(cols.keys())].rename(columns=cols)
+        st.caption(f"{len(df)} tickers con actividad inusual (orden por magnitud). "
+                   "Tags: Volumen inusual / IV en alza / Sesgo a calls / Cobertura (puts).")
+        event = st.dataframe(df, hide_index=True, use_container_width=True,
+                             on_select="rerun", selection_mode="single-row", key="radar_tbl")
+        rows = event.selection.rows if event and getattr(event, "selection", None) else []
+        if rows:
+            tk = df.iloc[rows[0]]["Ticker"]
+            if st.button(f"Abrir informe de {tk}", key="radar_abrir"):
+                _nav_a_informe(tk)
+        else:
+            st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
     else:
-        st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
+        st.info("Sin anomalias con el umbral actual.")
+
+    # ── 2. Screener por veredicto ──────────────────────────────────────────
+    st.divider()
+    st.subheader("Screener por veredicto")
+    st.caption("Veredicto sintetico (tecnico + opciones + estructura) de cada ticker. "
+               "El primer Buscar del dia calcula el universo (~2 min); luego es instantaneo "
+               "hasta que entren datos nuevos.")
+    cs1, cs2 = st.columns(2)
+    with cs1:
+        sel = st.multiselect("Veredictos", ["ALCISTA", "NEUTRAL", "BAJISTA"],
+                             default=["ALCISTA"], key="scr_sel")
+    with cs2:
+        sel_sec = st.multiselect("Sectores (vacio = todos)", listar_sectores(),
+                                 default=[], key="scr_sec")
+    if st.button("Buscar", key="scr_buscar"):
+        st.session_state["scr_run"] = True
+
+    if st.session_state.get("scr_run"):
+        if not sel:
+            st.info("Elegi al menos un veredicto.")
+            return
+        with st.spinner("Calculando veredictos del universo (~2 min la primera vez)..."):
+            universo = _veredictos_cache(fecha_datos())
+        res = [u for u in universo
+               if u["veredicto"] in sel and (not sel_sec or u["sector"] in sel_sec)]
+        if not res:
+            filtro = ", ".join(sel) + (f" en {', '.join(sel_sec)}" if sel_sec else "")
+            st.info(f"Ningun ticker con veredicto {filtro}.")
+            return
+        dfv = pd.DataFrame(res).rename(columns={
+            "ticker": "Ticker", "sector": "Sector", "veredicto": "Veredicto", "frase": "Lectura"})
+        dfv = dfv[["Ticker", "Sector", "Veredicto", "Lectura"]]
+        _sec_txt = f" | sectores: {', '.join(sel_sec)}" if sel_sec else ""
+        st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)}{_sec_txt} "
+                   f"(de {len(universo)} evaluados).")
+        ev = st.dataframe(dfv, hide_index=True, use_container_width=True,
+                          on_select="rerun", selection_mode="single-row", key="scr_tbl")
+        r2 = ev.selection.rows if ev and getattr(ev, "selection", None) else []
+        if r2:
+            tk2 = dfv.iloc[r2[0]]["Ticker"]
+            if st.button(f"Abrir informe de {tk2}", key="scr_abrir"):
+                _nav_a_informe(tk2)
+        else:
+            st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
 
 
 def _tabla_financiera(filas, columnas_orden):

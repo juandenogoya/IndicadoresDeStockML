@@ -537,3 +537,47 @@ def cargar_radar() -> dict:
             "stock_vol_z":   stock_z.get(r["ticker"]),
         })
     return {"fecha": fecha, "tickers": tickers, "sector_z": sector_z}
+
+
+def fecha_datos() -> str:
+    """Fecha maxima de precios_diarios (ISO). Sirve de key de cache del screener
+    de veredictos: cambia solo cuando entran datos nuevos."""
+    df = query_df("SELECT MAX(fecha) AS f FROM precios_diarios")
+    if df.empty or df.iloc[0]["f"] is None:
+        return ""
+    return str(df.iloc[0]["f"])
+
+
+def listar_sectores() -> list:
+    """Sectores del universo (tabla activos), para el filtro del screener de
+    veredictos. Query barata -> puebla el multiselect antes de calcular nada."""
+    df = query_df(
+        "SELECT DISTINCT sector FROM activos WHERE sector IS NOT NULL ORDER BY sector"
+    )
+    return df["sector"].tolist() if not df.empty else []
+
+
+def cargar_veredictos_universo() -> list:
+    """
+    Veredicto sintetico (ALCISTA / NEUTRAL / BAJISTA) de TODOS los tickers con
+    datos, via cargar_datos_ticker + sintetizar. Recorre los ~199 -> ~2 min;
+    pensada para cachear (1 calculo por fecha de datos). Funcion pura, sin Streamlit.
+
+    Returns:
+        [{ticker, sector, veredicto, frase}] en orden alfabetico de ticker.
+    """
+    from src.utils.dashboard_sintesis import sintetizar
+
+    filas = []
+    for tk in listar_tickers():
+        datos = cargar_datos_ticker(tk)
+        if not (datos.get("perfil") or (datos.get("precio") or {}).get("close") is not None):
+            continue
+        s = sintetizar(datos)
+        filas.append({
+            "ticker":    tk,
+            "sector":    (datos.get("perfil") or {}).get("sector") or "?",
+            "veredicto": s["estado"],
+            "frase":     s.get("frase", ""),
+        })
+    return filas
