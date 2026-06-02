@@ -609,6 +609,22 @@ def main():
         except Exception as e:
             log(f"\nZ-SCORES acciones: ERROR (no critico): {str(e)[:120]}")
 
+    # MULTIPLOS al CIERRE del dia (PER/P-B/P-S/EV-EBITDA *_px): el multiplo de
+    # Yahoo congela el precio en la fecha del balance; estos usan el cierre actual
+    # con los denominadores TTM del ultimo Q. Recompute DB->local (sin Yahoo).
+    # Incluye el comparativo sectorial de valuacion recalculado con los *_px.
+    # Solo target=local (los fundamentales viven en local). No critico.
+    if not args.dry_run and args.target == "local":
+        try:
+            from scripts.compute_multiplos_px import compute_multiplos_px
+            _nm = compute_multiplos_px(engine)
+            log(f"\nMULTIPLOS *_px: {_nm} tickers recalculados al cierre -> fundamentales_ratios_q")
+            from scripts.compute_fundamentales_sector import compute_sector_valuacion_px
+            _ns = compute_sector_valuacion_px(engine)
+            log(f"COMPARATIVO valuacion (*_px): {_ns} filas -> fundamentales_ticker_vs_sector")
+        except Exception as e:
+            log(f"\nMULTIPLOS *_px: ERROR (no critico): {str(e)[:120]}")
+
     # ── REPORTE FINAL ─────────────────────────────────────────────────────────
     print()
     print(SEP)

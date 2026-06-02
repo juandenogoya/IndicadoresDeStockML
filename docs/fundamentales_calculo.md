@@ -1,6 +1,33 @@
 # Fundamentales: datos crudos, perfiles y calculo de ratios
 # Borrador v1 -- 2026-06-01 (PENDIENTE de curaduria del usuario, ver seccion 4)
 
+> ## Multiplos al CIERRE del dia (*_px) -- 2/6/2026
+> Los multiplos PER/P-B/P-S/EV-EBITDA que trae yahooquery (fundamentales_valuation_q)
+> congelan el PRECIO en la fecha del balance -> quedan desactualizados todo el
+> trimestre (ej. CVS: PER Yahoo 51.7 vs 39.9 al precio de hoy). El denominador TTM
+> si se mantiene el trimestre (correcto), pero el numerador (precio) cambia a diario.
+>
+> SOLUCION: columnas `pe_ratio_px/pb_ratio_px/ps_ratio_px/ev_ebitda_px` (+ `precio_px`,
+> `fecha_px`, `shares_out`) en fundamentales_ratios_q, recalculadas a DIARIO con el
+> cierre de precios_diarios y los denominadores TTM del ultimo Q:
+>   PER=P/eps_ttm | P/B=P/bvps | P/S=P*shares/revenue_ttm | EV/EBITDA=(P*shares+net_debt)/ebitda_ttm
+> Logica pura: src/utils/multiplos_px.py. Recompute: scripts/compute_multiplos_px.py
+> (DB->local, sin Yahoo), enganchado al final de recovery_incremental (target local),
+> junto con el comparativo sectorial de valuacion (compute_sector_valuacion_px, pisa
+> las 4 filas de valuacion en fundamentales_ticker_vs_sector con value+mediana al cierre).
+> Validado vs TradingView (CVS PER 39.9 vs 39.79; P/B 1.5 vs 1.49; P/S 0.28 vs 0.28;
+> EV/EBITDA 11.2 vs 10.21). Los pe_ratio/etc. de Yahoo NO se pisan (foto del Q).
+> Consumidores (infografia fundamental + dashboard financiero) leen *_px; si NULL
+> (eps<=0/sin dato, ~30 tickers en PER) muestran "-" (sin fallback al multiplo desfasado
+> de Yahoo). El MCP no usa multiplos.
+>
+> EBITDA: ebitda_ttm usa **NormalizedEBITDA** (excluye cargos extraordinarios one-off),
+> con fallback al EBITDA reportado. Motivo: el reportado puede ser negativo en un Q con
+> impairment (CVS Q3'25 EBITDA -1.56B) y deformar el TTM -> EV/EBITDA inflado. El
+> normalizado coincide con TV y refleja capacidad operativa recurrente. Afecta tambien
+> net_debt_to_ebitda_ttm. (compute_fundamentales_ratios.py, clave NormalizedEBITDA del
+> raw_json income; recomputable sin re-fetch.)
+
 > Documento de diseno PREVIO a codificar la v2 del calculo de ratios. Sigue la
 > regla del proyecto: documentar antes de implementar. Captura conocimiento que
 > NO se deriva leyendo el codigo: que claves crudas expone yahooquery, como se

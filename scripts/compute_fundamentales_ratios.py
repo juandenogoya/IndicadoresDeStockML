@@ -210,6 +210,11 @@ def _build_frame(tk, inc, bal, cf, val):
         lambda rj: _jget(rj, "NetIncomeCommonStockholders"))
     base["pref_div"] = base["inc_json"].apply(
         lambda rj: _jget(rj, "PreferredStockDividends"))
+    # EBITDA normalizado (excluye cargos extraordinarios one-off). Para EV/EBITDA
+    # usamos este (estandar de la industria, coincide con TV): el EBITDA reportado
+    # puede ser negativo en un Q con impairment y deformar el TTM (ej. CVS Q3'25).
+    base["ebitda_norm"] = base["inc_json"].apply(
+        lambda rj: _jget(rj, "NormalizedEBITDA"))
     base = base.drop(columns=["inc_json"])
 
     # -- as-of merge de balance --
@@ -276,8 +281,16 @@ def _compute(m, perfil, warnings):
     # NI para ROE: usar common si existe (resta preferentes implicito), si no NI
     ni_for_roe = ni_common if ni_common is not None else ni
 
+    # EBITDA para TTM: preferir NormalizedEBITDA (excluye one-offs), fallback al
+    # reportado donde el normalizado falte. Afecta ev_ebitda y net_debt/ebitda.
+    _eb_norm, _eb_rep = g("ebitda_norm"), g("ebitda")
+    if _eb_norm is not None and _eb_rep is not None:
+        _eb_use = _eb_norm.fillna(_eb_rep)
+    else:
+        _eb_use = _eb_norm if _eb_norm is not None else _eb_rep
+
     # TTM
-    rev_ttm, ni_ttm, eb_ttm = _ttm(rev), _ttm(ni), _ttm(g("ebitda"))
+    rev_ttm, ni_ttm, eb_ttm = _ttm(rev), _ttm(ni), _ttm(_eb_use)
     ni_common_ttm = _ttm(ni_for_roe)
     gp_ttm, oi_ttm, opex_ttm = _ttm(g("gross_profit")), _ttm(g("operating_income")), _ttm(g("operating_expense"))
     ebit_ttm, tax_ttm, pretax_ttm = _ttm(g("ebit")), _ttm(g("tax_provision")), _ttm(g("pretax_income"))
