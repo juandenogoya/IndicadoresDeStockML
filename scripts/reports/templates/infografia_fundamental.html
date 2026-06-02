@@ -62,12 +62,13 @@
         <section class="fg-bloque">
             <h2>Valuacion</h2>
             <table class="tabla-cmp">
-                <thead><tr><th>Metrica</th><th>Valor</th><th>vs sector</th></tr></thead>
+                <thead><tr><th>Metrica</th><th>Valor</th><th>Sector</th><th>vs sector</th></tr></thead>
                 <tbody>
                 {% for f in valuacion %}
                 <tr>
                     <td class="lbl">{{ f.label }}</td>
                     <td class="val">{{ f.valor }}</td>
+                    <td class="sec">{{ f.sector or '—' }}</td>
                     <td class="vs {{ 'good' if f.color == 'good' else ('bad' if f.color == 'bad' else '') }}">{{ f.vs or '—' }}</td>
                 </tr>
                 {% endfor %}
@@ -78,12 +79,13 @@
         <section class="fg-bloque">
             <h2>{{ calidad_titulo }}</h2>
             <table class="tabla-cmp">
-                <thead><tr><th>Metrica</th><th>Valor</th><th>vs sector</th></tr></thead>
+                <thead><tr><th>Metrica</th><th>Valor</th><th>Sector</th><th>vs sector</th></tr></thead>
                 <tbody>
                 {% for f in calidad %}
                 <tr>
                     <td class="lbl">{{ f.label }}</td>
                     <td class="val">{{ f.valor }}</td>
+                    <td class="sec">{{ f.sector or '—' }}</td>
                     <td class="vs {{ 'good' if f.color == 'good' else ('bad' if f.color == 'bad' else '') }}">{{ f.vs or '—' }}</td>
                 </tr>
                 {% endfor %}
@@ -103,6 +105,10 @@
                 <div class="div-item">
                     <div class="div-val">{{ dividendos.yield }}</div>
                     <div class="div-lbl">Rentabilidad (TTM)</div>
+                </div>
+                <div class="div-item">
+                    <div class="div-val">{{ dividendos.dps }}</div>
+                    <div class="div-lbl">Div./accion (TTM)</div>
                 </div>
                 <div class="div-item">
                     <div class="div-val">{{ dividendos.payout }}</div>

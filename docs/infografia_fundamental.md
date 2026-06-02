@@ -176,5 +176,17 @@ existente NO se toca.
    - Layout 4:5 mantenido (opcion A: compactados paddings). Salida 1620x2025,
      una sola pagina. Validado MU (paga, margen 28->41%), JPM (banco), BABA
      (no paga -> leyenda, margen 9->10%).
-6. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
-   Streamlit de reportes (scripts/reports/app.py).
+6. [HECHO 2/6/2026] Ajustes de presentacion:
+   - Valuacion y Calidad: columna "Sector" (mediana de pares, peer_median) entre
+     Valor y vs-sector. La diferencia % deja de ser abstracta (ej. PER 28.9 vs
+     sector 25.1 = +15%). _fila_cmp recibe fmt_fn (_ratio valuacion / _pct calidad)
+     para formatear la mediana en la misma escala. Maneja NULL (metricas sin par,
+     ej. ROTCE/Ratio eficiencia en banca -> "—"). Tablas pasan a 4 columnas; .sec
+     en gris (secundaria) para que el valor del ticker siga destacando.
+   - Dividendos: 3er dato "Div./accion (TTM)" = DPS anualizado = yield_TTM x cierre
+     (USD, mismo plano que cierre/yield; util incluso en ADRs). div-val 33px para
+     entrar 3 items. Validado VALE (USD 1.06), JPM (USD 6.46 = 2.18% x 296.58).
+   - NO se toco: el set de indicadores, perfiles, fuente de datos, layout 4:5.
+7. [FUTURO] Logo de empresa; version horizontal 16:9; tambien sumarla a la app
+   Streamlit de reportes (scripts/reports/app.py). Dots por trimestre en los
+   sparklines (evaluado 2/6, no implementado: el grafico ya es multi-Q).

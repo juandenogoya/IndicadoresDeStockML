@@ -319,10 +319,13 @@ def _calc_dividendos(data) -> dict:
 
 # ── Construccion del contexto para el template ────────────────────────────────
 
-def _fila_cmp(label, metric, valor_fmt, data, mejor_si_alto):
-    """Arma una fila comparativa: valor + vs-mediana + color segun direccion."""
+def _fila_cmp(label, metric, valor_fmt, data, mejor_si_alto, fmt_fn=None):
+    """Arma una fila comparativa: valor del ticker + mediana del sector +
+    vs-mediana (%) + color segun direccion. fmt_fn formatea la mediana con la
+    misma escala que el valor (_ratio para valuacion, _pct para rentabilidad)."""
     vs = data["vs_map"].get(metric)
     vs_pct = _signo_pct(vs["vs_median_pct"]) if vs is not None else None
+    sector_fmt = fmt_fn(vs.get("peer_median")) if (vs is not None and fmt_fn is not None) else "-"
     color = None
     if vs is not None:
         vp = _f(vs["vs_median_pct"])
@@ -330,7 +333,7 @@ def _fila_cmp(label, metric, valor_fmt, data, mejor_si_alto):
             # color segun si "mejor" es alto o bajo para esta metrica
             mejor = (vp > 0) if mejor_si_alto else (vp < 0)
             color = "good" if mejor else "bad"
-    return {"label": label, "valor": valor_fmt, "vs": vs_pct, "color": color}
+    return {"label": label, "valor": valor_fmt, "sector": sector_fmt, "vs": vs_pct, "color": color}
 
 
 def build_context(ticker: str, data: dict, handle: str) -> dict:
@@ -357,21 +360,27 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
     if not _d["paga"]:
         div = {"paga": False}
     else:
+        # DPS anualizado por accion (USD) = yield_TTM x cierre. Equivale a
+        # CashDividendsPaid_ttm / shares; va en USD (mismo plano que el cierre y
+        # el yield), util incluso para ADRs que reportan en otra moneda.
+        _cierre = _f(data.get("cierre"))
+        _dps = (_d["yield_pct"] * _cierre) if (_d["yield_pct"] is not None and _cierre) else None
         div = {
             "paga": True,
             "yield": _pct(_d["yield_pct"]) if _d["yield_pct"] is not None else "-",
             "payout": _pct(_d["payout_pct"]) if _d["payout_pct"] is not None else "-",
+            "dps": f"USD {_dps:.2f}" if _dps is not None else "-",
         }
 
     # Valuacion: igual en ambos perfiles (sin EV/EBITDA en banca: no aplica)
     valuacion = [
-        _fila_cmp("PER",       "pe_ratio",  _ratio(r.get("pe_ratio")),  data, mejor_si_alto=False),
-        _fila_cmp("P/B",       "pb_ratio",  _ratio(r.get("pb_ratio")),  data, mejor_si_alto=False),
-        _fila_cmp("P/S",       "ps_ratio",  _ratio(r.get("ps_ratio")),  data, mejor_si_alto=False),
+        _fila_cmp("PER",       "pe_ratio",  _ratio(r.get("pe_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("P/B",       "pb_ratio",  _ratio(r.get("pb_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("P/S",       "ps_ratio",  _ratio(r.get("ps_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
     ]
     if not es_fin:
         valuacion.append(
-            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda")), data, mejor_si_alto=False))
+            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda")), data, mejor_si_alto=False, fmt_fn=_ratio))
 
     if es_fin:
         # Perfil FINANCIERO: KPIs y calidad propios de banca
@@ -383,11 +392,11 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         ]
         kpis_foot = "metricas de banca sobre 12 meses (TTM)"
         calidad = [
-            _fila_cmp("ROE",             "roe_ttm",             _pct(r.get("roe_ttm")),             data, mejor_si_alto=True),
-            _fila_cmp("ROTCE",           "rotce_ttm",           _pct(r.get("rotce_ttm")),           data, mejor_si_alto=True),
-            _fila_cmp("ROA",             "roa_ttm",             _pct(r.get("roa_ttm")),             data, mejor_si_alto=True),
-            _fila_cmp("Margen neto",     "net_margin_ttm",      _pct(r.get("net_margin_ttm")),      data, mejor_si_alto=True),
-            _fila_cmp("Ratio eficiencia","efficiency_ratio_ttm",_pct(r.get("efficiency_ratio_ttm")),data, mejor_si_alto=False),
+            _fila_cmp("ROE",             "roe_ttm",             _pct(r.get("roe_ttm")),             data, mejor_si_alto=True,  fmt_fn=_pct),
+            _fila_cmp("ROTCE",           "rotce_ttm",           _pct(r.get("rotce_ttm")),           data, mejor_si_alto=True,  fmt_fn=_pct),
+            _fila_cmp("ROA",             "roa_ttm",             _pct(r.get("roa_ttm")),             data, mejor_si_alto=True,  fmt_fn=_pct),
+            _fila_cmp("Margen neto",     "net_margin_ttm",      _pct(r.get("net_margin_ttm")),      data, mejor_si_alto=True,  fmt_fn=_pct),
+            _fila_cmp("Ratio eficiencia","efficiency_ratio_ttm",_pct(r.get("efficiency_ratio_ttm")),data, mejor_si_alto=False, fmt_fn=_pct),
         ]
         # Crecimiento (banca: FCF no aplica)
         crecimiento = [
@@ -405,10 +414,10 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
         ]
         kpis_foot = "margenes sobre 12 meses (TTM)"
         calidad = [
-            _fila_cmp("ROE",         "roe_ttm",        _pct(r.get("roe_ttm")),        data, mejor_si_alto=True),
-            _fila_cmp("ROA",         "roa_ttm",        _pct(r.get("roa_ttm")),        data, mejor_si_alto=True),
-            _fila_cmp("ROIC",        "roic_ttm",       _pct(r.get("roic_ttm")),       data, mejor_si_alto=True),
-            _fila_cmp("Margen neto", "net_margin_ttm", _pct(r.get("net_margin_ttm")), data, mejor_si_alto=True),
+            _fila_cmp("ROE",         "roe_ttm",        _pct(r.get("roe_ttm")),        data, mejor_si_alto=True, fmt_fn=_pct),
+            _fila_cmp("ROA",         "roa_ttm",        _pct(r.get("roa_ttm")),        data, mejor_si_alto=True, fmt_fn=_pct),
+            _fila_cmp("ROIC",        "roic_ttm",       _pct(r.get("roic_ttm")),       data, mejor_si_alto=True, fmt_fn=_pct),
+            _fila_cmp("Margen neto", "net_margin_ttm", _pct(r.get("net_margin_ttm")), data, mejor_si_alto=True, fmt_fn=_pct),
         ]
         crecimiento = [
             {"label": "Ingresos YoY", "valor": _signo_pct(r.get("revenue_yoy_pct")) or "-"},
