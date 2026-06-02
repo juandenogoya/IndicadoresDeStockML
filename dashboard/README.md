@@ -118,6 +118,12 @@ es mas radar/screening que analisis de un ticker. **IMPLEMENTADO v1 (28/5/2026)*
 modo "Radar del dia" (dashboard/radar.py + cargar_radar). Senales vol/IV/PCR z,
 tags legibles, guarda por percentil_vol, contexto sectorial, click -> informe.
 
+**Screener por veredicto (1/6/2026)**: 2da seccion del modo "Radar del dia".
+multiselect de veredictos (ALCISTA/NEUTRAL/BAJISTA) + boton Buscar -> tabla de
+tickers con ese veredicto sintetico (cargar_veredictos_universo, cacheada por
+fecha de datos con @st.cache_data: ~2 min el primer Buscar del dia, luego
+instantaneo). Seleccion de fila -> "Abrir informe" (reusa el nav del radar).
+
 | ID | Cuando aplica | Senala | Rol |
 |----|----|----|----|
 | A1 | MACD Compra D y W | momentum alcista alineado | sesgo alcista |
