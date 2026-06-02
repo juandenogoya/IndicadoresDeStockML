@@ -24,7 +24,7 @@ from dashboard.sintesis_data import (
     cargar_datos_ticker, listar_tickers, cargar_radar,
     cargar_financiero_ticker, cargar_screener_sector,
     listar_sectores_fundamentales, listar_regiones_fundamentales,
-    cargar_veredictos_universo, fecha_datos,
+    cargar_veredictos_universo, fecha_datos, listar_sectores,
 )
 from dashboard.view import construir_vista
 from dashboard.metricas import construir_papel
@@ -228,8 +228,13 @@ def _vista_radar():
     st.caption("Veredicto sintetico (tecnico + opciones + estructura) de cada ticker. "
                "El primer Buscar del dia calcula el universo (~2 min); luego es instantaneo "
                "hasta que entren datos nuevos.")
-    sel = st.multiselect("Veredictos", ["ALCISTA", "NEUTRAL", "BAJISTA"],
-                         default=["ALCISTA"], key="scr_sel")
+    cs1, cs2 = st.columns(2)
+    with cs1:
+        sel = st.multiselect("Veredictos", ["ALCISTA", "NEUTRAL", "BAJISTA"],
+                             default=["ALCISTA"], key="scr_sel")
+    with cs2:
+        sel_sec = st.multiselect("Sectores (vacio = todos)", listar_sectores(),
+                                 default=[], key="scr_sec")
     if st.button("Buscar", key="scr_buscar"):
         st.session_state["scr_run"] = True
 
@@ -239,14 +244,18 @@ def _vista_radar():
             return
         with st.spinner("Calculando veredictos del universo (~2 min la primera vez)..."):
             universo = _veredictos_cache(fecha_datos())
-        res = [u for u in universo if u["veredicto"] in sel]
+        res = [u for u in universo
+               if u["veredicto"] in sel and (not sel_sec or u["sector"] in sel_sec)]
         if not res:
-            st.info(f"Ningun ticker con veredicto {', '.join(sel)}.")
+            filtro = ", ".join(sel) + (f" en {', '.join(sel_sec)}" if sel_sec else "")
+            st.info(f"Ningun ticker con veredicto {filtro}.")
             return
         dfv = pd.DataFrame(res).rename(columns={
             "ticker": "Ticker", "sector": "Sector", "veredicto": "Veredicto", "frase": "Lectura"})
         dfv = dfv[["Ticker", "Sector", "Veredicto", "Lectura"]]
-        st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)} (de {len(universo)} evaluados).")
+        _sec_txt = f" | sectores: {', '.join(sel_sec)}" if sel_sec else ""
+        st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)}{_sec_txt} "
+                   f"(de {len(universo)} evaluados).")
         ev = st.dataframe(dfv, hide_index=True, use_container_width=True,
                           on_select="rerun", selection_mode="single-row", key="scr_tbl")
         r2 = ev.selection.rows if ev and getattr(ev, "selection", None) else []

@@ -548,6 +548,15 @@ def fecha_datos() -> str:
     return str(df.iloc[0]["f"])
 
 
+def listar_sectores() -> list:
+    """Sectores del universo (tabla activos), para el filtro del screener de
+    veredictos. Query barata -> puebla el multiselect antes de calcular nada."""
+    df = query_df(
+        "SELECT DISTINCT sector FROM activos WHERE sector IS NOT NULL ORDER BY sector"
+    )
+    return df["sector"].tolist() if not df.empty else []
+
+
 def cargar_veredictos_universo() -> list:
     """
     Veredicto sintetico (ALCISTA / NEUTRAL / BAJISTA) de TODOS los tickers con

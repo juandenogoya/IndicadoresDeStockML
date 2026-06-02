@@ -119,10 +119,12 @@ modo "Radar del dia" (dashboard/radar.py + cargar_radar). Senales vol/IV/PCR z,
 tags legibles, guarda por percentil_vol, contexto sectorial, click -> informe.
 
 **Screener por veredicto (1/6/2026)**: 2da seccion del modo "Radar del dia".
-multiselect de veredictos (ALCISTA/NEUTRAL/BAJISTA) + boton Buscar -> tabla de
-tickers con ese veredicto sintetico (cargar_veredictos_universo, cacheada por
-fecha de datos con @st.cache_data: ~2 min el primer Buscar del dia, luego
-instantaneo). Seleccion de fila -> "Abrir informe" (reusa el nav del radar).
+multiselect de veredictos (ALCISTA/NEUTRAL/BAJISTA) + multiselect de sectores
+(vacio = todos) + boton Buscar -> tabla de tickers con ese veredicto sintetico.
+cargar_veredictos_universo cacheada por fecha de datos con @st.cache_data: ~2 min
+el primer Buscar del dia, luego instantaneo (los filtros veredicto/sector se
+aplican sobre el universo cacheado -> cambiar filtros NO recalcula). Seleccion de
+fila -> "Abrir informe" (reusa el nav del radar).
 
 | ID | Cuando aplica | Senala | Rol |
 |----|----|----|----|
