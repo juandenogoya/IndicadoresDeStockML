@@ -85,8 +85,12 @@ def _pct(v, decimales=1):
 
 
 def _ratio(v):
+    """Ratio adimensional. 2 decimales si <10 (ej P/S 0.31 de ADRs japoneses
+    que con 1 decimal se veria 0.0/0.3), 1 decimal si es grande."""
     v = _f(v)
-    return "-" if v is None else f"{v:.1f}"
+    if v is None:
+        return "-"
+    return f"{v:.2f}" if abs(v) < 10 else f"{v:.1f}"
 
 
 def _money_b(v):
@@ -300,7 +304,11 @@ def _sparkline_pct(serie_df, col, w=560, h=170, pad=34) -> str:
 
 
 def _calc_dividendos(data) -> dict:
-    """Yield TTM + payout TTM desde CashDividendsPaid (caja, 4Q) / MarketCap / NI.
+    """Payout TTM = CashDividendsPaid_ttm / NetIncome_ttm (ambos en moneda de
+    reporte -> INMUNE a moneda). Yield = payout / PER (= div/precio por algebra:
+    div/precio = (div/NI)*(NI/precio) = payout * earnings_yield). Tambien inmune
+    a moneda, a diferencia de div/market_cap que mezclaba JPY con USD (bug del
+    yield 928% en ADRs). NULL si no hay PER (empresa en perdida).
     Devuelve {paga, yield_pct, payout_pct}. paga=False si no distribuye."""
     divcf = data.get("divcf")
     if divcf is None or divcf.empty:
@@ -311,9 +319,9 @@ def _calc_dividendos(data) -> dict:
     if div_ttm <= 0:
         return {"paga": False}
     ni_ttm = _f(data["ratios"].get("net_income_ttm"))
-    mcap = _f(data.get("market_cap"))
-    yld = (div_ttm / mcap) if (mcap and mcap > 0) else None
+    pe = _f(data["ratios"].get("pe_ratio"))
     payout = (div_ttm / ni_ttm) if (ni_ttm and ni_ttm > 0) else None
+    yld = (payout / pe) if (payout is not None and pe and pe > 0) else None
     return {"paga": True, "yield_pct": yld, "payout_pct": payout}
 
 
@@ -372,18 +380,21 @@ def build_context(ticker: str, data: dict, handle: str) -> dict:
             "dps": f"USD {_dps:.2f}" if _dps is not None else "-",
         }
 
-    # Valuacion: igual en ambos perfiles (sin EV/EBITDA en banca: no aplica)
     # Valuacion AL CIERRE del dia (*_px): el multiplo se recalcula con el precio
     # actual (compute_multiplos_px); el de Yahoo (pe_ratio) congela el precio del Q.
-    # La mediana del sector (vs_map) ya viene recalculada con *_px. NULL -> "-".
+    # FALLBACK: en ADRs no-USD los *_px son NULL (mezcla de monedas) -> se usa el
+    # multiplo de Yahoo, que viene bien en la moneda del ADR. _px_o_yahoo elige.
+    def _px_o_yahoo(base_key):
+        v = r.get(base_key + "_px")
+        return v if v is not None else r.get(base_key)
     valuacion = [
-        _fila_cmp("PER",       "pe_ratio",  _ratio(r.get("pe_ratio_px")),  data, mejor_si_alto=False, fmt_fn=_ratio),
-        _fila_cmp("P/B",       "pb_ratio",  _ratio(r.get("pb_ratio_px")),  data, mejor_si_alto=False, fmt_fn=_ratio),
-        _fila_cmp("P/S",       "ps_ratio",  _ratio(r.get("ps_ratio_px")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("PER",       "pe_ratio",  _ratio(_px_o_yahoo("pe_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("P/B",       "pb_ratio",  _ratio(_px_o_yahoo("pb_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
+        _fila_cmp("P/S",       "ps_ratio",  _ratio(_px_o_yahoo("ps_ratio")),  data, mejor_si_alto=False, fmt_fn=_ratio),
     ]
     if not es_fin:
         valuacion.append(
-            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(r.get("ev_ebitda_px")), data, mejor_si_alto=False, fmt_fn=_ratio))
+            _fila_cmp("EV/EBITDA", "ev_ebitda", _ratio(_px_o_yahoo("ev_ebitda")), data, mejor_si_alto=False, fmt_fn=_ratio))
 
     if es_fin:
         # Perfil FINANCIERO: KPIs y calidad propios de banca

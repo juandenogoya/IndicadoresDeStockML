@@ -392,10 +392,12 @@ def cargar_financiero_ticker(ticker: str) -> dict:
     ratios = r.iloc[0].to_dict()
     # Valuacion AL CIERRE del dia: pisar los multiplos de Yahoo con los *_px
     # (precio actual). El comparativo (vs_sector) ya viene recalculado con *_px.
-    # NULL -> queda None (se muestra "-"), sin fallback al multiplo desfasado de Yahoo.
+    # FALLBACK: en ADRs no-USD los *_px son NULL (mezcla precio USD / denominador
+    # en moneda local) -> se conserva el multiplo de Yahoo, que viene bien en la
+    # moneda del ADR. Solo se pisa si el *_px tiene valor.
     for _base, _px in (("pe_ratio", "pe_ratio_px"), ("pb_ratio", "pb_ratio_px"),
                        ("ps_ratio", "ps_ratio_px"), ("ev_ebitda", "ev_ebitda_px")):
-        if _px in ratios:
+        if _px in ratios and ratios.get(_px) is not None:
             ratios[_base] = ratios.get(_px)
 
     vs = query_df(
@@ -465,10 +467,13 @@ def cargar_screener_sector(sector: str, region: str | None = None) -> list:
           WHERE sector = :sector
           ORDER BY ticker, fiscal_period_end DESC
         )
-        -- Valuacion al CIERRE del dia (*_px); las demas metricas no dependen del precio
+        -- Valuacion al CIERRE del dia (*_px); fallback a Yahoo si *_px es NULL
+        -- (ADRs no-USD: el *_px no aplica por mezcla de monedas).
         SELECT u.ticker, u.reporting_currency, p.region, u.profile,
-               u.pe_ratio_px AS pe_ratio, u.pb_ratio_px AS pb_ratio,
-               u.ps_ratio_px AS ps_ratio, u.ev_ebitda_px AS ev_ebitda,
+               COALESCE(u.pe_ratio_px, u.pe_ratio) AS pe_ratio,
+               COALESCE(u.pb_ratio_px, u.pb_ratio) AS pb_ratio,
+               COALESCE(u.ps_ratio_px, u.ps_ratio) AS ps_ratio,
+               COALESCE(u.ev_ebitda_px, u.ev_ebitda) AS ev_ebitda,
                u.roe_ttm, u.roa_ttm, u.roic_ttm, u.rotce_ttm,
                u.net_margin_ttm, u.operating_margin_ttm, u.efficiency_ratio_ttm,
                u.revenue_yoy_pct, u.revenue_qoq_pct

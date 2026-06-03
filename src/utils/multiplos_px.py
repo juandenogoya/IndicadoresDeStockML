@@ -17,6 +17,14 @@ Formulas (P = cierre del dia; denominadores TTM del ultimo Q):
     P/B        = P / book_value_per_share
     P/S        = (P * shares) / revenue_ttm      [market_cap = P * shares]
     EV/EBITDA  = (P * shares + net_debt) / ebitda_ttm
+
+MONEDA (critico): el cierre P viene en USD (cotizacion del ADR/accion en US),
+pero los denominadores TTM (eps/bvps/revenue/ebitda) estan en la MONEDA DE
+REPORTE de la empresa. Para tickers USD coinciden -> OK. Para ADRs no-USD
+(HMC/TM en JPY, BABA en CNY, etc.) se mezclarian monedas distintas -> el ratio
+sale absurdo (HMC P/B 0.0083 vs 0.50 real). Por eso recalcular_multiplos exige
+reporting_currency='USD'; para el resto devuelve None (el consumidor cae al
+multiplo de Yahoo, que ya viene bien calculado en la moneda del ADR).
 """
 
 from typing import Optional
@@ -41,22 +49,32 @@ def _safe_div(num, den) -> Optional[float]:
 
 
 def recalcular_multiplos(cierre, eps_ttm, book_value_per_share, shares,
-                         revenue_ttm, ebitda_ttm, net_debt) -> dict:
+                         revenue_ttm, ebitda_ttm, net_debt,
+                         reporting_currency="USD") -> dict:
     """
     Devuelve {pe_ratio_px, pb_ratio_px, ps_ratio_px, ev_ebitda_px} con el cierre
     actual. Cada uno None si falta su denominador o es <= 0 (no se fuerza un valor).
 
     Convenciones (homogeneas con compute_fundamentales_ratios / Yahoo):
+      - reporting_currency != 'USD' -> TODO None: el cierre (USD) y los
+        denominadores (moneda de reporte) estan en monedas distintas; mezclarlos
+        da ratios absurdos. El consumidor usa el multiplo de Yahoo en su lugar.
       - PER y P/S NULL si el denominador (eps_ttm / revenue_ttm) <= 0
         (multiplo sin sentido con base negativa).
       - P/B NULL si bvps <= 0 (patrimonio negativo).
       - EV/EBITDA NULL si ebitda_ttm <= 0.
       - net_debt puede ser negativo (caja neta): resta del EV, valido.
     """
+    NULOS = {"pe_ratio_px": None, "pb_ratio_px": None,
+             "ps_ratio_px": None, "ev_ebitda_px": None}
+
+    # Gate de moneda: solo USD (cierre y denominadores en la misma moneda).
+    if reporting_currency != "USD":
+        return NULOS
+
     P = _f(cierre)
     if P is None or P <= 0:
-        return {"pe_ratio_px": None, "pb_ratio_px": None,
-                "ps_ratio_px": None, "ev_ebitda_px": None}
+        return dict(NULOS)
 
     eps = _f(eps_ttm)
     bvps = _f(book_value_per_share)

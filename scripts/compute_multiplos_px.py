@@ -66,7 +66,8 @@ def compute_multiplos_px(engine=None) -> int:
     ratios = query_df("""
         SELECT DISTINCT ON (ticker)
                ticker, fiscal_period_end, eps_ttm, book_value_per_share,
-               revenue_ttm, ebitda_ttm, net_debt, net_income_ttm
+               revenue_ttm, ebitda_ttm, net_debt, net_income_ttm,
+               reporting_currency
         FROM   fundamentales_ratios_q
         ORDER  BY ticker, fiscal_period_end DESC
     """)
@@ -103,6 +104,7 @@ def compute_multiplos_px(engine=None) -> int:
         m = recalcular_multiplos(
             close, r["eps_ttm"], r["book_value_per_share"], shares,
             r["revenue_ttm"], r["ebitda_ttm"], r["net_debt"],
+            reporting_currency=(r["reporting_currency"] or "USD"),
         )
         registros.append({
             "pe": m["pe_ratio_px"], "pb": m["pb_ratio_px"],
