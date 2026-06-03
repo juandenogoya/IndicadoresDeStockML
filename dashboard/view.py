@@ -35,7 +35,9 @@ def fmt(v, dec=2):
 def _muro_cell(muro: dict | None) -> str:
     if not muro or muro.get("strike") is None:
         return DASH
-    return f"{fmt(muro['strike'])} ({muro['dist_pct']:+.1f}%)"
+    fz = muro.get("fuerza")
+    fz_s = f", f:{fz:.0f}%" if fz is not None else ""
+    return f"{fmt(muro['strike'])} ({muro['dist_pct']:+.1f}%{fz_s})"
 
 
 def _inusual(z) -> str:

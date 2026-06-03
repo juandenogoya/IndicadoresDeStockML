@@ -31,7 +31,7 @@ Backfill:
     backfill_pcr_plazo(engine, desde=date(2026,4,18))
 """
 
-import statistics
+import math
 from datetime import date
 from typing import Optional
 
@@ -50,11 +50,19 @@ VENTANAS = {
 MIN_OI_POR_VENTANA   = 500    # OI total minimo para emitir veredicto
 PCR_UMBRAL_ALCISTA   = 1.0    # < 1.0 = Alcista, >= 1.0 = Bajista
 
-# Muros de OI (identicos a ft_bot_tech_sectorial_oiexit_v1)
-WALL_ZONA_PCT        = 0.10   # zona de busqueda: +/- 10% del precio
-WALL_LIQ_MULT_MED    = 3.0    # OI >= 3 x mediana de la zona
-WALL_LIQ_MIN_ABS     = 1000   # piso de OI absoluto
-WALL_DIST_MIN_PCT    = 0.02   # muro a >= 2% del precio
+# Muros de OI v2 (validado en Etapa A -- ver memory/muros_v2.md):
+#   - OI COMBINADO (call+put) por strike, direccional (soporte debajo / resistencia arriba).
+#   - ZONA DINAMICA por expected move: zona = +/- min(k*EM, cap),
+#     EM = precio * IV_ATM * sqrt(DTE_pond/365).
+#   - dist_min RELATIVO (fraccion de la zona, no fijo).
+#   - SIN "3x mediana" (era incompatible con OI combinado): validez = solo OI abs.
+#   - FUERZA = % del OI del lado concentrado en el muro.
+WALL_LIQ_MIN_ABS     = 1000   # piso de OI absoluto del muro
+WALL_K_SIGMA         = 1.5    # multiplicador del expected move
+WALL_CAP_ZONA        = 0.18   # tope de zona (evita extremos en largo de muy volatiles)
+WALL_DIST_MIN_FRAC   = 0.15   # dist_min = 15% de la zona
+WALL_DIST_MIN_PISO   = 0.005  # piso 0.5% (evita capturar el strike ATM)
+WALL_IV_ATM_PCT      = 0.05   # IV_ATM = promedio IV de contratos a +/-5% del precio
 
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
@@ -81,13 +89,18 @@ CREATE TABLE IF NOT EXISTS opciones_pcr_plazo_diario (
 
     precio_sub            NUMERIC(12,4),
 
-    -- Muros de OI (soporte = put wall debajo; resistencia = call wall arriba)
+    -- Muros de OI v2 (OI combinado; soporte debajo / resistencia arriba del precio)
     soporte_strike        NUMERIC(12,4),
     soporte_oi            BIGINT,
     soporte_dist_pct      NUMERIC(6,2),
+    soporte_fuerza        NUMERIC(5,1),     -- % del OI del lado concentrado en el muro
     resistencia_strike    NUMERIC(12,4),
     resistencia_oi        BIGINT,
     resistencia_dist_pct  NUMERIC(6,2),
+    resistencia_fuerza    NUMERIC(5,1),
+
+    expected_move         NUMERIC(12,4),    -- EM = precio * IV_ATM * sqrt(DTE/365)
+    zona_pct              NUMERIC(6,2),      -- zona de busqueda usada (% del precio)
 
     n_contratos           INTEGER,
     created_at            TIMESTAMP DEFAULT NOW(),
@@ -99,12 +112,22 @@ CREATE INDEX IF NOT EXISTS idx_pcr_plazo_ticker  ON opciones_pcr_plazo_diario (t
 CREATE INDEX IF NOT EXISTS idx_pcr_plazo_ventana ON opciones_pcr_plazo_diario (ventana);
 """
 
+# Columnas v2 para tablas ya existentes (idempotente)
+_ALTER_PCR_PLAZO_V2 = [
+    "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS soporte_fuerza     NUMERIC(5,1)",
+    "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS resistencia_fuerza NUMERIC(5,1)",
+    "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS expected_move      NUMERIC(12,4)",
+    "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS zona_pct           NUMERIC(6,2)",
+]
+
 
 def init_tabla(engine=None):
-    """Crea la tabla opciones_pcr_plazo_diario si no existe."""
+    """Crea la tabla opciones_pcr_plazo_diario si no existe (+ columnas v2)."""
     eng = engine or get_engine()
     with eng.connect() as conn:
         conn.execute(text(DDL_PCR_PLAZO))
+        for stmt in _ALTER_PCR_PLAZO_V2:
+            conn.execute(text(stmt))
         conn.commit()
 
 
@@ -131,34 +154,39 @@ def _veredicto(pcr: Optional[float], oi_total: int) -> Optional[str]:
     return "A" if pcr < PCR_UMBRAL_ALCISTA else "B"
 
 
-def _muro(cands: list, precio: float, lado: str) -> dict:
+def _expected_move(precio: float, iv_atm: Optional[float], dte: Optional[float]) -> Optional[float]:
+    """EM = precio * IV_ATM * sqrt(DTE/365). None si falta IV o DTE."""
+    if not precio or not iv_atm or not dte or dte <= 0:
+        return None
+    return precio * iv_atm * math.sqrt(dte / 365.0)
+
+
+def _muro(cands: list, precio: float) -> dict:
     """
-    Calcula el muro de OI (mismo criterio que oiexit).
+    Muro de OI v2: el strike con mayor OI COMBINADO (call+put) entre los
+    candidatos de la zona (ya filtrados por posicion y dist_min por el caller).
 
     Args:
-        cands: lista de (strike, oi) candidatos en la zona.
+        cands: lista de (strike, oi_combinado) candidatos en la zona del lado.
         precio: precio subyacente.
-        lado: 'soporte' (strikes debajo) o 'resistencia' (strikes arriba).
 
     Returns:
-        {strike, oi, dist_pct} si valido, o {} si no hay muro valido.
+        {strike, oi, dist_pct, fuerza} si el OI supera el piso absoluto, o {}.
+        fuerza = % del OI del lado concentrado en el muro (dominancia).
     """
     if not cands or not precio:
         return {}
-    mediana = statistics.median([oi for _, oi in cands])
     wall_strike, wall_oi = max(cands, key=lambda x: x[1])
-    dist = abs(precio - wall_strike) / precio
-    valido = (
-        wall_oi >= WALL_LIQ_MULT_MED * mediana
-        and wall_oi >= WALL_LIQ_MIN_ABS
-        and dist >= WALL_DIST_MIN_PCT
-    )
-    if not valido:
+    if wall_oi < WALL_LIQ_MIN_ABS:
         return {}
+    dist = abs(precio - wall_strike) / precio
+    oi_total_lado = sum(oi for _, oi in cands)
+    fuerza = round(wall_oi / oi_total_lado * 100, 1) if oi_total_lado else None
     return {
         "strike":   round(wall_strike, 4),
         "oi":       int(wall_oi),
         "dist_pct": round(dist * 100, 2),
+        "fuerza":   fuerza,
     }
 
 
@@ -170,8 +198,9 @@ _SQL_UPSERT = """
         call_vol, put_vol, pcr_vol,
         call_oi, put_oi, pcr_oi, veredicto_oi,
         precio_sub,
-        soporte_strike, soporte_oi, soporte_dist_pct,
-        resistencia_strike, resistencia_oi, resistencia_dist_pct,
+        soporte_strike, soporte_oi, soporte_dist_pct, soporte_fuerza,
+        resistencia_strike, resistencia_oi, resistencia_dist_pct, resistencia_fuerza,
+        expected_move, zona_pct,
         n_contratos
     ) VALUES %s
     ON CONFLICT (fecha, ticker, ventana) DO UPDATE SET
@@ -188,9 +217,13 @@ _SQL_UPSERT = """
         soporte_strike       = EXCLUDED.soporte_strike,
         soporte_oi           = EXCLUDED.soporte_oi,
         soporte_dist_pct     = EXCLUDED.soporte_dist_pct,
+        soporte_fuerza       = EXCLUDED.soporte_fuerza,
         resistencia_strike   = EXCLUDED.resistencia_strike,
         resistencia_oi       = EXCLUDED.resistencia_oi,
         resistencia_dist_pct = EXCLUDED.resistencia_dist_pct,
+        resistencia_fuerza   = EXCLUDED.resistencia_fuerza,
+        expected_move        = EXCLUDED.expected_move,
+        zona_pct             = EXCLUDED.zona_pct,
         n_contratos          = EXCLUDED.n_contratos
 """
 
@@ -218,6 +251,7 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
                 (vencimiento - :f)                 AS dte,
                 SUM(COALESCE(volumen, 0))          AS vol,
                 SUM(COALESCE(open_interest, 0))    AS oi,
+                AVG(iv)                            AS iv,
                 MAX(precio_subyacente)             AS precio
             FROM opciones_snapshot
             WHERE fecha_snapshot = :f
@@ -240,6 +274,7 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
         strike = float(r.strike)
         vol    = int(r.vol or 0)
         oi     = int(r.oi or 0)
+        iv     = float(r.iv) if r.iv is not None else None
         if r.precio:
             precio_map[ticker] = float(r.precio)
 
@@ -254,19 +289,25 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
 
         slot = acc.setdefault(ticker, {}).setdefault(ventana, {
             "call_vol": 0, "put_vol": 0, "call_oi": 0, "put_oi": 0,
-            "puts": [], "calls": [], "n": 0,
+            "oi_strike": {},     # {strike: OI combinado call+put} -> muros v2
+            "iv_list": [],       # [(strike, iv, oi)] -> IV_ATM
+            "dte_oi_sum": 0.0,   # sum(dte*oi) -> DTE ponderado
+            "oi_sum": 0,         # sum(oi)     -> DTE ponderado
+            "n": 0,
         })
         slot["n"] += 1
         if tipo == "call":
             slot["call_vol"] += vol
             slot["call_oi"]  += oi
-            if oi > 0:
-                slot["calls"].append((strike, oi))
         else:  # put
             slot["put_vol"] += vol
             slot["put_oi"]  += oi
-            if oi > 0:
-                slot["puts"].append((strike, oi))
+        if oi > 0:
+            slot["oi_strike"][strike] = slot["oi_strike"].get(strike, 0) + oi
+            slot["dte_oi_sum"] += dte * oi
+            slot["oi_sum"]     += oi
+            if iv is not None:
+                slot["iv_list"].append((strike, iv, oi))
 
     # Construir registros
     registros = []
@@ -284,24 +325,41 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
             pcr_oi  = _pcr(put_oi, call_oi)
             veredicto = _veredicto(pcr_oi, oi_total)
 
-            # Muros: soporte = put wall debajo del precio; resistencia = call wall arriba
-            sop = {}
-            res = {}
+            # ── Muros v2: OI combinado + zona dinamica por expected move ──────
+            sop, res = {}, {}
+            em, zona = None, None
             if precio:
-                zona_inf = precio * (1 - WALL_ZONA_PCT)
-                zona_sup = precio * (1 + WALL_ZONA_PCT)
-                puts_zona  = [(s, oi) for (s, oi) in slot["puts"]  if zona_inf <= s < precio]
-                calls_zona = [(s, oi) for (s, oi) in slot["calls"] if precio < s <= zona_sup]
-                sop = _muro(puts_zona,  precio, "soporte")
-                res = _muro(calls_zona, precio, "resistencia")
+                # IV_ATM = promedio ponderado por OI de contratos a +/-5% del precio
+                atm = [(iv, oi) for (s, iv, oi) in slot["iv_list"]
+                       if abs(s - precio) / precio <= WALL_IV_ATM_PCT]
+                iv_atm = (sum(iv * oi for iv, oi in atm) / sum(oi for _, oi in atm)
+                          if atm and sum(oi for _, oi in atm) > 0 else None)
+                dte_pond = slot["dte_oi_sum"] / slot["oi_sum"] if slot["oi_sum"] > 0 else None
+
+                em = _expected_move(precio, iv_atm, dte_pond)
+                if em:
+                    zona = min(WALL_K_SIGMA * em / precio, WALL_CAP_ZONA)
+                else:
+                    zona = 0.10   # fallback si falta IV: zona 10%
+                dist_min = max(WALL_DIST_MIN_PISO, WALL_DIST_MIN_FRAC * zona)
+
+                # Soporte: strikes debajo del precio, a >= dist_min, dentro de la zona
+                sop_inf, sop_sup = precio * (1 - zona), precio * (1 - dist_min)
+                res_inf, res_sup = precio * (1 + dist_min), precio * (1 + zona)
+                cands_sop = [(s, oi) for s, oi in slot["oi_strike"].items() if sop_inf <= s <= sop_sup]
+                cands_res = [(s, oi) for s, oi in slot["oi_strike"].items() if res_inf <= s <= res_sup]
+                sop = _muro(cands_sop, precio)
+                res = _muro(cands_res, precio)
 
             registros.append((
                 fecha, ticker, ventana, lo, hi,
                 call_vol, put_vol, pcr_vol,
                 call_oi, put_oi, pcr_oi, veredicto,
                 _safe_round(precio, 4) if precio else None,
-                sop.get("strike"), sop.get("oi"), sop.get("dist_pct"),
-                res.get("strike"), res.get("oi"), res.get("dist_pct"),
+                sop.get("strike"), sop.get("oi"), sop.get("dist_pct"), sop.get("fuerza"),
+                res.get("strike"), res.get("oi"), res.get("dist_pct"), res.get("fuerza"),
+                _safe_round(em, 4) if em else None,
+                _safe_round(zona * 100, 2) if zona else None,
                 slot["n"],
             ))
 
