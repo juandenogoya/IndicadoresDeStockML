@@ -2,10 +2,16 @@
 chcp 65001 > nul
 REM ============================================================
 REM  sync_opciones_railway_to_local.bat
-REM  Trae las 3 tablas de opciones desde Railway a la DB LOCAL:
+REM  Trae las 6 tablas de opciones US desde Railway a la DB LOCAL:
 REM    - opciones_snapshot
 REM    - opciones_resumen_diario
 REM    - opciones_zscore_diario
+REM    - opciones_sector_zscore_diario      (agregada despues del v1)
+REM    - opciones_pcr_plazo_diario          (PCR + muros OI por ventana)
+REM    - opciones_sector_pcr_plazo_diario   (PCR sectorial por ventana)
+REM
+REM  NOTA: opciones AR (opciones_ar_gregas) NO se sincronizan: quedan en
+REM  Railway. Cuando se decida usarlas en local, se traera su historia.
 REM
 REM  Bajo Plan C: Railway acumula el snapshot de opciones (cron
 REM  Oracle + GH backup). Este bat las baja al local para que
@@ -28,10 +34,9 @@ echo   SYNC OPCIONES  Railway -^> Local
 echo   Fecha : %DATE%  Hora: %TIME%
 echo ============================================================
 echo.
-echo Sincroniza incrementalmente (Railway -^> local):
-echo   - opciones_snapshot
-echo   - opciones_resumen_diario
-echo   - opciones_zscore_diario
+echo Sincroniza incrementalmente (Railway -^> local) las 6 tablas de opciones US:
+echo   snapshot, resumen, zscore, sector_zscore, pcr_plazo, sector_pcr_plazo
+echo   (opciones AR quedan en Railway, no se traen)
 echo.
 
 "%PYTHON%" "%ROOT%scripts\migrations\sync_railway_to_local.py" --tabla opciones
