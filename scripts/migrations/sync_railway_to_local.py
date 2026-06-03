@@ -548,9 +548,13 @@ def _create_opciones_tables_local(local_eng):
             soporte_strike        NUMERIC(12,4),
             soporte_oi            BIGINT,
             soporte_dist_pct      NUMERIC(6,2),
+            soporte_fuerza        NUMERIC(5,1),
             resistencia_strike    NUMERIC(12,4),
             resistencia_oi        BIGINT,
             resistencia_dist_pct  NUMERIC(6,2),
+            resistencia_fuerza    NUMERIC(5,1),
+            expected_move         NUMERIC(12,4),
+            zona_pct              NUMERIC(6,2),
             n_contratos           INTEGER,
             created_at            TIMESTAMP DEFAULT NOW(),
             CONSTRAINT opciones_pcr_plazo_diario_uniq UNIQUE (fecha, ticker, ventana)
@@ -559,6 +563,11 @@ def _create_opciones_tables_local(local_eng):
         "CREATE INDEX IF NOT EXISTS idx_pcr_plazo_fecha   ON opciones_pcr_plazo_diario (fecha)",
         "CREATE INDEX IF NOT EXISTS idx_pcr_plazo_ticker  ON opciones_pcr_plazo_diario (ticker)",
         "CREATE INDEX IF NOT EXISTS idx_pcr_plazo_ventana ON opciones_pcr_plazo_diario (ventana)",
+        # Columnas v2 (muros mejorados) para tablas locales ya existentes (idempotente)
+        "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS soporte_fuerza     NUMERIC(5,1)",
+        "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS resistencia_fuerza NUMERIC(5,1)",
+        "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS expected_move      NUMERIC(12,4)",
+        "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS zona_pct           NUMERIC(6,2)",
 
         # opciones_sector_pcr_plazo_diario (PCR sectorial por ventana + zscore)
         """
