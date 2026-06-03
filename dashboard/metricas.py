@@ -79,16 +79,20 @@ DICCIONARIO = {
         "umbral":  "<1 Alcista | >=1 Bajista | OI total < 500 = sin liquidez (s/d)",
     },
     "muro_soporte": {
-        "formula": "Strike con mayor PUT OI por debajo del precio (zona -10%).",
-        "ventana": "por plazo; distancia recalculada vs close del dia",
-        "fuente":  "opciones_pcr_plazo_diario.soporte_strike, soporte_oi",
-        "umbral":  "valido si OI >= 3x mediana de la zona y >= 1000 y dist >= 2%",
+        "formula": "Strike con mayor OI COMBINADO (call+put) por DEBAJO del precio, "
+                   "dentro de la zona dinamica. fuerza = % del OI del lado en este strike.",
+        "ventana": "zona = +/- min(1.5*EM, 18%); EM = precio*IV_ATM*sqrt(DTE/365). "
+                   "IV_ATM = IV ponderada por OI a +/-5% del precio. dist recalc vs close.",
+        "fuente":  "opciones_pcr_plazo_diario.soporte_strike, soporte_oi, soporte_fuerza",
+        "umbral":  "valido si OI >= 1000 y dist >= 15% de la zona (piso 0.5%)",
     },
     "muro_resistencia": {
-        "formula": "Strike con mayor CALL OI por encima del precio (zona +10%).",
-        "ventana": "por plazo; distancia recalculada vs close del dia",
-        "fuente":  "opciones_pcr_plazo_diario.resistencia_strike, resistencia_oi",
-        "umbral":  "valido si OI >= 3x mediana de la zona y >= 1000 y dist >= 2%",
+        "formula": "Strike con mayor OI COMBINADO (call+put) por ENCIMA del precio, "
+                   "dentro de la zona dinamica. fuerza = % del OI del lado en este strike.",
+        "ventana": "zona = +/- min(1.5*EM, 18%); EM = precio*IV_ATM*sqrt(DTE/365). "
+                   "IV_ATM = IV ponderada por OI a +/-5% del precio. dist recalc vs close.",
+        "fuente":  "opciones_pcr_plazo_diario.resistencia_strike, resistencia_oi, resistencia_fuerza",
+        "umbral":  "valido si OI >= 1000 y dist >= 15% de la zona (piso 0.5%)",
     },
     "pcr_vol_sec": {
         "formula": "PCR_vol sectorial = suma put_vol / suma call_vol de los tickers del sector.",
@@ -193,13 +197,16 @@ def _seccion_opciones(datos) -> list:
                            f"put_oi {b.get('put_oi', DASH)} / call_oi {b.get('call_oi', DASH)}"
                            f"; OI total {oi_total if oi_total is not None else DASH}", "pcr_oi"))
         pw, cw = b.get("put_wall"), b.get("call_wall")
+        zona_s = f"; zona {fmt(b.get('zona_pct'), 1)}%" if b.get("zona_pct") is not None else ""
         filas.append(_fila(f"Soporte ({lbl})",
                            f"{fmt(pw['strike'])} ({pw['dist_pct']:+.1f}%)" if pw else DASH,
-                           f"strike {fmt(pw['strike'])} con OI {pw['oi']}" if pw else "sin muro valido",
+                           (f"strike {fmt(pw['strike'])} OI {pw['oi']} fuerza {fmt(pw.get('fuerza'),0)}%{zona_s}"
+                            if pw else f"sin muro valido{zona_s}"),
                            "muro_soporte"))
         filas.append(_fila(f"Resistencia ({lbl})",
                            f"{fmt(cw['strike'])} ({cw['dist_pct']:+.1f}%)" if cw else DASH,
-                           f"strike {fmt(cw['strike'])} con OI {cw['oi']}" if cw else "sin muro valido",
+                           (f"strike {fmt(cw['strike'])} OI {cw['oi']} fuerza {fmt(cw.get('fuerza'),0)}%{zona_s}"
+                            if cw else f"sin muro valido{zona_s}"),
                            "muro_resistencia"))
     return filas
 

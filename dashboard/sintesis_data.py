@@ -41,11 +41,12 @@ def _f(val):
         return None
 
 
-def _muro_recalc(strike, oi, close) -> dict | None:
+def _muro_recalc(strike, oi, fuerza, close) -> dict | None:
     """
-    Recalcula el muro de OI con el close diario real (no con precio_sub del
-    snapshot, que es el cierre del dia anterior). dist_pct negativo = debajo
-    (soporte); positivo = arriba (resistencia).
+    Muro de OI v2. dist_pct se recalcula con el close diario real como defensa
+    ante un precio_sub desfasado (hoy precio_sub=yahooquery ya coincide con el
+    close, pero el recalculo es barato y robusto). fuerza = % de concentracion
+    del OI del lado en este muro (viene de la tabla, no se recalcula).
     """
     s, c = _f(strike), _f(close)
     if s is None or c is None or c == 0:
@@ -55,6 +56,7 @@ def _muro_recalc(strike, oi, close) -> dict | None:
         "strike":   round(s, 2),
         "oi":       int(oi) if oi is not None else None,
         "dist_pct": round(dist, 2),
+        "fuerza":   _f(fuerza),
         "posicion": "debajo" if dist < 0 else "arriba",
     }
 
@@ -211,7 +213,9 @@ def _opciones_plazo(ticker: str, close) -> dict:
         """
         SELECT ventana, pcr_vol, pcr_oi, veredicto_oi, precio_sub,
                call_vol, put_vol, call_oi, put_oi,
-               soporte_strike, soporte_oi, resistencia_strike, resistencia_oi
+               soporte_strike, soporte_oi, soporte_fuerza,
+               resistencia_strike, resistencia_oi, resistencia_fuerza,
+               expected_move, zona_pct
         FROM   opciones_pcr_plazo_diario
         WHERE  ticker = :t
           AND  fecha = (SELECT MAX(fecha) FROM opciones_pcr_plazo_diario WHERE ticker = :t)
@@ -224,13 +228,15 @@ def _opciones_plazo(ticker: str, close) -> dict:
             "pcr_vol":      _f(r["pcr_vol"]),
             "pcr_oi":       _f(r["pcr_oi"]),
             "veredicto_oi": _VER_MAP.get(r["veredicto_oi"]),
-            "put_wall":     _muro_recalc(r["soporte_strike"], r["soporte_oi"], close),
-            "call_wall":    _muro_recalc(r["resistencia_strike"], r["resistencia_oi"], close),
+            "put_wall":     _muro_recalc(r["soporte_strike"], r["soporte_oi"], r["soporte_fuerza"], close),
+            "call_wall":    _muro_recalc(r["resistencia_strike"], r["resistencia_oi"], r["resistencia_fuerza"], close),
             # Crudos (para el papel de trabajo)
             "call_vol":     int(r["call_vol"]) if r["call_vol"] is not None else None,
             "put_vol":      int(r["put_vol"])  if r["put_vol"]  is not None else None,
             "call_oi":      int(r["call_oi"])  if r["call_oi"]  is not None else None,
             "put_oi":       int(r["put_oi"])   if r["put_oi"]   is not None else None,
+            "expected_move": _f(r["expected_move"]),
+            "zona_pct":      _f(r["zona_pct"]),
         }
     return out
 
