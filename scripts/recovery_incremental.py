@@ -513,21 +513,64 @@ def recover_futuros(engine, target_date: date, args, downloader) -> dict:
 
 # ── Determinar fecha target ───────────────────────────────────────────────────
 
-def calcular_target_date() -> date:
+def determinar_ultima_fecha_confirmada(ticker_ref: str = "AAPL") -> date:
     """
-    Ultimo dia habil cuyos datos deberian estar disponibles.
-    Regla: si UTC < 21:00, el cierre de hoy NO esta cerrado todavia,
-    asi que el target es el dia habil anterior.
+    Ultima fecha de cierre CONFIRMADA disponible, segun yahooquery (DATA-DRIVEN:
+    la fecha sale del dato, NO del reloj local).
+
+    Motivo (3/6/2026): la version anterior (calcular_target_date) calculaba el
+    target por reloj mezclando date.today() (hora LOCAL) con utcnow().hour (UTC).
+    Al correr el paso 1 entre las 21:00-23:59 hora local (UTC-3), en UTC ya habia
+    pasado la medianoche -> utcnow().hour chico (<21) -> retrocedia un dia de mas
+    -> "nada para actualizar" aunque el cierre del dia YA estaba disponible.
+
+    Enfoque correcto: preguntarle a la fuente.
+      - history(interval='1d') trae cada OHLCV con su fecha exacta.
+      - .price.marketState dice si el mercado esta abierto AHORA.
+      - Si marketState=REGULAR (abierto) la vela del dia en curso es PARCIAL
+        (OHLC incompleto) -> se descarta y se usa la anterior (ultima confirmada).
+      - Si cerrado (CLOSED/POST/PRE) la ultima vela del history es confirmada.
+    Asi la hora de extraccion es IRRELEVANTE: solo importa que fecha de cierre
+    esta disponible y si esta confirmada.
+
+    Fallback: si yahooquery no responde, cae al calendario en UTC (consistente,
+    sin mezclar husos).
     """
-    from src.utils.trading_calendar import is_trading_day, prev_trading_day
+    try:
+        from yahooquery import Ticker
+        import pandas as pd
 
-    hoy = date.today()
-    target = hoy if is_trading_day(hoy) else prev_trading_day(hoy)
+        t = Ticker(ticker_ref)
+        estado = str(t.price.get(ticker_ref, {}).get("marketState", "")).upper()
+        df = t.history(period="10d", interval="1d")
+        if df is None or getattr(df, "empty", True):
+            raise ValueError("history vacio")
 
-    utc_now = datetime.utcnow()
-    if target == hoy and utc_now.hour < 21:
-        target = prev_trading_day(target)
-    return target
+        # Fechas del index (MultiIndex symbol/date o plano), normalizadas a date
+        if isinstance(df.index, pd.MultiIndex):
+            crudas = [idx[1] for idx in df.index]
+        else:
+            crudas = list(df.index)
+        fechas = sorted({pd.Timestamp(f).date() for f in crudas})
+        if not fechas:
+            raise ValueError("sin fechas en history")
+
+        ultima = fechas[-1]
+        # Mercado abierto -> la ultima vela es parcial -> usar la anterior
+        if estado.startswith("REGULAR") and len(fechas) >= 2:
+            ultima = fechas[-2]
+        log(f"  Fecha confirmada via yahooquery: {ultima} (marketState={estado or 'N/D'})")
+        return ultima
+
+    except Exception as e:
+        log(f"  [WARN] fecha via yahooquery fallo ({str(e)[:80]}); fallback calendario UTC")
+        from src.utils.trading_calendar import is_trading_day, prev_trading_day
+        utc_now = datetime.utcnow()
+        hoy = utc_now.date()
+        target = hoy if is_trading_day(hoy) else prev_trading_day(hoy)
+        if target == hoy and utc_now.hour < 21:
+            target = prev_trading_day(target)
+        return target
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -570,7 +613,7 @@ def main():
     downloader = get_downloader(args.engine)
 
     engine = get_engine()
-    target_date = calcular_target_date()
+    target_date = determinar_ultima_fecha_confirmada()
 
     print()
     print(SEP)
