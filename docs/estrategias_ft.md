@@ -9,6 +9,15 @@
 #   Todas las estrategias usan precio de cierre del dia de la senal.
 #   Esto es consciente y aceptado (ver forward_testing.md).
 #   No se usa precio de mercado en tiempo real (sin Alpaca).
+#
+# ACTUALIZACION 2026-06-04 (Plan B, Tarea 16):
+#   La logica de decision de 3 estrategias se MOVIO a un cerebro COMPARTIDO
+#   FT <-> Alpaca en `src/strategies/` (scoring/sectorial/ml_scanner, PURO).
+#   ft_scoring.py re-exporta calcular_score_tecnico desde ahi (importadores
+#   intactos). Los 3 bots Alpaca de produccion (ML_SCANNER_v1, TECH_SECTOR_v1,
+#   TECH_SECTOR_OPTIONS_v2) consumen ese mismo cerebro -> deciden identico a su
+#   bot FT homonimo. Detalle de la arquitectura de produccion: docs/bots_alpaca.md.
+#   Este documento sigue siendo la spec conceptual de las logicas FT.
 
 ---
 

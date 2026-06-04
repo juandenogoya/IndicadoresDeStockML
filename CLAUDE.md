@@ -46,6 +46,10 @@ Documentacion que existe hoy en docs/:
 - docs/reportes.md        : modulo scripts/reports/ -- generador de PDF e
                             infografias para compartir analisis en X
 - docs/estrategias_ft.md  : estrategias de forward testing
+- docs/bots_alpaca.md     : arquitectura de produccion de los 3 bots Alpaca
+                            (Plan B): masticada senales_bot_diaria, cerebro
+                            COMPARTIDO src/strategies/, adapters src/trading/,
+                            mapeo bot->cuenta->tabla, guard de frescura, decisiones.
 - docs/forward_testing/   : detalle de forward testing
 - docs/infografia_fundamental.md : spec de diseno de la infografia fundamental
                             para X/redes (formato 4:5, layout 5 bloques, set de
@@ -203,6 +207,9 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria |
 | `scripts/push_senales_bot.py` | Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
+| `scripts/alpaca/bot_ml.py` / `bot_tech_sector.py` / `bot_options.py` | Los 3 bots Alpaca Plan B (entrypoints GH Actions). Leen la masticada, deciden con el cerebro src/strategies/, ejecutan via src/trading/ejecucion_bot. `--dry-run` / `--ignore-frescura`. Ver docs/bots_alpaca.md |
+| `src/strategies/` | Cerebro de decision COMPARTIDO FT<->Alpaca (PURO): scoring (calcular_score_tecnico), sectorial (v1/v2), ml_scanner |
+| `src/trading/senales_adapter.py` / `ejecucion_bot.py` | Adapters Alpaca: data (masticada->cerebro) + ejecucion (alpaca_client + posiciones_bot*/operaciones_bot*) |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
