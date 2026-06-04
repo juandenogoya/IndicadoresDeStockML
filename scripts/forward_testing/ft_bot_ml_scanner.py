@@ -35,6 +35,10 @@ configurar_entorno_local()
 from sqlalchemy import text
 from src.data.database import get_engine
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
+# Cerebro de decision COMPARTIDO FT <-> Alpaca (Plan B, Tarea 16)
+from src.strategies.ml_scanner import (
+    ConfigML, evaluar_cierres_ml, evaluar_entradas_ml,
+)
 
 from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_posiciones_abiertas,
@@ -53,6 +57,18 @@ MAX_DEPLOY_PCT    = 0.80     # nunca desplegar mas del 80% del capital
 RIESGO_POR_TRADE  = 0.15     # 15% del capital actual por trade
 SL_PCT            = 0.05     # Stop loss 5%
 TP_PCT            = 0.10     # Take profit 10%
+
+# Config del cerebro compartido
+CFG_ML = ConfigML(
+    nombre=NOMBRE_ESTRATEGIA,
+    score_min=SCORE_MIN,
+    nivel_min=NIVEL_MIN,
+    max_posiciones=MAX_POSICIONES,
+    max_deploy_pct=MAX_DEPLOY_PCT,
+    riesgo_por_trade=RIESGO_POR_TRADE,
+    sl_pct=SL_PCT,
+    tp_pct=TP_PCT,
+)
 
 
 # ── Datos de scanner ──────────────────────────────────────────────────────────
@@ -95,144 +111,10 @@ def obtener_estado_scanner_tickers(tickers: list[str]) -> dict[str, dict]:
     return {r.ticker: dict(r._mapping) for r in rows}
 
 
-# ── Evaluacion de cierres ─────────────────────────────────────────────────────
-
-def evaluar_cierres(
-    posiciones:   list[dict],
-    precios:      dict[str, float],
-    earnings_map: dict[str, date],
-) -> list[dict]:
-    """
-    Evalua posiciones abiertas y detecta condiciones de salida.
-
-    Prioridades:
-        P1. Earnings manana     (prioridad absoluta)
-        P2. Score degradado     (nivel ya no es COMPRA_FUERTE o score < minimo)
-        P3. Stop loss 5%
-        P4. Take profit 10%
-    """
-    if not posiciones:
-        return []
-
-    tickers      = [p["ticker"] for p in posiciones]
-    scanner_map  = obtener_estado_scanner_tickers(tickers)
-    a_cerrar     = []
-
-    for pos in posiciones:
-        ticker         = pos["ticker"]
-        precio_entrada = float(pos["precio_entrada"])
-        precio_actual  = precios.get(ticker)
-        sl             = round(precio_entrada * (1 - SL_PCT), 4)
-        tp             = round(precio_entrada * (1 + TP_PCT), 4)
-
-        if not precio_actual:
-            log(f"  [WARN] Sin precio para {ticker}, se omite evaluacion.")
-            continue
-
-        motivo = None
-
-        # P1: Earnings
-        if ticker in earnings_map:
-            motivo = "EARNINGS_MANANA"
-
-        # P2: Score degradado
-        elif ticker not in scanner_map:
-            motivo = "SCORE_DEGRADADO_sin_senal"
-        else:
-            scan = scanner_map[ticker]
-            if scan["nivel"] != NIVEL_MIN or float(scan["score"]) < SCORE_MIN:
-                motivo = f"SCORE_DEGRADADO_{scan['nivel']}_{scan['score']:.0f}"
-
-        # P3: Stop loss
-        if not motivo and precio_actual <= sl:
-            motivo = "STOP_LOSS"
-
-        # P4: Take profit
-        if not motivo and precio_actual >= tp:
-            motivo = "TAKE_PROFIT"
-
-        if motivo:
-            a_cerrar.append({
-                **pos,
-                "precio_cierre": precio_actual,
-                "motivo":        motivo,
-            })
-
-    return a_cerrar
-
-
-# ── Evaluacion de entradas ────────────────────────────────────────────────────
-
-def evaluar_entradas(
-    posiciones:        list[dict],
-    estrategia:        dict,
-    precios:           dict[str, float],
-    tickers_bloqueados: set,
-) -> list[dict]:
-    """
-    Evalua senales del scanner y retorna candidatos para abrir posicion.
-    """
-    tickers_abiertos = {p["ticker"] for p in posiciones}
-    bloqueados       = tickers_bloqueados | tickers_abiertos
-    senales          = obtener_senales_scanner()
-    capital_actual   = float(estrategia["capital_actual"])
-    slots_libres     = MAX_POSICIONES - len(posiciones)
-
-    if slots_libres <= 0:
-        log("  Maximo de posiciones alcanzado, sin entradas.")
-        return []
-
-    # Cash efectivo respetando el techo de despliegue del 80%
-    cash = calcular_cash_desplegable(estrategia, MAX_DEPLOY_PCT)
-    if cash <= 0:
-        pct_actual = float(estrategia["capital_inmovilizado"]) / capital_actual * 100
-        log(f"  Techo de despliegue alcanzado ({pct_actual:.1f}% desplegado, "
-            f"max={MAX_DEPLOY_PCT*100:.0f}%). Sin entradas.")
-        return []
-
-    a_abrir = []
-
-    for senal in senales:
-        if len(a_abrir) >= slots_libres:
-            break
-
-        ticker = senal["ticker"]
-        if ticker in bloqueados:
-            continue
-
-        precio = precios.get(ticker)
-        if not precio:
-            continue
-
-        qty = calcular_qty_ft(cash, precio, RIESGO_POR_TRADE, capital_actual)
-        if qty < 1:
-            log(f"  [SKIP] {ticker}: capital insuficiente (precio={precio:.2f})")
-            continue
-
-        capital_trade = round(precio * qty, 2)
-        if capital_trade > cash:
-            log(f"  [SKIP] {ticker}: trade ({capital_trade:.2f}) supera cash ({cash:.2f})")
-            continue
-
-        sl = round(precio * (1 - SL_PCT), 4)
-        tp = round(precio * (1 + TP_PCT), 4)
-
-        a_abrir.append({
-            "ticker":      ticker,
-            "precio":      precio,
-            "qty":         qty,
-            "capital":     capital_trade,
-            "sl":          sl,
-            "tp":          tp,
-            "score":       float(senal["score"]),
-            "nivel":       senal["nivel"],
-            "scan_fecha":  str(senal["scan_fecha"]),
-        })
-
-        # Descontar del cash proyectado para los siguientes candidatos
-        cash -= capital_trade
-
-    return a_abrir
+# ── Decision: la logica vive en src/strategies/ml_scanner.py (CFG_ML). Aca ────
+#    quedan solo los adapters de datos (obtener_senales_scanner / obtener_estado_
+#    scanner_tickers) y el runner. evaluar_cierres_ml / evaluar_entradas_ml se
+#    importan del modulo compartido.
 
 
 # ── Runner principal ──────────────────────────────────────────────────────────
@@ -273,7 +155,10 @@ def run(dry_run: bool = False):
     # 5. Evaluar cierres
     log(sep)
     log("CIERRES:")
-    a_cerrar = evaluar_cierres(posiciones, precios, earnings_cierre)
+    scanner_map = obtener_estado_scanner_tickers([p["ticker"] for p in posiciones])
+    a_cerrar = evaluar_cierres_ml(
+        posiciones, precios, earnings_cierre, scanner_map, CFG_ML, log=log,
+    )
 
     if not a_cerrar:
         log("  Sin posiciones a cerrar.")
@@ -307,7 +192,14 @@ def run(dry_run: bool = False):
     # 8. Evaluar entradas
     log(sep)
     log("ENTRADAS:")
-    a_abrir = evaluar_entradas(posiciones, estrategia, precios, tickers_bloqueados)
+    cash = calcular_cash_desplegable(estrategia, MAX_DEPLOY_PCT)
+    a_abrir = evaluar_entradas_ml(
+        posiciones, todas_las_senales, precios, tickers_bloqueados,
+        cash=cash,
+        capital_actual=float(estrategia["capital_actual"]),
+        capital_inmovilizado=float(estrategia["capital_inmovilizado"]),
+        cfg=CFG_ML, log=log,
+    )
 
     if not a_abrir:
         log("  Sin senales de entrada.")

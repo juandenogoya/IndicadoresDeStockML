@@ -62,6 +62,10 @@ from sqlalchemy import text
 from src.data.database import get_engine
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 from scripts.forward_testing.ft_scoring import calcular_score_tecnico
+# Cerebro de decision COMPARTIDO FT <-> Alpaca (Plan B, Tarea 16)
+from src.strategies.sectorial import (
+    ConfigSectorial, evaluar_cierres_sectorial, evaluar_entradas_sectorial,
+)
 from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_precios_cierre_todos,
     abrir_operacion, cerrar_operacion,
@@ -105,6 +109,23 @@ MIN_VOL_POR_VENTANA    = 500   # volumen minimo (call+put) para ventana valida
 PCR_SCORE_ENTRADA_MIN  = 2     # al menos 2/3 ventanas Alcistas para entrar
 PCR_SCORE_SALIDA_MAX   = 0     # 0/3 = todas Bajistas -> cerrar (con tech degradado)
 PCR_SCORE_RETENCION    = 1     # >= 1 ventana Alcista -> retener
+
+# Config del cerebro compartido (variante v2: con gate de opciones)
+CFG = ConfigSectorial(
+    nombre=NOMBRE_ESTRATEGIA,
+    sectores_activos=SECTORES_ACTIVOS,
+    sector_budget=SECTOR_BUDGET,
+    max_pos_sector=MAX_POS_SECTOR,
+    position_size=POSITION_SIZE,
+    score_entrada=SCORE_ENTRADA,
+    score_salida=SCORE_SALIDA,
+    atr_mult_sl=ATR_MULT_SL,
+    atr_mult_tp=ATR_MULT_TP,
+    score_maximo=SCORE_MAXIMO,
+    usar_opciones=True,
+    pcr_score_entrada_min=PCR_SCORE_ENTRADA_MIN,
+    pcr_score_salida_max=PCR_SCORE_SALIDA_MAX,
+)
 
 
 # ── Opciones: PCR_VOL por ventana ────────────────────────────────────────────
@@ -315,263 +336,9 @@ def obtener_estado_tecnico_tickers(tickers: list[str]) -> dict[str, dict]:
     return {r.ticker: dict(r._mapping) for r in rows}
 
 
-# ── Evaluacion de cierres ─────────────────────────────────────────────────────
-
-def evaluar_cierres(
-    posiciones:      list[dict],
-    precios:         dict[str, float],
-    earnings_map:    dict[str, date],
-    indicadores_map: dict[str, dict],
-    pcr_map:         dict[str, dict],
-) -> tuple[list[dict], list[str]]:
-    """
-    Evalua que posiciones cerrar segun las prioridades definidas.
-    Retorna (a_cerrar, tickers_retenidos_por_opciones).
-
-    P0. Earnings manana           -> EARNINGS_MANANA
-    P1. precio <= SL              -> STOP_LOSS_ATR
-    P2. precio >= TP              -> TAKE_PROFIT_ATR
-    P3. score <= 3.5 AND pcr = 0  -> SCORE_DEGRADADO_OPCIONES
-    P3b. score <= 3.5 AND pcr >= 1 -> RETENCION_OPCIONES (no cierra)
-    """
-    a_cerrar   = []
-    retenidos  = []
-
-    for pos in posiciones:
-        ticker    = pos["ticker"]
-        precio    = precios.get(ticker)
-        sl        = float(pos["stop_loss"])  if pos.get("stop_loss")  else None
-        tp        = float(pos["take_profit"]) if pos.get("take_profit") else None
-        ind       = indicadores_map.get(ticker)
-        pcr_info  = pcr_map.get(ticker, {})
-
-        if not precio:
-            log(f"  [WARN] Sin precio para {ticker}, se omite.")
-            continue
-
-        motivo = None
-
-        # P0: Earnings
-        if ticker in earnings_map:
-            motivo = "EARNINGS_MANANA"
-
-        # P1: Stop loss
-        elif sl and precio <= sl:
-            motivo = "STOP_LOSS_ATR"
-
-        # P2: Take profit
-        elif tp and precio >= tp:
-            motivo = "TAKE_PROFIT_ATR"
-
-        # P3 / P3b: Score degradado + confirmacion de opciones
-        elif ind:
-            score_actual, _ = calcular_score_tecnico(ind)
-            if score_actual <= SCORE_SALIDA:
-                pcr_score = pcr_info.get("pcr_score", 0)
-                pcr_valido = pcr_info.get("valido", False)
-
-                if not pcr_valido or pcr_score <= PCR_SCORE_SALIDA_MAX:
-                    # Sin datos de opciones O todas las ventanas bajistas -> cerrar
-                    motivo = "SCORE_DEGRADADO_OPCIONES"
-                else:
-                    # Al menos 1 ventana de opciones es Alcista -> retener
-                    v_corto = pcr_info.get("corto", "?")
-                    v_medio = pcr_info.get("medio", "?")
-                    v_largo = pcr_info.get("largo", "?")
-                    log(f"  [RETENCION_OPCIONES] {ticker}: "
-                        f"score={score_actual:.1f} pcr_score={pcr_score}/3 "
-                        f"({v_corto}/{v_medio}/{v_largo})")
-                    retenidos.append(ticker)
-
-        if motivo:
-            a_cerrar.append({
-                **pos,
-                "precio_cierre": precio,
-                "motivo":        motivo,
-            })
-
-    return a_cerrar, retenidos
-
-
-# ── Evaluacion de entradas por sector ─────────────────────────────────────────
-
-def evaluar_entradas_sectorial(
-    posiciones:         list[dict],
-    indicadores:        list[dict],
-    precios:            dict[str, float],
-    pcr_map:            dict[str, dict],
-    tickers_bloqueados: set,
-    tickers_cerrados:   set,
-) -> tuple[list[dict], list[dict]]:
-    """
-    Para cada sector con slots disponibles:
-        Gate 1: tech_score >= SCORE_ENTRADA
-        Gate 2: pcr_score >= PCR_SCORE_ENTRADA_MIN Y ticker valido en opciones
-        Ranking: tech_score DESC, pcr_score DESC
-
-    Retorna (a_abrir, candidatos_log) donde candidatos_log incluye
-    los rechazados con su motivo_skip para registro en ft_candidatos_diarios.
-    """
-    tickers_abiertos = {p["ticker"] for p in posiciones}
-    excluidos        = tickers_bloqueados | tickers_abiertos | tickers_cerrados
-
-    sector_deployed = {}
-    sector_n_open   = {}
-    for pos in posiciones:
-        s = pos.get("sector", "Unknown")
-        sector_deployed[s] = sector_deployed.get(s, 0.0) + float(pos["capital_entrada"])
-        sector_n_open[s]   = sector_n_open.get(s, 0) + 1
-
-    # Evaluar todos los candidatos tecnicamente qualifying
-    candidatos_por_sector: dict[str, list] = {s: [] for s in SECTORES_ACTIVOS}
-    candidatos_log = []
-
-    for ind in indicadores:
-        t = ind["ticker"]
-        s = ind.get("sector", "Unknown")
-        if t in excluidos or s not in SECTORES_ACTIVOS:
-            continue
-
-        score, detalle = calcular_score_tecnico(ind)
-        if score < SCORE_ENTRADA:
-            continue
-
-        # Gate 2: opciones
-        pcr_info  = pcr_map.get(t, {})
-        pcr_valido = pcr_info.get("valido", False)
-        pcr_score  = pcr_info.get("pcr_score", 0)
-
-        if not pcr_valido:
-            candidatos_log.append({
-                "ticker":          t,
-                "score":           float(score),
-                "entro":           False,
-                "motivo_skip":     "SIN_LIQUIDEZ_OPCIONES",
-                "precio_apertura": precios.get(t),
-            })
-            continue
-
-        if pcr_score < PCR_SCORE_ENTRADA_MIN:
-            v_corto = pcr_info.get("corto", "?")
-            v_medio = pcr_info.get("medio", "?")
-            v_largo = pcr_info.get("largo", "?")
-            candidatos_log.append({
-                "ticker":          t,
-                "score":           float(score),
-                "entro":           False,
-                "motivo_skip":     f"PCR_CONSENSO_{v_corto}{v_medio}{v_largo}",
-                "precio_apertura": precios.get(t),
-            })
-            continue
-
-        # Pasa ambos gates -> candidato qualifying
-        candidatos_por_sector[s].append({
-            "ticker":    t,
-            "sector":    s,
-            "score":     score,
-            "pcr_score": pcr_score,
-            "detalle":   detalle,
-            "pcr_info":  pcr_info,
-            "ind":       ind,
-        })
-
-    # Ordenar por sector: tech_score DESC, pcr_score DESC
-    for s in candidatos_por_sector:
-        candidatos_por_sector[s].sort(
-            key=lambda x: (x["score"], x["pcr_score"]), reverse=True
-        )
-
-    a_abrir = []
-
-    for sector in SECTORES_ACTIVOS:
-        candidatos = candidatos_por_sector[sector]
-        deployed   = sector_deployed.get(sector, 0.0)
-        n_open     = sector_n_open.get(sector, 0)
-        available  = round(SECTOR_BUDGET - deployed, 2)
-        slots      = MAX_POS_SECTOR - n_open
-
-        if not candidatos:
-            continue
-        if slots <= 0:
-            log(f"  [{sector}] Lleno ({MAX_POS_SECTOR}/{MAX_POS_SECTOR}).")
-            continue
-        if available <= 0:
-            log(f"  [{sector}] Sin capital disponible.")
-            continue
-
-        log(f"  [{sector}] {len(candidatos)} qualifying | slots={slots} | "
-            f"disponible=${available:,.2f}")
-
-        avail_local = available
-
-        for c in candidatos:
-            if slots <= 0 or avail_local <= 0:
-                break
-
-            ticker = c["ticker"]
-            precio = precios.get(ticker)
-            if not precio:
-                continue
-
-            atr = float(c["ind"].get("atr14") or 0)
-            if not atr:
-                continue
-
-            qty = int(POSITION_SIZE / precio)
-            if qty < 1:
-                log(f"    [SKIP] {ticker}: precio ${precio:.2f} > position_size.")
-                continue
-
-            capital_trade = round(precio * qty, 2)
-            if capital_trade > avail_local:
-                log(f"    [SKIP] {ticker}: trade ${capital_trade:,.2f} > "
-                    f"disponible ${avail_local:,.2f}.")
-                continue
-
-            sl = round(precio - ATR_MULT_SL * atr, 4)
-            tp = round(precio + ATR_MULT_TP * atr, 4)
-
-            pcr_info = c["pcr_info"]
-            a_abrir.append({
-                "ticker":    ticker,
-                "sector":    sector,
-                "precio":    precio,
-                "qty":       qty,
-                "capital":   capital_trade,
-                "sl":        sl,
-                "tp":        tp,
-                "score":     c["score"],
-                "pcr_score": c["pcr_score"],
-                "pcr_info":  pcr_info,
-                "detalle":   c["detalle"],
-                "atr":       round(atr, 4),
-            })
-
-            candidatos_log.append({
-                "ticker":          ticker,
-                "score":           float(c["score"]),
-                "entro":           True,
-                "motivo_skip":     None,
-                "precio_apertura": precio,
-            })
-
-            avail_local -= capital_trade
-            slots       -= 1
-
-        # Los candidatos que no entraron por slots/capital
-        tickers_que_abrimos = {e["ticker"] for e in a_abrir}
-        for c in candidatos:
-            if c["ticker"] not in tickers_que_abrimos:
-                if not any(cl["ticker"] == c["ticker"] for cl in candidatos_log):
-                    candidatos_log.append({
-                        "ticker":          c["ticker"],
-                        "score":           float(c["score"]),
-                        "entro":           False,
-                        "motivo_skip":     f"CAPITAL_O_SLOTS_{sector}",
-                        "precio_apertura": precios.get(c["ticker"]),
-                    })
-
-    return a_abrir, candidatos_log
+# ── Decision: la logica vive en src/strategies/sectorial.py (CFG con ──────────
+#    usar_opciones=True). Aca quedan solo los adapters de datos (queries) y el
+#    runner. evaluar_cierres_sectorial / evaluar_entradas_sectorial se importan.
 
 
 # ── Runner principal ──────────────────────────────────────────────────────────
@@ -632,8 +399,9 @@ def run(dry_run: bool = False):
     # 6. Evaluar cierres
     log(sep)
     log("CIERRES:")
-    a_cerrar, retenidos = evaluar_cierres(
-        posiciones, precios, earnings_cierre, indicadores_map, pcr_map
+    a_cerrar, retenidos = evaluar_cierres_sectorial(
+        posiciones, precios, earnings_cierre, indicadores_map, CFG,
+        pcr_map=pcr_map, log=log,
     )
     tickers_cerrados = set()
 
@@ -678,8 +446,9 @@ def run(dry_run: bool = False):
     log(sep)
     log("ENTRADAS POR SECTOR:")
     a_abrir, candidatos_log = evaluar_entradas_sectorial(
-        posiciones, indicadores, precios, pcr_map,
-        tickers_bloqueados, tickers_cerrados,
+        posiciones, indicadores, precios,
+        tickers_bloqueados, tickers_cerrados, CFG,
+        pcr_map=pcr_map, log=log,
     )
 
     if not a_abrir:
