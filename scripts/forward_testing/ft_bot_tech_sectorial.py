@@ -48,6 +48,10 @@ from sqlalchemy import text
 from src.data.database import get_engine
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 from scripts.forward_testing.ft_scoring import calcular_score_tecnico
+# Cerebro de decision COMPARTIDO FT <-> Alpaca (Plan B, Tarea 16)
+from src.strategies.sectorial import (
+    ConfigSectorial, evaluar_cierres_sectorial, evaluar_entradas_sectorial,
+)
 
 from scripts.forward_testing.ft_utils import (
     log, cargar_estrategia, obtener_precios_cierre_todos,
@@ -78,6 +82,21 @@ SCORE_SALIDA       = 3.5
 SCORE_MAXIMO       = 5.5
 ATR_MULT_SL        = 2.0
 ATR_MULT_TP        = 4.0
+
+# Config del cerebro compartido (variante v1: solo tecnico, sin opciones)
+CFG = ConfigSectorial(
+    nombre=NOMBRE_ESTRATEGIA,
+    sectores_activos=SECTORES_ACTIVOS,
+    sector_budget=SECTOR_BUDGET,
+    max_pos_sector=MAX_POS_SECTOR,
+    position_size=POSITION_SIZE,
+    score_entrada=SCORE_ENTRADA,
+    score_salida=SCORE_SALIDA,
+    atr_mult_sl=ATR_MULT_SL,
+    atr_mult_tp=ATR_MULT_TP,
+    score_maximo=SCORE_MAXIMO,
+    usar_opciones=False,
+)
 
 
 # ── Queries especificas de este bot ──────────────────────────────────────────
@@ -167,190 +186,9 @@ def obtener_estado_tecnico_tickers(tickers: list[str]) -> dict[str, dict]:
     return {r.ticker: dict(r._mapping) for r in rows}
 
 
-# ── Evaluacion de cierres ─────────────────────────────────────────────────────
-
-def evaluar_cierres(
-    posiciones:      list[dict],
-    precios:         dict[str, float],
-    earnings_map:    dict[str, date],
-    indicadores_map: dict[str, dict],
-) -> list[dict]:
-    """
-    Mismas prioridades que FT_TECH_v1:
-        P1. Earnings manana  (prioridad absoluta)
-        P2. Score degradado  (<= SCORE_SALIDA)
-        P3. Stop loss ATR    (emergencia)
-        P4. Take profit ATR  (emergencia)
-    """
-    if not posiciones:
-        return []
-
-    a_cerrar = []
-
-    for pos in posiciones:
-        ticker         = pos["ticker"]
-        precio_entrada = float(pos["precio_entrada"])
-        precio_actual  = precios.get(ticker)
-        sl             = float(pos["stop_loss"])  if pos.get("stop_loss")  else None
-        tp             = float(pos["take_profit"]) if pos.get("take_profit") else None
-        ind            = indicadores_map.get(ticker)
-
-        if not precio_actual:
-            log(f"  [WARN] Sin precio para {ticker}, se omite.")
-            continue
-
-        motivo = None
-
-        # P1: Earnings
-        if ticker in earnings_map:
-            motivo = "EARNINGS_MANANA"
-
-        # P2: Score degradado
-        elif ind:
-            score_actual, _ = calcular_score_tecnico(ind)
-            if score_actual <= SCORE_SALIDA:
-                motivo = f"SCORE_DEGRADADO_{score_actual:.1f}"
-
-        # P3: Stop loss ATR
-        if not motivo and sl and precio_actual <= sl:
-            motivo = "STOP_LOSS_ATR"
-
-        # P4: Take profit ATR
-        if not motivo and tp and precio_actual >= tp:
-            motivo = "TAKE_PROFIT_ATR"
-
-        if motivo:
-            a_cerrar.append({
-                **pos,
-                "precio_cierre": precio_actual,
-                "motivo":        motivo,
-            })
-
-    return a_cerrar
-
-
-# ── Evaluacion de entradas por sector ─────────────────────────────────────────
-
-def evaluar_entradas_sectorial(
-    posiciones:         list[dict],
-    indicadores:        list[dict],
-    precios:            dict[str, float],
-    tickers_bloqueados: set,
-    tickers_cerrados:   set,
-) -> list[dict]:
-    """
-    Para cada sector:
-        1. Calcula cuanto capital ya esta desplegado en ese sector
-        2. Determina slots disponibles (max 5 por sector)
-        3. Rankea candidatos qualifying por score (desc)
-        4. Abre hasta completar slots o presupuesto sectorial
-    """
-    tickers_abiertos = {p["ticker"] for p in posiciones}
-    excluidos        = tickers_bloqueados | tickers_abiertos | tickers_cerrados
-
-    # Capital ya desplegado por sector
-    sector_deployed = {}
-    sector_n_open   = {}
-    for pos in posiciones:
-        s = pos.get("sector", "Unknown")
-        sector_deployed[s] = sector_deployed.get(s, 0.0) + float(pos["capital_entrada"])
-        sector_n_open[s]   = sector_n_open.get(s, 0) + 1
-
-    # Candidatos qualifying por sector (score >= SCORE_ENTRADA)
-    candidatos_por_sector: dict[str, list] = {s: [] for s in SECTORES_ACTIVOS}
-
-    for ind in indicadores:
-        t = ind["ticker"]
-        s = ind.get("sector", "Unknown")
-        if t in excluidos or s not in SECTORES_ACTIVOS:
-            continue
-        score, detalle = calcular_score_tecnico(ind)
-        if score < SCORE_ENTRADA:
-            continue
-        candidatos_por_sector[s].append({
-            "ticker":  t,
-            "sector":  s,
-            "score":   score,
-            "detalle": detalle,
-            "ind":     ind,
-        })
-
-    # Ordenar por score dentro de cada sector
-    for s in candidatos_por_sector:
-        candidatos_por_sector[s].sort(key=lambda x: x["score"], reverse=True)
-
-    a_abrir = []
-
-    for sector in SECTORES_ACTIVOS:
-        candidatos    = candidatos_por_sector[sector]
-        deployed      = sector_deployed.get(sector, 0.0)
-        n_open        = sector_n_open.get(sector, 0)
-        available     = round(SECTOR_BUDGET - deployed, 2)
-        slots         = MAX_POS_SECTOR - n_open
-
-        if not candidatos:
-            continue
-
-        if slots <= 0:
-            log(f"  [{sector}] Max posiciones ({MAX_POS_SECTOR}) alcanzado.")
-            continue
-
-        if available <= 0:
-            log(f"  [{sector}] Presupuesto sectorial agotado "
-                f"({deployed:,.2f}/{SECTOR_BUDGET:,.2f}).")
-            continue
-
-        log(f"  [{sector}] {len(candidatos)} candidatos | "
-            f"slots={slots} | disponible=${available:,.2f}")
-
-        avail_local = available   # copia local para descontar en el loop
-
-        for c in candidatos:
-            if slots <= 0 or avail_local <= 0:
-                break
-
-            ticker = c["ticker"]
-            precio = precios.get(ticker)
-            if not precio:
-                continue
-
-            atr = float(c["ind"].get("atr14") or 0)
-            if not atr:
-                log(f"    [SKIP] {ticker}: sin ATR14.")
-                continue
-
-            qty = int(POSITION_SIZE / precio)
-            if qty < 1:
-                log(f"    [SKIP] {ticker}: precio ${precio:.2f} > position_size "
-                    f"${POSITION_SIZE:,.2f} (1 share no cabe).")
-                continue
-
-            capital_trade = round(precio * qty, 2)
-            if capital_trade > avail_local:
-                log(f"    [SKIP] {ticker}: trade ${capital_trade:,.2f} > "
-                    f"disponible sector ${avail_local:,.2f}.")
-                continue
-
-            sl = round(precio - ATR_MULT_SL * atr, 4)
-            tp = round(precio + ATR_MULT_TP * atr, 4)
-
-            a_abrir.append({
-                "ticker":  ticker,
-                "sector":  sector,
-                "precio":  precio,
-                "qty":     qty,
-                "capital": capital_trade,
-                "sl":      sl,
-                "tp":      tp,
-                "score":   c["score"],
-                "detalle": c["detalle"],
-                "atr":     round(atr, 4),
-            })
-
-            avail_local -= capital_trade
-            slots       -= 1
-
-    return a_abrir
+# ── Decision: la logica vive en src/strategies/sectorial.py (CFG con ──────────
+#    usar_opciones=False). Aca quedan solo los adapters de datos (queries) y el
+#    runner. evaluar_cierres_sectorial / evaluar_entradas_sectorial se importan.
 
 
 # ── Runner principal ──────────────────────────────────────────────────────────
@@ -407,7 +245,9 @@ def run(dry_run: bool = False):
     log("CIERRES:")
     tickers_pos_all   = [p["ticker"] for p in posiciones]
     indicadores_map   = obtener_estado_tecnico_tickers(tickers_pos_all)
-    a_cerrar          = evaluar_cierres(posiciones, precios, earnings_cierre, indicadores_map)
+    a_cerrar, _       = evaluar_cierres_sectorial(
+        posiciones, precios, earnings_cierre, indicadores_map, CFG, log=log,
+    )
     tickers_cerrados  = set()
 
     if not a_cerrar:
@@ -443,9 +283,9 @@ def run(dry_run: bool = False):
     # 9. Evaluar entradas por sector
     log(sep)
     log("ENTRADAS POR SECTOR:")
-    a_abrir = evaluar_entradas_sectorial(
+    a_abrir, _ = evaluar_entradas_sectorial(
         posiciones, indicadores, precios,
-        tickers_bloqueados, tickers_cerrados,
+        tickers_bloqueados, tickers_cerrados, CFG, log=log,
     )
 
     if not a_abrir:
