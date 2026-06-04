@@ -11,22 +11,30 @@ pipeline diario, scanner ML, snapshot de opciones US/AR y backtest historico.
   mercado siguiente, justifica almacenamiento remoto siempre disponible).
 - **Oracle Cloud VM** = cron de snapshot opciones US (3 intentos) + opciones AR.
 - **GitHub Actions** = intento 3 (backup IP distinta) del snapshot opciones US.
-  Bots Alpaca (3): PAUSADOS desde 4/6/2026 (`disabled_manually`), en rediseño
-  Plan B (ver memory/bots_trading.md). Leian data congelada de Railway.
+  Bots Alpaca (3): rediseñados Plan B y ACTIVOS desde 4/6/2026 (Pasos 1-5 hechos).
+  Workflows repuntados a scripts/alpaca/ y habilitados. Ver memory/bots_trading.md.
 - **Windows** = recovery local manual post-cierre (recovery_incremental.bat).
 - **Streamlit** = pausado/no critico (Cloud sin uso, a limpiar). Reportes via
   CSV/Excel/HTML local.
 
-### Bots Alpaca -- rediseño Plan B (4/6/2026, en curso)
+### Bots Alpaca -- rediseño Plan B (4/6/2026, ACTIVO; Pasos 1-5 hechos)
 Los 3 bots leian tablas de mercado CONGELADAS en Railway (Plan C apago el pipeline
-que las alimentaba ~12/5) -> operaban con señales viejas. Reset a cero (Alpaca plano +
-TRUNCATE estado + workflows off) + rediseño:
-- 3 estrategias nuevas: ML, TECH_SECTOR_v1, TECH_SECTOR_OPTIONS_v2 (desde cero, $100k/bot).
+que las alimentaba ~12/5) -> operaban con señales viejas. Reset a cero + rediseño,
+ya implementado y en produccion (paper):
+- 3 estrategias: Bot1 ML, Bot2 TECH_SECTOR_v1, Bot3 TECH_SECTOR_OPTIONS_v2 ($100k/bot,
+  shares enteras, homologables a FT). v1 vs v2 aisla el aporte del dato de opciones.
 - Tabla masticada `senales_bot_diaria` (Railway): el bot "solo opera", lee señales
-  pre-computadas (no tablas crudas). Productor `push_senales_bot.py` (a crear) la arma
-  desde local tras ft_run_diario y la sube a Railway.
-- Logica de decision COMPARTIDA FT<->Alpaca (Opcion B). Habilita dropear las crudas de
-  Railway (~330 MB) + retencion de opciones. Detalle + pendientes: memory/bots_trading.md.
+  pre-computadas (no tablas crudas). Productor `scripts/push_senales_bot.py` la arma
+  desde LOCAL (conexion dual) tras ft_run_diario y la sube a Railway (paso final del
+  .bat). Rutina nocturna MANUAL (decision del usuario); guard de frescura evita operar
+  con masticada rancia -> saltarse una noche es seguro (los bots no tradean ese dia).
+- Cerebro de decision COMPARTIDO FT<->Alpaca (Opcion B) en `src/strategies/`
+  (scoring/sectorial/ml_scanner, PURO). Adapters en `src/trading/` (senales_adapter
+  lee la masticada; ejecucion_bot ejecuta+persiste por bot). Entrypoints en
+  `scripts/alpaca/` (bot_ml/bot_tech_sector/bot_options). Viejos scripts/30,31,32
+  JUBILADOS (sin borrar).
+- PENDIENTE (Pasos 6-7): verificar 1-2 dias paper; dropear crudas de Railway (~330 MB)
+  + retencion de opciones; limpiar Streamlit Cloud. Detalle: memory/bots_trading.md.
 
 ## Documentos de dominio
 
