@@ -629,18 +629,23 @@ def _sync_opciones_incremental(
         conn_check.close()
 
     log(f"  Max {col_fecha} local: {max_local}")
-    where = f"{col_fecha} > '{max_local}'" if max_local else "1=1"
+    # RE-PULL desde (e INCLUYENDO) el ultimo dia local con '>='.
+    # ON CONFLICT DO NOTHING hace el insert idempotente: completa dias que
+    # quedaron parciales (ej: un sync interrumpido a mitad) sin duplicar.
+    # Antes usabamos '>' estricto -> un dia parcial quedaba atrapado para
+    # siempre porque max_local ya apuntaba a esa fecha.
+    where = f"{col_fecha} >= '{max_local}'" if max_local else "1=1"
 
     # Contar filas a traer
     total = pd.read_sql(f"SELECT COUNT(*) as n FROM {tabla} WHERE {where}", rail_eng).iloc[0]["n"]
-    log(f"  Filas a insertar: {total}")
+    log(f"  Filas candidatas (re-pull {where}): {total}")
 
     if total == 0:
         log("  OK - sin datos nuevos")
         return 0
 
     if dry_run:
-        log(f"  DRY-RUN: insertaria {total} filas en {tabla}")
+        log(f"  DRY-RUN: upsert {total} filas en {tabla}")
         return int(total)
 
     if max_local is None:
@@ -660,59 +665,63 @@ def _sync_opciones_incremental(
             if_exists="append", index=False,
             method="multi", chunksize=chunksize
         )
-        log(f"  OK - {len(df_full)} filas insertadas en {tabla}")
+        log(f"  OK - {len(df_full):,} filas insertadas en {tabla}")
         return len(df_full)
 
-    # ── INCREMENTAL: tabla con datos, solo filas nuevas ───────────────────────
-    # Usamos execute_batch con ON CONFLICT DO NOTHING.
-    # NaN en columnas float se limpia manualmente via math.isnan().
-    inserted = 0
-    offset = 0
-    while offset < total:
-        df_chunk = pd.read_sql(
-            f"SELECT * FROM {tabla} WHERE {where} ORDER BY {col_fecha} LIMIT {chunksize} OFFSET {offset}",
-            rail_eng
-        )
-        if df_chunk.empty:
-            break
+    # ── INCREMENTAL / RE-PULL ─────────────────────────────────────────────────
+    # Cargamos TODO el set >= max_local de una sola vez (es chico: 1-2 dias) y
+    # lo insertamos en chunks. NO usamos paginacion LIMIT/OFFSET: con muchas
+    # filas compartiendo la misma fecha, 'ORDER BY fecha' tiene empates y el
+    # OFFSET no es determinista -> saltea/duplica filas. Cargar el set entero
+    # y chunquear el INSERT elimina el problema.
+    df_full = pd.read_sql(
+        f"SELECT * FROM {tabla} WHERE {where} ORDER BY {col_fecha}",
+        rail_eng
+    )
+    if "id" in df_full.columns:
+        df_full = df_full.drop(columns=["id"])
 
-        if "id" in df_chunk.columns:
-            df_chunk = df_chunk.drop(columns=["id"])
+    # Conteo local antes (para reportar inserciones reales)
+    before = query_scalar(
+        _get_local_sqlalchemy_engine(local_env),
+        f"SELECT COUNT(*) FROM {tabla} WHERE {where}"
+    )
 
-        cols = list(df_chunk.columns)
-        cols_str = ", ".join(cols)
-        placeholders = ", ".join([f"%({c})s" for c in cols])
-        sql = (
-            f"INSERT INTO {tabla} ({cols_str}) "
-            f"VALUES ({placeholders}) "
-            f"ON CONFLICT DO NOTHING"
-        )
+    cols = list(df_full.columns)
+    cols_str = ", ".join(cols)
+    placeholders = ", ".join([f"%({c})s" for c in cols])
+    sql = (
+        f"INSERT INTO {tabla} ({cols_str}) "
+        f"VALUES ({placeholders}) "
+        f"ON CONFLICT DO NOTHING"
+    )
 
-        # Limpiar NaN/inf -> None en todos los valores del dict
-        # (pandas guarda None como NaN en columnas float al hacer to_dict)
-        raw_records = df_chunk.to_dict("records")
-        records = [
-            {k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
-             for k, v in rec.items()}
-            for rec in raw_records
-        ]
-
-        conn = _opciones_local_conn(local_env)
-        try:
-            cur = conn.cursor()
+    conn = _opciones_local_conn(local_env)
+    try:
+        cur = conn.cursor()
+        for start in range(0, len(df_full), chunksize):
+            chunk = df_full.iloc[start:start + chunksize]
+            raw_records = chunk.to_dict("records")
+            records = [
+                {k: (None if isinstance(v, float) and (math.isnan(v) or math.isinf(v)) else v)
+                 for k, v in rec.items()}
+                for rec in raw_records
+            ]
             psycopg2.extras.execute_batch(cur, sql, records, page_size=500)
-            inserted += cur.rowcount if cur.rowcount > 0 else 0
             conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+            log(f"    {min(start + chunksize, len(df_full)):,}/{len(df_full):,} ...")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
-        offset += chunksize
-        log(f"    chunk {offset}/{total} ...")
-
-    log(f"  OK - {inserted} filas insertadas en {tabla}")
+    after = query_scalar(
+        _get_local_sqlalchemy_engine(local_env),
+        f"SELECT COUNT(*) FROM {tabla} WHERE {where}"
+    )
+    inserted = (after or 0) - (before or 0)
+    log(f"  OK - {inserted:,} filas nuevas insertadas (de {len(df_full):,} candidatas; resto ya existia)")
     return inserted
 
 
