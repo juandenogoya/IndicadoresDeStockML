@@ -204,6 +204,22 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
+REM ── PASO FINAL 2 - Push senales_bot_diaria (Plan B, bots Alpaca) ──
+REM  Productor HERMANO de FT: arma la tabla masticada desde la data
+REM  local fresca (incluido opciones que el paso [0] sincronizo) y la
+REM  sube a Railway. El bot Alpaca lee esa tabla, no las crudas.
+REM  Lee LOCAL y escribe RAILWAY (maneja su propia conexion dual).
+echo Push senales_bot_diaria (local -^> Railway)...
+echo. >> "%LOGFILE%"
+echo --- PUSH senales_bot_diaria --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\push_senales_bot.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [WARN] push_senales_bot.py fallo - bots Alpaca usarian senales previas.
+) ELSE (
+    echo [OK] senales_bot_diaria actualizada en Railway.
+)
+
+
 echo.
 echo ============================================================
 echo  Completado. Ver detalle en:

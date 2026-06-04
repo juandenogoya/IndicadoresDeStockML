@@ -10,10 +10,23 @@ pipeline diario, scanner ML, snapshot de opciones US/AR y backtest historico.
 - **Railway PostgreSQL** = SOLO opciones_snapshot (data irrecuperable post-
   mercado siguiente, justifica almacenamiento remoto siempre disponible).
 - **Oracle Cloud VM** = cron de snapshot opciones US (3 intentos) + opciones AR.
-- **GitHub Actions** = bots Alpaca (3) + intento 3 (backup IP distinta) del
-  snapshot opciones US.
+- **GitHub Actions** = intento 3 (backup IP distinta) del snapshot opciones US.
+  Bots Alpaca (3): PAUSADOS desde 4/6/2026 (`disabled_manually`), en rediseño
+  Plan B (ver memory/bots_trading.md). Leian data congelada de Railway.
 - **Windows** = recovery local manual post-cierre (recovery_incremental.bat).
-- **Streamlit** = pausado/no critico. Reportes via CSV/Excel/HTML local.
+- **Streamlit** = pausado/no critico (Cloud sin uso, a limpiar). Reportes via
+  CSV/Excel/HTML local.
+
+### Bots Alpaca -- rediseño Plan B (4/6/2026, en curso)
+Los 3 bots leian tablas de mercado CONGELADAS en Railway (Plan C apago el pipeline
+que las alimentaba ~12/5) -> operaban con señales viejas. Reset a cero (Alpaca plano +
+TRUNCATE estado + workflows off) + rediseño:
+- 3 estrategias nuevas: ML, TECH_SECTOR_v1, TECH_SECTOR_OPTIONS_v2 (desde cero, $100k/bot).
+- Tabla masticada `senales_bot_diaria` (Railway): el bot "solo opera", lee señales
+  pre-computadas (no tablas crudas). Productor `push_senales_bot.py` (a crear) la arma
+  desde local tras ft_run_diario y la sube a Railway.
+- Logica de decision COMPARTIDA FT<->Alpaca (Opcion B). Habilita dropear las crudas de
+  Railway (~330 MB) + retencion de opciones. Detalle + pendientes: memory/bots_trading.md.
 
 ## Documentos de dominio
 
@@ -180,7 +193,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
-| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML |
+| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria |
+| `scripts/push_senales_bot.py` | Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
@@ -282,6 +296,14 @@ Las criticas:
   sector+region con fila mediana). Solo lectura, no recalcula.
 - `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
   metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
+- `senales_bot_diaria` (RAILWAY) -- tabla MASTICADA Plan B para los 3 bots Alpaca
+  (Tarea 16). 1 fila por (ticker, fecha), ~18 cols, PK (ticker, fecha). El bot
+  "solo opera": lee senales pre-computadas, no las crudas. Columnas: close, sector,
+  alert_nivel/alert_score (ML), sma21/50/200/rsi14/macd/macd_signal/atr14 (tecnico),
+  pcr_score(0-3)/pcr_valido/pcr_corto/medio/largo (opciones PCR_VOL). La produce
+  scripts/push_senales_bot.py desde LOCAL (conexion dual) y la UPSERTea a Railway,
+  como paso final de ft_run_diario.bat. Es la unica tabla de mercado US que los
+  bots leeran de Railway (habilita el cleanup de crudas, ver bots_trading.md).
 
 ## Flujo de recovery manual (caso comun: Oracle cron fallo)
 
