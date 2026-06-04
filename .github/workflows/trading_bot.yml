@@ -46,7 +46,7 @@ jobs:
           BOT_NIVEL_MIN_COMPRA:  ${{ vars.BOT_NIVEL_MIN_COMPRA }}
           BOT_STOP_LOSS_PCT:     ${{ vars.BOT_STOP_LOSS_PCT }}
           BOT_TAKE_PROFIT_PCT:   ${{ vars.BOT_TAKE_PROFIT_PCT }}
-        run: python scripts/30_trading_bot.py
+        run: python scripts/alpaca/bot_ml.py
 
       - name: Notificar fallo en Telegram
         if: failure()
