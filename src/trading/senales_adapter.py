@@ -94,10 +94,24 @@ def sector_por_ticker(filas) -> dict:
     return {r["ticker"]: r["sector"] for r in filas}
 
 
+def fecha_esperada_hoy(hoy=None):
+    """
+    Ultima rueda cuyo cierre deberia estar en la masticada cuando el bot corre.
+
+    El bot corre intradia (15:15 UTC) sobre el cierre de la rueda ANTERIOR
+    (lag 1 dia, igual que FT): el productor arma la masticada la noche previa,
+    tras ft_run_diario. Por eso la fecha esperada = ultima rueda estrictamente
+    anterior a hoy (prev_trading_day), tanto en dia habil como en feriado/finde.
+    """
+    from datetime import date as _date
+    from src.utils.trading_calendar import prev_trading_day
+    return prev_trading_day(hoy or _date.today())
+
+
 def senales_frescas(fecha_masticada, fecha_esperada) -> bool:
     """
-    Primitiva del guard de frescura (Paso 4): True si la masticada es del dia
-    esperado. Si no se pasa fecha_esperada, no puede juzgar -> True (no bloquea).
+    Guard de frescura (Paso 4): True si la masticada es del dia esperado. Si no
+    se pasa fecha_esperada, no puede juzgar -> True (no bloquea).
     """
     if fecha_esperada is None or fecha_masticada is None:
         return True

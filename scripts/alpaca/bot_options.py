@@ -71,7 +71,7 @@ def log(msg: str):
     print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
 
 
-def run(dry_run: bool = False):
+def run(dry_run: bool = False, ignore_frescura: bool = False):
     sep = "-" * 60
     log(sep)
     log(f"BOT ALPACA 3 -- TECH_SECTOR_OPTIONS_v2 {'[DRY RUN]' if dry_run else '[REAL]'}")
@@ -84,6 +84,13 @@ def run(dry_run: bool = False):
         log("[ERROR] senales_bot_diaria vacia. Abort.")
         return
     log(f"Masticada: {len(filas)} tickers | fecha {fecha}")
+
+    fecha_esp = sa.fecha_esperada_hoy()
+    if not ignore_frescura and not sa.senales_frescas(fecha, fecha_esp):
+        log(f"[GUARD FRESCURA] masticada={fecha} != esperada={fecha_esp}. "
+            f"NO se opera (sin push del dia / datos rancios). --ignore-frescura para forzar.")
+        return
+    log(f"  Guard frescura: {'IGNORADO' if ignore_frescura else f'OK (esperada {fecha_esp})'}")
 
     indicadores     = filas
     precios         = sa.construir_precios(filas)
@@ -133,8 +140,10 @@ def run(dry_run: bool = False):
 def main():
     ap = argparse.ArgumentParser(description="Bot Alpaca 3 -- TECH_SECTOR_OPTIONS_v2")
     ap.add_argument("--dry-run", action="store_true", help="No envia ordenes ni escribe DB")
+    ap.add_argument("--ignore-frescura", action="store_true",
+                    help="Omite el guard de frescura (operar con la masticada actual)")
     args = ap.parse_args()
-    run(dry_run=args.dry_run)
+    run(dry_run=args.dry_run, ignore_frescura=args.ignore_frescura)
 
 
 if __name__ == "__main__":
