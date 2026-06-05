@@ -1,13 +1,14 @@
 name: Trading Bot Alpaca
 
-# Corre L-V a las 15:15 UTC = 11:15 ET
-# El cron diario (particionado) inicia a las 13:00 UTC.
-# El scanner ML (Paso 3) termina ~15:00 UTC.
-# Los bots corren con 15 min de margen para garantizar datos del dia.
+# Corre L-V a las 16:00 UTC = 13:00 ART = 12:00 ET (NYSE abierto 13:30-20:00 UTC).
+# Plan B: el bot lee la masticada senales_bot_diaria (Railway), que se produce en
+# la rutina local nocturna/matutina (manual). No depende del cron diario de GH.
+# El guard de frescura evita operar si la masticada no es de la rueda anterior.
+# Nota: GitHub Actions puede demorar los cron unos minutos en horas pico.
 
 on:
   schedule:
-    - cron: "15 15 * * 1-5"
+    - cron: "0 16 * * 1-5"
   workflow_dispatch:          # permite correr manualmente desde GitHub
 
 jobs:

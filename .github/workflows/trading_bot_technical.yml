@@ -1,13 +1,12 @@
 name: Trading Bot Tecnico (Alpaca #2)
 
-# Corre L-V a las 15:15 UTC = 11:15 ET
-# El cron diario (particionado) inicia a las 13:00 UTC.
-# El scanner ML (Paso 3) termina ~15:00 UTC.
-# Los 3 bots corren en paralelo a las 15:15 UTC con datos del dia.
+# Corre L-V a las 16:00 UTC = 13:00 ART = 12:00 ET (NYSE abierto 13:30-20:00 UTC).
+# Plan B: lee la masticada senales_bot_diaria (Railway, rutina local manual);
+# el guard de frescura evita operar con datos rancios. Los 3 bots en paralelo.
 
 on:
   schedule:
-    - cron: "15 15 * * 1-5"
+    - cron: "0 16 * * 1-5"
   workflow_dispatch:          # permite correr manualmente desde GitHub
 
 jobs:
