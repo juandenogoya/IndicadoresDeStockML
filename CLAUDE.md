@@ -14,8 +14,10 @@ pipeline diario, scanner ML, snapshot de opciones US/AR y backtest historico.
   Bots Alpaca (3): rediseñados Plan B y ACTIVOS desde 4/6/2026 (Pasos 1-5 hechos).
   Workflows repuntados a scripts/alpaca/ y habilitados. Ver memory/bots_trading.md.
 - **Windows** = recovery local manual post-cierre (recovery_incremental.bat).
-- **Streamlit** = pausado/no critico (Cloud sin uso, a limpiar). Reportes via
-  CSV/Excel/HTML local.
+- **Streamlit** = la app Cloud vieja (app/, indicadoresat) DECOMISIONADA (5/6/2026,
+  Paso 7): directorio app/ eliminado del repo; pendiente borrar la app en
+  share.streamlit.io (manual). Quedan SOLO apps Streamlit LOCALES: dashboard/
+  (informe por ticker) y scripts/reports/app.py (reportes/infografia).
 
 ### Bots Alpaca -- rediseño Plan B (4/6/2026, ACTIVO; Pasos 1-5 hechos)
 Los 3 bots leian tablas de mercado CONGELADAS en Railway (Plan C apago el pipeline
