@@ -71,11 +71,17 @@ if /i not "%CONFIRM%"=="s" (
 )
 
 echo.
-echo [3/3] Descargando snapshot para %FECHA% con yahooquery...
+echo [3/3] Descargando snapshot CRUDO para %FECHA% con yahooquery...
 echo ----------------------------------------
-python scripts/33_opciones_snapshot.py --fecha %FECHA% --engine yahooquery
+REM --solo-crudo (Tarea 17): captura solo opciones_snapshot (crudo) a Railway.
+REM Las derivadas (HV/resumen/zscore/pcr_plazo) se computan en LOCAL despues:
+REM   sync_local.bat (o ft_run_diario paso [0]) baja el crudo + compute_opciones_derivadas.py
+python scripts/33_opciones_snapshot.py --fecha %FECHA% --engine yahooquery --solo-crudo
 echo ----------------------------------------
 echo.
 echo Verificando estado de la DB (Railway)...
 python scripts/manual/db_status.py
+echo.
+echo RECORDÁ: las derivadas se computan en LOCAL. Tras sincronizar el crudo a local,
+echo corré: python scripts/compute_opciones_derivadas.py --fecha %FECHA%
 pause

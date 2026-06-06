@@ -645,7 +645,8 @@ def _check_datos_existentes(fecha: date) -> int:
 
 def cmd_run(tickers: list[str], dry_run: bool = False,
             fecha_override: Optional[date] = None, intento: int = 1,
-            engine: str = "yfinance", force: bool = False):
+            engine: str = "yfinance", force: bool = False,
+            solo_crudo: bool = False):
     fecha_hoy      = fecha_override or date.today()
     _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
 
@@ -750,8 +751,17 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
             log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  ERROR: {e}")
             errores += 1
 
+    # ── Derivadas (resumen / zscore / pcr_plazo) ─────────────────────────────
+    # Modo --solo-crudo (Tarea 17, migracion Plan C): la nube captura SOLO el crudo
+    # (opciones_snapshot, lo irrecuperable). Las derivadas se computan en LOCAL desde
+    # el crudo synced (scripts/compute_opciones_derivadas.py, paso [0b] de ft_run_diario)
+    # -> elimina la dependencia de precios_diarios en Railway (HV) y mantiene Railway minimo.
+    if solo_crudo:
+        log("")
+        log("  [SOLO-CRUDO] resumen/zscore/pcr_plazo NO se computan aqui -> se computan "
+            "en LOCAL (compute_opciones_derivadas.py).")
     # Persistir resumenes de todos los tickers en un solo bulk
-    if not dry_run and resumenes:
+    elif not dry_run and resumenes:
         n_res = persistir_resumenes(resumenes)
         log(f"")
         log(f"  Resumenes diarios: {n_res} tickers -> opciones_resumen_diario")
@@ -1299,6 +1309,10 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="Forzar el snapshot aunque la fecha no sea dia habil NYSE "
                              "(por defecto se saltea en feriados/fines de semana).")
+    parser.add_argument("--solo-crudo", action="store_true",
+                        help="Captura SOLO el crudo (opciones_snapshot). NO computa "
+                             "resumen/zscore/pcr_plazo: se computan en LOCAL (Tarea 17). "
+                             "Uso en la nube (Oracle/GH) post-migracion Plan C.")
     args = parser.parse_args()
 
     if args.init:
@@ -1320,7 +1334,8 @@ def main():
     fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
     tickers = args.ticker if args.ticker else list(ALL_TICKERS)
     cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override,
-            intento=args.intento, engine=args.engine, force=args.force)
+            intento=args.intento, engine=args.engine, force=args.force,
+            solo_crudo=args.solo_crudo)
 
 
 if __name__ == "__main__":

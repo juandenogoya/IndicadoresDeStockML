@@ -52,7 +52,7 @@ jobs:
         # --engine yahooquery: yfinance dejo de responder el endpoint de
         # opciones desde ~18/5/2026. yahooquery usa el mismo provider Yahoo
         # con otros endpoints y trae el chain entero en 1 call por ticker.
-        run: python scripts/33_opciones_snapshot.py --engine yahooquery --intento 3 --fecha $(date -d 'yesterday' +%Y-%m-%d)
+        run: python scripts/33_opciones_snapshot.py --engine yahooquery --solo-crudo --intento 3 --fecha $(date -d 'yesterday' +%Y-%m-%d)
 
       - name: Notificar fallo en Telegram
         if: failure()
