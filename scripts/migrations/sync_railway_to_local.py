@@ -726,49 +726,21 @@ def _sync_opciones_incremental(
 
 
 def sync_opciones(rail_eng, local_eng, dry_run: bool):
-    """Crea tablas de opciones en local si no existen y sincroniza desde Railway."""
+    """
+    Sincroniza SOLO opciones_snapshot (crudo) desde Railway.
+
+    Tarea 17 (migracion Plan C "snapshot nube solo-crudo"): la nube captura
+    unicamente el crudo; las derivadas (resumen/zscore/pcr_plazo/sector_*) ya NO
+    viven en Railway -> se computan en LOCAL via compute_opciones_derivadas.py
+    (paso [0b] de ft_run_diario, tras este sync). Por eso aca solo se trae el crudo.
+    """
     log("opciones -- creando tablas si no existen...")
     if not dry_run:
-        _create_opciones_tables_local(local_eng)
+        _create_opciones_tables_local(local_eng)  # crea snapshot + derivadas en local
 
     local_env = _parse_env_file(os.path.join(ROOT, ".env"))
 
-    # opciones_resumen_diario (pequena, ~2600 filas)
-    log("opciones_resumen_diario...")
-    n1 = _sync_opciones_incremental(
-        rail_eng, local_env, "opciones_resumen_diario", "fecha",
-        ["fecha", "ticker"], dry_run
-    )
-
-    # opciones_zscore_diario (pequena, ~2600 filas)
-    log("opciones_zscore_diario...")
-    n2 = _sync_opciones_incremental(
-        rail_eng, local_env, "opciones_zscore_diario", "fecha",
-        ["ticker", "fecha"], dry_run
-    )
-
-    # opciones_sector_zscore_diario (muy pequena, ~10 sectores x N fechas)
-    log("opciones_sector_zscore_diario...")
-    n2b = _sync_opciones_incremental(
-        rail_eng, local_env, "opciones_sector_zscore_diario", "fecha",
-        ["fecha", "sector"], dry_run
-    )
-
-    # opciones_pcr_plazo_diario (PCR + muros por ventana, por ticker)
-    log("opciones_pcr_plazo_diario...")
-    n2c = _sync_opciones_incremental(
-        rail_eng, local_env, "opciones_pcr_plazo_diario", "fecha",
-        ["fecha", "ticker", "ventana"], dry_run
-    )
-
-    # opciones_sector_pcr_plazo_diario (PCR sectorial por ventana)
-    log("opciones_sector_pcr_plazo_diario...")
-    n2d = _sync_opciones_incremental(
-        rail_eng, local_env, "opciones_sector_pcr_plazo_diario", "fecha",
-        ["fecha", "sector", "ventana"], dry_run
-    )
-
-    # opciones_snapshot (grande, ~1.2M filas) — chunks de 5000
+    # opciones_snapshot (crudo) -- unica tabla de opciones que vive en Railway.
     log("opciones_snapshot (puede tardar varios minutos)...")
     n3 = _sync_opciones_incremental(
         rail_eng, local_env, "opciones_snapshot", "fecha_snapshot",
@@ -776,10 +748,9 @@ def sync_opciones(rail_eng, local_eng, dry_run: bool):
         dry_run, chunksize=5000
     )
 
-    total = n1 + n2 + n2b + n2c + n2d + n3
-    log(f"  opciones total: resumen={n1} zscore={n2} sector_zscore={n2b} "
-        f"pcr_plazo={n2c} sector_pcr_plazo={n2d} snapshot={n3}")
-    return total
+    log(f"  opciones total: snapshot={n3} "
+        f"(derivadas se computan en LOCAL, no se sincronizan desde Railway)")
+    return n3
 
 
 # ── Sync: earnings_calendar ──────────────────────────────────────────────────
