@@ -1,0 +1,37 @@
+SHELL=/bin/bash
+HOME=/home/ubuntu
+
+# =============================================================
+#  Crontab de Oracle Cloud VM (pipeline-ml) -- REFERENCIA VERSIONADA
+#  Instalar en Oracle con:  crontab /home/ubuntu/oracle_crontab.txt
+#
+#  GIT PULL best-effort (6/6/2026): cada job hace `git pull --ff-only` de main
+#  ANTES de correr, para que Oracle NUNCA corra codigo viejo (antes no auto-
+#  pulleaba -> el snapshot corrio codigo pre-Plan-B durante semanas). El pull
+#  es best-effort: `|| true` -> si falla (sin red / no fast-forward), el job
+#  corre igual con el codigo actual (capturar el snapshot tiene prioridad).
+#  Log del pull: /tmp/cron_git_pull.log
+# =============================================================
+
+# ── Pipeline diario secuencial (precios -> features -> scanner) ───
+# L-V 22:00 UTC = 19:00 ART  |  wrapper verifica dia habil + abort-on-fail
+0 22 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && /home/ubuntu/IndicadoresDeStockML/scripts/oracle_pipeline_diario.sh
+
+# ── Opciones US (Yahoo Finance) ───────────────────────────────
+# Intento 1 -- 23:00 UTC L-V  |  Intento 2 -- 02:00 UTC Ma-Sa  |  Intento 4 -- 06:00 UTC Ma-Sa
+0 23 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/33_opciones_snapshot.py --engine yahooquery --intento 1 --fecha $(date +\%Y-\%m-\%d) >> /tmp/cron_opciones.log 2>&1
+0 2  * * 2-6 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/33_opciones_snapshot.py --engine yahooquery --intento 2 --fecha $(date -d 'yesterday' +\%Y-\%m-\%d) >> /tmp/cron_opciones.log 2>&1
+0 6  * * 2-6 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/33_opciones_snapshot.py --engine yahooquery --intento 4 --fecha $(date -d 'yesterday' +\%Y-\%m-\%d) >> /tmp/cron_opciones.log 2>&1
+
+# ── Opciones AR (IOL) ─────────────────────────────────────────
+# Snapshot mid-session 13:30 ART = 16:30 UTC  |  cierre 16:45 ART = 19:45 UTC
+30 16 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/38_opciones_ar_snapshot.py --force >> /tmp/cron_opciones_ar.log 2>&1
+45 19 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/38_opciones_ar_snapshot.py --force >> /tmp/cron_opciones_ar.log 2>&1
+
+# ── Scanner AR (IOL) ──────────────────────────────────────────
+# L-V 20:30 UTC = 17:30 ART (30 min post-cierre BCBA)
+30 20 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/37_scanner_ar.py >> /tmp/cron_scanner_ar.log 2>&1
+
+# --- Earnings calendar (Nasdaq) ------------------------------
+# Refresh semanal -- lunes 12:00 UTC (pre-mercado). Escribe Railway.
+0 12 * * 1 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/refresh_earnings_calendar.py --target railway >> /tmp/cron_earnings_calendar.log 2>&1
