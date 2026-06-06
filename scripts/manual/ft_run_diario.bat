@@ -55,6 +55,19 @@ IF %ERRORLEVEL% NEQ 0 echo [WARN] sync opciones fallo - bots 8/9 usaran datos pr
 IF %ERRORLEVEL% NEQ 0 echo [WARN] sync earnings_calendar fallo - filtro earnings usara datos previos.
 
 
+REM ── PASO [0b] - Computar derivadas de opciones en LOCAL ─────
+REM  Migracion "snapshot nube solo-crudo" (AGENDA Tarea 17): las derivadas de
+REM  opciones (HV, resumen_diario, zscore, pcr_plazo, sector_*) se computan en
+REM  LOCAL desde el crudo recien sincronizado (paso [0]), no en la nube.
+REM  Idempotente. Hoy convive con el calculo de la nube (lo reescribe igual);
+REM  cuando el snapshot pase a solo-crudo (Fase 2), esta sera la unica fuente.
+echo [0b/10] Computando derivadas de opciones en local (HV/resumen/zscore/pcr_plazo)...
+echo. >> "%LOGFILE%"
+echo --- COMPUTE derivadas opciones (local) --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\compute_opciones_derivadas.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 echo [WARN] compute derivadas opciones fallo - se usaran las derivadas sincronizadas.
+
+
 REM ── BOT 1 - ML Scanner ──────────────────────────────────────
 echo [1/10] FT_ML_SCANNER_v1...
 echo. >> "%LOGFILE%"
