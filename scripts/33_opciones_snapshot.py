@@ -211,18 +211,29 @@ def _get_hv_20d(tickers: list[str]) -> dict[str, float]:
     """
     Volatilidad historica anualizada a 20 dias para cada ticker.
     HV = std(log_returns_20d) * sqrt(252).  Retorna decimal (0.25 = 25%).
+
+    Fail-safe (6/6/2026): si precios_diarios NO esta disponible en la DB target
+    (ej. Railway bajo Plan C, donde el crudo de precios ya no vive), retorna {}
+    -> hv_20d = NULL. La HV se computa luego en LOCAL (donde precios esta fresco).
+    El snapshot NUNCA debe abortar por falta de precios: capturar la chain cruda
+    (irrecuperable) tiene prioridad absoluta sobre la HV (derivable despues).
     """
     engine = get_engine()
     placeholders = ", ".join(f"'{t}'" for t in tickers)
-    with engine.connect() as conn:
-        rows = conn.execute(text(f"""
-            SELECT ticker, close
-            FROM   precios_diarios
-            WHERE  ticker IN ({placeholders})
-              AND  close  > 0
-              AND  fecha  >= CURRENT_DATE - INTERVAL '35 days'
-            ORDER  BY ticker, fecha ASC
-        """)).fetchall()
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT ticker, close
+                FROM   precios_diarios
+                WHERE  ticker IN ({placeholders})
+                  AND  close  > 0
+                  AND  fecha  >= CURRENT_DATE - INTERVAL '35 days'
+                ORDER  BY ticker, fecha ASC
+            """)).fetchall()
+    except Exception as e:
+        log(f"  [WARN] HV_20d no disponible (precios_diarios ausente?): "
+            f"{str(e)[:90]} -> hv_20d=NULL, se computa en local.")
+        return {}
 
     closes_by_ticker: dict[str, list[float]] = defaultdict(list)
     for r in rows:
