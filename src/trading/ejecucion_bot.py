@@ -194,3 +194,55 @@ def aplicar_entradas(bcfg, a_abrir, dry_run=True, log=_noop):
             log(f"    -> Orden {orden['order_id']} | DB id={pid}")
         except Exception as e2:
             log(f"    ERROR comprando {ticker}: {e2}")
+
+
+def notificar_telegram(bcfg, a_abrir, a_cerrar, retenidos=None, fecha=None,
+                       dry_run=True, log=_noop):
+    """
+    Resumen diario del bot por Telegram (HTML). No-op en dry-run o sin credenciales.
+    Reusa src/pipeline/telegram_notifier._send_long (import lazy). Fail-safe: si algo
+    falla, NO interrumpe el bot.
+    """
+    if dry_run:
+        return
+    try:
+        from src.pipeline.telegram_notifier import _send_long
+    except Exception as ex:
+        log(f"  [WARN] Telegram no disponible: {ex}")
+        return
+
+    a_abrir  = a_abrir or []
+    a_cerrar = a_cerrar or []
+    fecha = fecha or date.today()
+
+    lineas = [f"<b>BOT {bcfg.nombre}</b> -- {fecha}"]
+
+    if a_cerrar:
+        lineas.append(f"\n<b>CIERRES ({len(a_cerrar)})</b>")
+        for c in a_cerrar:
+            p = c.get("precio_cierre")
+            ps = f" @ ${float(p):.2f}" if p is not None else ""
+            lineas.append(f"  SELL {c['ticker']} [{c.get('motivo','')}]{ps}")
+
+    if a_abrir:
+        lineas.append(f"\n<b>COMPRAS ({len(a_abrir)})</b>")
+        for e in a_abrir:
+            try:
+                pr = float(e["precio"])
+            except Exception:
+                pr = 0.0
+            lineas.append(f"  BUY {e['ticker']} x{e['qty']} @ ${pr:.2f} "
+                          f"(score {float(e.get('score',0)):.1f})")
+
+    if not a_abrir and not a_cerrar:
+        lineas.append("\nSin operaciones hoy.")
+
+    if retenidos:
+        lineas.append(f"\n<b>RETENCION opciones ({len(retenidos)})</b>: "
+                      + ", ".join(retenidos))
+
+    try:
+        ok = _send_long("\n".join(lineas))
+        log(f"  Telegram: {'enviado' if ok else 'no enviado'}")
+    except Exception as ex:
+        log(f"  [WARN] Telegram fallo: {ex}")

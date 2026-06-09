@@ -133,6 +133,10 @@ def run(dry_run: bool = False, ignore_frescura: bool = False):
     else:
         eb.aplicar_entradas(BCFG, a_abrir, dry_run=dry_run, log=log)
 
+    # Resumen por Telegram (incluye retenciones por opciones; no-op en dry-run)
+    eb.notificar_telegram(BCFG, a_abrir, a_cerrar, retenidos=retenidos,
+                          fecha=fecha, dry_run=dry_run, log=log)
+
     log("Completado.")
     log(sep)
 
