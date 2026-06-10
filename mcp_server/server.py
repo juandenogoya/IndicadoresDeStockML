@@ -46,6 +46,10 @@ from mcp_server.tools.sintesis import (
     SINTESIS_ANNOTATIONS,
     get_ticker_sintesis,
 )
+from mcp_server.tools.fundamentals import (
+    FUNDAMENTALS_ANNOTATIONS,
+    get_fundamentals,
+)
 
 __version__ = "0.1.0"
 
@@ -120,6 +124,10 @@ mcp.tool(annotations=ALERTS_ANNOTATIONS)(get_ml_alert_history)
 # ── Sintesis: tecnico D+W x opciones por plazo x sector + reglas ──────────────
 
 mcp.tool(annotations=SINTESIS_ANNOTATIONS)(get_ticker_sintesis)
+
+# ── Fundamentales: ratios trimestrales + comparativa vs pares ─────────────────
+
+mcp.tool(annotations=FUNDAMENTALS_ANNOTATIONS)(get_fundamentals)
 
 
 if __name__ == "__main__":

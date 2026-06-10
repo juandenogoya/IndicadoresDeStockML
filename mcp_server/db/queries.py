@@ -790,3 +790,61 @@ SQL_SINTESIS_PCR_SECTOR_PLAZO = """
     ORDER  BY dte_min
 """
 # $1: sector (texto, ej 'Technology'). Hasta 3 filas de la ultima fecha.
+
+
+# ── Fundamentals: ratios trimestrales (ultimos N trimestres) ──────────────────
+
+SQL_FUNDAMENTALS_RATIOS = """
+    SELECT
+        ticker, fiscal_period_end, reporting_currency, sector, industry, profile,
+        -- valuacion (fiscal del Q + recalculada al cierre _px)
+        pe_ratio, pb_ratio, ps_ratio, ev_ebitda,
+        pe_ratio_px, pb_ratio_px, ps_ratio_px, ev_ebitda_px,
+        precio_px, fecha_px,
+        -- por accion
+        book_value_per_share, eps_q, eps_ttm,
+        -- rentabilidad
+        roe_ttm, roa_ttm, roic_ttm, rotce_ttm, efficiency_ratio_ttm,
+        gross_margin_ttm, operating_margin_ttm, net_margin_ttm,
+        net_margin_yoy_delta, operating_margin_yoy_delta, opex_to_revenue_ttm,
+        -- crecimiento
+        revenue_qoq_pct, revenue_yoy_pct, net_income_qoq_pct, net_income_yoy_pct,
+        eps_qoq_pct, eps_yoy_pct,
+        -- FCF
+        fcf_ttm, fcf_margin_ttm, fcf_qoq_pct, fcf_yoy_pct,
+        -- solvencia
+        current_ratio, working_capital, debt_to_equity, net_debt,
+        net_debt_to_ebitda_ttm,
+        -- absolutos TTM (moneda de reporte)
+        revenue_ttm, net_income_ttm, ebitda_ttm,
+        n_quarters_available
+    FROM   fundamentales_ratios_q
+    WHERE  ticker = $1
+    ORDER  BY fiscal_period_end DESC
+    LIMIT  $2
+"""
+# $1: ticker  $2: cantidad de trimestres (mas reciente primero).
+# profile: 'financiero' -> margenes industriales/ROIC/liquidez/WC/FCF = NULL
+# por diseno (usar rotce_ttm/efficiency_ratio_ttm). Ver docs/fundamentales_calculo.md.
+# *_px = multiplo recalculado con el cierre del dia (numerador precio_px de
+# fecha_px); pe_ratio/pb_ratio/... son los del cierre del Q fiscal (Yahoo).
+
+
+# ── Fundamentals: comparativa vs pares regionales (ultimo Q del ticker) ───────
+
+SQL_FUNDAMENTALS_VS_SECTOR = """
+    SELECT
+        metric, value, peer_median, peer_p25, peer_p75,
+        vs_median_pct, percentile, peer_n, peer_basis, low_sample,
+        sector, ticker_region, peer_region, fiscal_period_end
+    FROM   fundamentales_ticker_vs_sector
+    WHERE  ticker = $1
+      AND  fiscal_period_end = (
+            SELECT MAX(fiscal_period_end)
+            FROM   fundamentales_ticker_vs_sector
+            WHERE  ticker = $1
+      )
+    ORDER  BY metric
+"""
+# $1: ticker. Hasta 10 filas (formato long, 1 por metrica) del ultimo Q.
+# peer_basis: 'region' | 'usa_fallback' | 'none' (sin peer-set, n<5).
