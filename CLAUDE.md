@@ -375,6 +375,16 @@ Fases completadas:
   la lectura de indicadores_tecnicos_1w (congelada) y elimina el staleness guard
   previo: el semanal siempre esta fresco, sin tabla intermedia.
 
+- Fase 1H: fundamentales (get_fundamentals, 10/06/2026) -- analisis fundamental
+  trimestral sobre la capa derivada de Tarea 12 (fundamentales_ratios_q +
+  fundamentales_ticker_vs_sector). Valuacion (al_cierre *_px + fiscal),
+  rentabilidad SEGUN PERFIL (banco: ROTCE/efficiency; no-banco: ROIC/margenes),
+  crecimiento con trayectoria (serie N trimestres), solvencia/FCF, vs pares
+  regionales (percentil + peer_basis) y caveats automaticos (moneda/ADR/
+  financiero). UNIDADES: la tool convierte los rate-metrics de fraccion (asi
+  estan en DB, incluso columnas *_pct) a porcentaje. Validada vs JPM/XP/MU.
+  Cierra el pendiente "integracion al MCP" de Tarea 12.
+
 Tools registradas hasta hoy (16):
 - ping
 - check_trading_day, get_last_trading_day
@@ -386,6 +396,7 @@ Tools registradas hasta hoy (16):
 - screen_tickers
 - get_ml_alert_history
 - get_ticker_sintesis
+- get_fundamentals
 
 Fases pendientes:
 - run_select con validacion sqlglot (postergado: screen_tickers cubre

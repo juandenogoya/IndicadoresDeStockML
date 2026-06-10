@@ -91,6 +91,22 @@ Las fechas 2026-04-23 y 2026-04-25 no tienen datos de opciones
 recuperables. Si caen en la ventana consultada, marcarlo explicitamente:
 "[SIN DATA - gap conocido]". No inventar ni omitir en silencio.
 
+### REGLA 8b -- Fundamentales: perfil contable y unidades
+
+- get_fundamentals devuelve los rate-metrics YA convertidos a porcentaje
+  (roe_ttm_pct: 16.72 = 16.72%). En las TABLAS subyacentes estan como fraccion
+  (0.1672) -- incluso las columnas llamadas *_pct. Si se consulta la tabla
+  directo (describe_table/screener futuro), recordar esta diferencia.
+- profile='financiero' (18 tickers: bancos/brokers, incluye XP por override):
+  margenes industriales, ROIC, current ratio, working capital y FCF son NULL
+  POR DISENO (no aplican a balance bancario), NO datos faltantes. Para esos
+  tickers mirar ROE, ROTCE y efficiency ratio.
+- Multiplos al_cierre (pe_ratio_px etc.) = recalculados con el ultimo precio
+  (vigentes); los "fiscal" son al cierre del trimestre reportado.
+- Absolutos (revenue, FCF, BVPS, EPS) en MONEDA DE REPORTE: 29 ADRs reportan
+  en moneda local (BRL/CNY/EUR...). Ratios y porcentajes si son comparables.
+- HMY/RIO/UL/VOD reportan semestral -> sin datos trimestrales (error esperado).
+
 ### REGLA 8 -- scoring_tecnico vacia en local
 
 Si se llama la tool get_rule_based_score con DSN local, advertir:
@@ -160,6 +176,8 @@ Thresholds PCR volumen:
 | features_regimen_macro | Regimen macro diario | futuros indices |
 | bt_hist_estrategias | Estrategias backtesting historico | |
 | ft_estrategias | Estrategias forward testing | |
+| fundamentales_ratios_q | Ratios fundamentales por trimestre (valuacion, rentabilidad, crecimiento, FCF, solvencia) | rate-metrics como FRACCION; col profile (financiero/no); *_px = multiplo al cierre del dia |
+| fundamentales_ticker_vs_sector | Cada metrica del ticker vs mediana de pares regionales (formato long, 10 metricas) | peer_basis: region / usa_fallback / none |
 
 ---
 

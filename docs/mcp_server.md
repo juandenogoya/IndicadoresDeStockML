@@ -25,7 +25,7 @@ diseno; cualquier cambio de arquitectura se refleja aca primero.
 El resto de esta seccion describe el DISEÑO; abajo se aclara que se
 construyo realmente y donde se desvio del plan original.
 
-### Tools en produccion (14)
+### Tools en produccion (16)
 
 | Tool | Fase | Estado |
 |---|---|---|
@@ -37,6 +37,34 @@ construyo realmente y donde se desvio del plan original.
 | get_ticker_overview | 1F | OK |
 | screen_tickers | extra | OK |
 | get_ml_alert_history | 1E | OK |
+| get_ticker_sintesis | 1G (26/5/2026) | OK |
+| get_fundamentals | 1H (10/6/2026) | OK |
+
+### Fase 1H -- get_fundamentals (10/6/2026)
+
+Analisis fundamental trimestral por ticker sobre la capa DERIVADA de la
+Tarea 12 (fundamentales_ratios_q + fundamentales_ticker_vs_sector, LOCAL-only,
+validada vs balances oficiales MU/XP/JPM). Cierra el pendiente "integracion
+al MCP" de esa tarea.
+
+- `get_fundamentals(ticker, quarters=4)` -> bloques: identidad (sector/
+  industria/perfil/moneda), valuacion (PER/PB/PS/EV-EBITDA en version
+  "al_cierre" = *_px recalculada con el ultimo precio + "fiscal"), rentabilidad
+  SEGUN PERFIL (no-banco: ROE/ROA/ROIC + margenes; financiero: ROE/ROTCE/
+  efficiency con los industriales como "no_aplica_financiero"), crecimiento
+  con TRAYECTORIA (serie de N trimestres, no solo el ultimo), solvencia/FCF,
+  vs_sector (10 metricas vs mediana de pares regionales con percentil y
+  peer_basis) y caveats automaticos (moneda no-USD, ADR, financiero, poca
+  historia).
+- UNIDADES (decision clave): las tablas guardan los rate-metrics como
+  FRACCION (0.167), incluso columnas llamadas *_pct. La tool convierte TODO
+  a porcentaje (16.72) para que el LLM no malinterprete. Los multiplos
+  (pe/pb/ps/ev_ebitda) quedan absolutos.
+- Tickers semestrales (HMY/RIO/UL/VOD) -> error explicativo, no silencioso.
+- SQL: SQL_FUNDAMENTALS_RATIOS y SQL_FUNDAMENTALS_VS_SECTOR en db/queries.py.
+- Validada contra los 3 casos de referencia: JPM (BVPS 128.38 = oficial,
+  ROTCE 20.6%), XP (override financiero, ROE 22.3%, caveats BRL/ADR), MU
+  (no-banco, ROE 33.3%, margen bruto 58.4%).
 
 ### Desviaciones del diseño original
 
