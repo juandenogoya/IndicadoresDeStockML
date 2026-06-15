@@ -321,6 +321,12 @@ Las criticas:
   scripts/push_senales_bot.py desde LOCAL (conexion dual) y la UPSERTea a Railway,
   como paso final de ft_run_diario.bat. Es la unica tabla de mercado US que los
   bots leeran de Railway (habilita el cleanup de crudas, ver bots_trading.md).
+- `llm_uso_tokens` (LOCAL) -- registro de consumo del chat del dashboard (vista
+  "Consultas (IA)", orquestador src/agent). 1 fila por consulta: tokens_entrada/salida
+  REALES (usage_metadata de Gemini), modelo, n_rondas, tools, pregunta, fecha y `usuario`
+  (default 'local'; columna pensada para cuotas multiusuario a futuro). LOCAL-only
+  (Plan C: log de frontend local). La escribe el dashboard con el engine local normal
+  (NO el rol mcp_reader). Creada por scripts/oneshot/create_llm_uso_tokens_table.py.
 
 ## Flujo de recovery manual (caso comun: Oracle cron fallo)
 
@@ -404,6 +410,15 @@ Fases pendientes:
 - safety.py (validacion SQL) -- pendiente, depende de run_select
 - Fase 2: catalogo de queries (save_query, list_saved, recall_query)
 - Fase 3: bot de Telegram (MVP local en Windows; ver docs/mcp_server.md)
+
+Cliente/orquestador del MCP (NUEVO 15/6/2026, rama feature/dashboard-chat-llm,
+SIN MERGEAR): el dashboard incorpora una vista de chat en lenguaje natural
+("Consultas (IA)") que es el PRIMER cliente propio del MCP server (hasta ahora
+solo lo consumia Gemini CLI). El orquestador vive en src/agent/ (mcp_bridge =
+cliente MCP por stdio con el rol mcp_reader; orchestrator = loop agentico
+Gemini<->tools; config; uso_tokens = registro en llm_uso_tokens). Es REUTILIZABLE
+y adelanta el grueso de la Fase 3 (Telegram solo cambiaria el frontend). Detalle:
+memory/dashboard.md, docs/mcp_server.md (seccion frontend Streamlit).
 
 Patrones aprendidos en Fase 1 (importantes para futuras tools):
 - Columnas flag (choch_*, bos_*, patron_*, es_alcista, vol_spike) pueden

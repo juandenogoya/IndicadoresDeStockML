@@ -215,3 +215,18 @@ archivos en memory/dashboard.md.
 - Conclusion por plantilla de frases predefinidas por regla.
 - Validacion = coherencia cualitativa, NO backtesting de retorno (no incluye
   opciones por falta de historia, y mediria la vara equivocada en algo descriptivo).
+
+## Vista "Consultas (IA)" — chat en lenguaje natural (15/6/2026)
+
+Cuarto modo del sidebar. Caja de chat que responde preguntas en lenguaje natural
+con datos REALES de la DB local, usando el LLM (Gemini) + las 16 tools del MCP
+server (loop agentico: pregunta -> LLM -> tool_calls -> MCP -> LLM -> respuesta).
+
+- Orquestador REUTILIZABLE en `src/agent/` (no acoplado a Streamlit; mismo motor
+  servira al bot de Telegram, Fase 3 del MCP). Conecta al server por stdio con el
+  rol `mcp_reader` (SELECT-only) -> el chat SOLO lee, cero riesgo de escritura.
+- Eficiencia de tokens (key Gemini pospago): system prompt condensado, descripciones
+  de tools truncadas, thinking off, salida acotada y poda del historial multi-turno.
+- Registro de consumo: cada consulta se guarda en `llm_uso_tokens` (tokens reales
+  entrada/salida, por fecha y usuario). La UI muestra el consumo por respuesta y un
+  acumulado por dia. Detalle de implementacion: memory/dashboard.md.

@@ -403,6 +403,109 @@ def _vista_financiera(tickers):
                        "disponibles). '-' = metrica no disponible para ese ticker.")
 
 
+def _chat_meta(res: dict) -> str:
+    """Linea de metadata bajo cada respuesta: tokens entrada/salida + tools."""
+    parts = []
+    if res.get("tokens_in") or res.get("tokens_out"):
+        parts.append(f"Entrada ~{res.get('tokens_in', 0)} | "
+                     f"Salida ~{res.get('tokens_out', 0)} tok")
+    tools = list(dict.fromkeys(res.get("tools_used") or []))
+    if tools:
+        parts.append("tools: " + ", ".join(tools))
+    return "  |  ".join(parts)
+
+
+def _render_registro_consumo():
+    """Expander con el consumo de tokens acumulado por fecha (tabla llm_uso_tokens)."""
+    from src.agent import uso_tokens
+    with st.expander("Registro de consumo (tokens por dia)"):
+        filas = uso_tokens.resumen_por_fecha(usuario=uso_tokens.USUARIO_DEFAULT, dias=30)
+        if not filas:
+            st.caption("Sin registros todavia.")
+            return
+        df = pd.DataFrame(filas).rename(columns={
+            "fecha": "Fecha", "consultas": "Consultas",
+            "entrada": "Entrada", "salida": "Salida", "total": "Total",
+        })
+        st.dataframe(df[["Fecha", "Consultas", "Entrada", "Salida", "Total"]],
+                     hide_index=True, use_container_width=True)
+        tot = df[["Entrada", "Salida", "Total"]].sum()
+        st.caption(f"Ultimos 30 dias: Entrada {int(tot['Entrada'])} | "
+                   f"Salida {int(tot['Salida'])} | Total {int(tot['Total'])} tokens.")
+
+
+def _vista_chat():
+    st.subheader("Consultas en lenguaje natural")
+    st.caption("Pregunta sobre precios, indicadores, opciones, alertas ML o "
+               "fundamentales del universo (199 tickers). Responde con datos de "
+               "la DB local (solo lectura) via el LLM. Tip: consultas simples y "
+               "concretas gastan menos tokens.")
+
+    if "chat_msgs" not in st.session_state:
+        st.session_state["chat_msgs"] = []      # [{role, content, meta}] para render
+        st.session_state["chat_contents"] = []  # historial para el modelo (podado)
+
+    if st.session_state["chat_msgs"]:
+        if st.sidebar.button("Limpiar conversacion", use_container_width=True):
+            st.session_state["chat_msgs"] = []
+            st.session_state["chat_contents"] = []
+            st.rerun()
+    else:
+        st.markdown(
+            "**Ejemplos:**\n"
+            "- Cual es el ultimo cierre y RSI de NVDA?\n"
+            "- Cuantos tickers hay en el sector Technology?\n"
+            "- Como viene el PCR de opciones de AAPL?\n"
+            "- Dame el veredicto fundamental de JPM"
+        )
+
+    for m in st.session_state["chat_msgs"]:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+            if m.get("meta"):
+                st.caption(m["meta"])
+
+    pregunta = st.chat_input("Escribi tu consulta...")
+    if pregunta:
+        from src.agent.orchestrator import answer_sync
+        from src.agent import uso_tokens
+
+        st.session_state["chat_msgs"].append({"role": "user", "content": pregunta})
+        with st.chat_message("user"):
+            st.markdown(pregunta)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Consultando datos..."):
+                res = answer_sync(pregunta, contents=st.session_state["chat_contents"])
+            if res.get("error"):
+                st.error(res["text"])
+            else:
+                st.markdown(res["text"])
+            meta = _chat_meta(res)
+            if meta:
+                st.caption(meta)
+
+        st.session_state["chat_contents"] = res["contents"]
+        st.session_state["chat_msgs"].append(
+            {"role": "assistant", "content": res["text"], "meta": meta}
+        )
+
+        # Registro de consumo (best-effort: si falla, el chat sigue funcionando).
+        if not res.get("error"):
+            uso_tokens.registrar_uso(
+                usuario=uso_tokens.USUARIO_DEFAULT,
+                modelo=res.get("model"),
+                tokens_in=res.get("tokens_in", 0),
+                tokens_out=res.get("tokens_out", 0),
+                tokens_total=res.get("tokens", 0),
+                n_rondas=res.get("n_rondas", 0),
+                tools=", ".join(dict.fromkeys(res.get("tools_used") or [])) or None,
+                pregunta=pregunta,
+            )
+
+    _render_registro_consumo()
+
+
 def main():
     st.set_page_config(page_title="Informe descriptivo por ticker", layout="wide")
 
@@ -422,13 +525,16 @@ def main():
         return
 
     modo = st.sidebar.radio("Vista",
-                            ["Informe por ticker", "Radar del dia", "Analisis Financiero"],
+                            ["Informe por ticker", "Radar del dia",
+                             "Analisis Financiero", "Consultas (IA)"],
                             key="modo")
     st.sidebar.divider()
     if modo == "Radar del dia":
         _vista_radar()
     elif modo == "Analisis Financiero":
         _vista_financiera(tickers)
+    elif modo == "Consultas (IA)":
+        _vista_chat()
     else:
         _vista_informe(tickers)
 
