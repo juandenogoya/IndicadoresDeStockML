@@ -698,7 +698,7 @@ Railway solo veria opciones -- no precios, indicadores, features ni scanner.
 
 Se adopta un enfoque MVP local primero.
 
-#### ACTUALIZACION 15/6/2026 -- frontend Streamlit primero (rama feature/dashboard-chat-llm, sin mergear)
+#### ACTUALIZACION 15/6/2026 -- frontend Streamlit primero (MERGEADO a main: merge 464f00c)
 
 Antes que el bot de Telegram se construyo el ORQUESTADOR (lo dificil de la Fase 3)
 con un frontend distinto: una vista de chat en el dashboard local ("Consultas (IA)").

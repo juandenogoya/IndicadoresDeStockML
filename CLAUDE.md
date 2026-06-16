@@ -411,8 +411,8 @@ Fases pendientes:
 - Fase 2: catalogo de queries (save_query, list_saved, recall_query)
 - Fase 3: bot de Telegram (MVP local en Windows; ver docs/mcp_server.md)
 
-Cliente/orquestador del MCP (NUEVO 15/6/2026, rama feature/dashboard-chat-llm,
-SIN MERGEAR): el dashboard incorpora una vista de chat en lenguaje natural
+Cliente/orquestador del MCP (NUEVO 15/6/2026, MERGEADO a main: merge 464f00c,
+rama borrada): el dashboard incorpora una vista de chat en lenguaje natural
 ("Consultas (IA)") que es el PRIMER cliente propio del MCP server (hasta ahora
 solo lo consumia Gemini CLI). El orquestador vive en src/agent/ (mcp_bridge =
 cliente MCP por stdio con el rol mcp_reader; orchestrator = loop agentico
