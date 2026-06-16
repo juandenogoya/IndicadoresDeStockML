@@ -698,6 +698,31 @@ Railway solo veria opciones -- no precios, indicadores, features ni scanner.
 
 Se adopta un enfoque MVP local primero.
 
+#### ACTUALIZACION 15/6/2026 -- frontend Streamlit primero (rama feature/dashboard-chat-llm, sin mergear)
+
+Antes que el bot de Telegram se construyo el ORQUESTADOR (lo dificil de la Fase 3)
+con un frontend distinto: una vista de chat en el dashboard local ("Consultas (IA)").
+Es el primer cliente propio del MCP server (hasta ahora solo lo consumia Gemini CLI).
+
+- Orquestador REUTILIZABLE en `src/agent/` (no acoplado a Streamlit):
+  - `mcp_bridge.py`: cliente MCP por stdio. Lanza `python -m mcp_server.server` como
+    subproceso con `DATABASE_URL = MCP_READER_LOCAL_DSN` (rol mcp_reader, SELECT-only).
+    Descubre y ejecuta las 16 tools. Hereda toda la seguridad del server (solo lee).
+  - `orchestrator.py`: loop agentico mensaje -> Gemini (con las tools como
+    function_declarations) -> tool_calls -> MCP -> Gemini -> respuesta. `answer()` async +
+    `answer_sync()` (ProactorEventLoop en Windows). Multi-turno con historial podado.
+  - `config.py`: lee `.env` (GEMINI_API_KEY del proyecto IndicadoresStockML POSPAGO;
+    MCP_READER_LOCAL_DSN). Modelo default gemini-2.5-flash.
+  - `uso_tokens.py`: registra cada consulta en `llm_uso_tokens` (LOCAL, tokens reales).
+- LLM: Gemini via `google-genai`. System prompt = destilacion CONDENSADA de
+  INSTRUCTIONS.md (no el archivo entero: ahorro de tokens, key pospago) + addendum del
+  frontend (fecha de hoy, espanol, brevedad, frescura Plan C).
+- Eficiencia de tokens (clave por ser pospago): prompt condensado + descripciones de
+  tools truncadas al primer parrafo + thinking_budget=0 + max_output_tokens=1024 + poda
+  del historial -> ~5-6k tokens/consulta simple (la ENTRADA domina ~180:1).
+- Para Telegram (Fase 3a abajo) solo cambia el frontend: el mismo orquestador sirve.
+  Detalle de implementacion y decisiones: memory/dashboard.md.
+
 **Concepto clave:** hoy Gemini CLI hace de cliente MCP -- recibe el mensaje,
 llama al LLM, orquesta las tool calls contra el server y devuelve la
 respuesta. Para Telegram hay que CONSTRUIR ese cliente/orquestador; el LLM

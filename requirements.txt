@@ -32,7 +32,10 @@ streamlit==1.41.1
 
 # ── Google Sheets Export ──────────────────────────────────────
 gspread==6.1.4
-google-auth==2.37.0
+google-auth==2.54.0
+
+# ── LLM / Chat del dashboard (orquestador src/agent) ─────────
+google-genai==2.8.0
 
 # ── Trading / Alpaca ─────────────────────────────────────────
 alpaca-py==0.43.2
