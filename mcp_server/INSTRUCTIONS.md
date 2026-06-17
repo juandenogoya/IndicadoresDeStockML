@@ -157,6 +157,13 @@ Thresholds PCR volumen:
   NEUTRO:  pcr_vol 0.7-1.0
   BAJISTA: pcr_vol > 1.0
 
+Muros de OI (get_ticker_sintesis, put_wall/call_wall por plazo):
+  Son muros de OI COMBINADO (call+put): put_wall = mayor OI debajo del precio
+  (soporte), call_wall = mayor OI arriba (resistencia). Cada muro trae `fuerza`
+  (% de concentracion del OI de ese lado en el strike): fuerza ALTA = muro
+  DOMINANTE (nivel mas confiable); fuerza BAJA = OI DISTRIBUIDO (nivel difuso,
+  tomar con reserva). Mencionar la fuerza al describir un muro.
+
 ---
 
 ## Tablas principales y sus particularidades

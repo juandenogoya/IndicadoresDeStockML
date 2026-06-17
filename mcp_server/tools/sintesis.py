@@ -80,13 +80,15 @@ def _bloque_tecnico(rsi, macd, macd_signal) -> dict:
     }
 
 
-def _muro_recalc(strike, oi, close) -> dict | None:
+def _muro_recalc(strike, oi, close, fuerza=None) -> dict | None:
     """
     Recalcula el muro de OI con el CLOSE diario real (no con el precio_sub del
     snapshot, que es el cierre del dia anterior y queda desfasado).
 
     dist_pct: negativo = muro DEBAJO del precio (actua como soporte),
               positivo = muro ARRIBA del precio (actua como resistencia).
+    fuerza:   % de concentracion del OI del lado en este muro (muros v2). Alto =
+              muro DOMINANTE; bajo = OI DISTRIBUIDO entre strikes. None si falta.
     """
     if strike is None or close is None:
         return None
@@ -98,11 +100,16 @@ def _muro_recalc(strike, oi, close) -> dict | None:
     if c == 0:
         return None
     dist = (s - c) / c * 100
+    try:
+        fz = round(float(fuerza), 1) if fuerza is not None else None
+    except (TypeError, ValueError):
+        fz = None
     return {
         "strike":   round(s, 2),
         "oi":       oi,
         "dist_pct": round(dist, 2),
         "posicion": "debajo" if dist < 0 else "arriba",
+        "fuerza":   fz,
     }
 
 
@@ -110,17 +117,21 @@ def _bloque_plazo(row: dict, close) -> dict:
     """
     Una ventana de opciones del ticker: PCR + muros de OI.
 
-    put_wall  = strike con mayor PUT OI  (acumulacion de puts; soporte tipico)
-    call_wall = strike con mayor CALL OI (acumulacion de calls; resistencia tipica)
-    La distancia/posicion se recalcula con el close diario real para no
-    arrastrar el desfase del precio_sub del snapshot.
+    Muros v2 (OI COMBINADO call+put por strike):
+      put_wall  = mayor OI total DEBAJO del precio (soporte).
+      call_wall = mayor OI total ARRIBA del precio (resistencia).
+    Cada muro trae `fuerza` (% de concentracion del OI del lado): alta = muro
+    dominante; baja = OI distribuido. La distancia/posicion se recalcula con el
+    close diario real para no arrastrar el desfase del precio_sub del snapshot.
     """
     return {
         "pcr_vol":      row.get("pcr_vol"),
         "pcr_oi":       row.get("pcr_oi"),
         "veredicto_oi": {"A": "Alcista", "B": "Bajista"}.get(row.get("veredicto_oi")),
-        "put_wall":     _muro_recalc(row.get("soporte_strike"), row.get("soporte_oi"), close),
-        "call_wall":    _muro_recalc(row.get("resistencia_strike"), row.get("resistencia_oi"), close),
+        "put_wall":     _muro_recalc(row.get("soporte_strike"), row.get("soporte_oi"),
+                                     close, row.get("soporte_fuerza")),
+        "call_wall":    _muro_recalc(row.get("resistencia_strike"), row.get("resistencia_oi"),
+                                     close, row.get("resistencia_fuerza")),
     }
 
 
