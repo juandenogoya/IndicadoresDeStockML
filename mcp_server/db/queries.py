@@ -767,8 +767,8 @@ SQL_SINTESIS_PCR_PLAZO = """
     SELECT
         ventana, dte_min, dte_max, precio_sub,
         pcr_vol, pcr_oi, veredicto_oi,
-        soporte_strike, soporte_oi, soporte_dist_pct,
-        resistencia_strike, resistencia_oi, resistencia_dist_pct
+        soporte_strike, soporte_oi, soporte_dist_pct, soporte_fuerza,
+        resistencia_strike, resistencia_oi, resistencia_dist_pct, resistencia_fuerza
     FROM   opciones_pcr_plazo_diario
     WHERE  ticker = $1
       AND  fecha = (SELECT MAX(fecha) FROM opciones_pcr_plazo_diario WHERE ticker = $1)
