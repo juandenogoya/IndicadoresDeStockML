@@ -158,6 +158,19 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - `fast_info.last_price` usa `history(period='1y')` internamente = mismo
   endpoint que `yf.download` /v8/finance/chart/. SIN ventaja de rate limit.
 
+### yahooquery_loader -- barra en curso + timezones mezcladas (futuros)
+- `src/utils/yahooquery_loader.py` (download_batch para recovery_incremental).
+- yahooquery devuelve, ADEMAS de las barras diarias completas, la barra EN CURSO
+  del dia de hoy cuando la sesion esta abierta (notorio en FUTUROS, que cotizan
+  ~24h). Esa barra viene como `datetime.datetime` tz-aware (America/New_York)
+  mezclada con los `datetime.date` tz-naive de las completas.
+- pandas 3.x ya NO coacciona ese mix: `pd.to_datetime(index_mixto)` lanza
+  "ValueError: Mixed timezones detected". El loader normaliza cada entrada a su
+  fecha local (tz_localize(None)+normalize, sin pasar a UTC) y RECORTA a `<= end`
+  (contrato end-inclusivo) -> descarta la barra parcial de hoy. Sin el recorte,
+  esa parcial se persistiria con la fecha de hoy y bloquearia la barra real al
+  cierre (regla #10). Fix 18/6/2026, commit c3c1892.
+
 ### Opciones snapshot -- irrecuperabilidad
 - yfinance/Yahoo solo expone la chain VIGENTE. Una vez abre el mercado del dia
   siguiente (13:30 UTC durante DST), las strikes/contratos del cierre
