@@ -108,6 +108,17 @@ def download_batch(tickers: list, start: date, end: date) -> dict:
     if df is None or df.empty:
         return {}
 
+    # Tope inclusivo: yahooquery puede devolver, ADEMAS de las barras hasta `end`,
+    # la barra EN CURSO del dia de hoy (sobre todo en futuros 24h). El contrato de
+    # download_batch es `end` INCLUSIVO (igual que yf.download con end exclusivo +1):
+    # recortamos cualquier fila posterior a `end`. Sin esto, la barra parcial de hoy
+    # se persistiria con la fecha de hoy y bloquearia la carga de la barra real
+    # cuando ese dia cierre (regla #10: data de sesion abierta etiquetada como cierre).
+    end_ts = pd.Timestamp(end)
+
+    def _clip(shaped):
+        return shaped[shaped.index <= end_ts]
+
     result = {}
 
     if isinstance(df.index, pd.MultiIndex):
@@ -117,13 +128,13 @@ def download_batch(tickers: list, start: date, end: date) -> dict:
             sub = df.loc[sym]
             if sub.empty:
                 continue
-            shaped = _to_yf_shape(sub)
+            shaped = _clip(_to_yf_shape(sub))
             if not shaped.empty:
                 result[sym] = shaped
     else:
         # Single ticker: index = date.
         if len(tickers) == 1:
-            shaped = _to_yf_shape(df)
+            shaped = _clip(_to_yf_shape(df))
             if not shaped.empty:
                 result[tickers[0]] = shaped
 
@@ -141,9 +152,24 @@ def _to_yf_shape(sub: pd.DataFrame) -> pd.DataFrame:
     'Close', 'Adj Close', 'Volume', asi que mapeamos a esos nombres exactos.
     """
     sub = sub.copy()
-    # Index: yahooquery devuelve datetime.date objects. Convertimos a DatetimeIndex
-    # para que pd.to_datetime(df.index).normalize() del caller funcione igual.
-    sub.index = pd.to_datetime(sub.index)
+    # Index: yahooquery puede MEZCLAR en el mismo index (sobre todo en futuros,
+    # que cotizan ~24h):
+    #   - datetime.date            -> barras diarias COMPLETAS (tz-naive)
+    #   - datetime.datetime tz-aware (America/New_York) -> la barra EN CURSO del
+    #     dia de hoy (sesion abierta).
+    # pandas 3.x ya NO coacciona ese mix: pd.to_datetime(mix) lanza
+    # "ValueError: Mixed timezones detected". Normalizamos cada entrada a su
+    # fecha de calendario LOCAL: las tz-aware se vuelven naive conservando su
+    # wall-clock (NO convertimos a UTC, para no correr la fecha de la barra).
+    # La barra en curso queda con la fecha de hoy y la descarta luego el filtro
+    # target_date del recovery; la barra completa conserva su fecha real.
+    idx = []
+    for x in sub.index:
+        ts = pd.Timestamp(x)
+        if ts.tz is not None:
+            ts = ts.tz_localize(None)
+        idx.append(ts.normalize())
+    sub.index = pd.DatetimeIndex(idx)
 
     # Algunos tickers pueden no traer adjclose (cuando es identico a close, yq
     # a veces lo omite). Fallback a close.
