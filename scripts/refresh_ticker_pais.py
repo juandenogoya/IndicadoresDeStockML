@@ -38,7 +38,7 @@ import psycopg2
 import psycopg2.extras
 from sqlalchemy import text
 
-from src.utils.config import ALL_TICKERS
+from src.data.universo import get_universo
 from src.utils.yfinance_lock import acquire as acquire_yf_lock
 from scripts.oneshot.create_fundamentales_tables import (
     get_local_engine, _parse_env_file,
@@ -107,12 +107,12 @@ def fetch_countries(tickers):
 
 def main():
     parser = argparse.ArgumentParser(description="Refresh ticker_pais (country+region) local")
-    parser.add_argument("--tickers", default=None, help="CSV (default: ALL_TICKERS)")
+    parser.add_argument("--tickers", default=None, help="CSV (default: universo de tabla activos)")
     parser.add_argument("--dry-run", action="store_true", help="No escribe")
     args = parser.parse_args()
 
     tickers = ([t.strip().upper() for t in args.tickers.split(",")]
-               if args.tickers else sorted(set(ALL_TICKERS)))
+               if args.tickers else get_universo())
 
     print()
     print(SEP)

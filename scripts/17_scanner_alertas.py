@@ -39,7 +39,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.utils.config import ALL_TICKERS
+from src.data.universo import get_universo
 from src.pipeline.data_manager import preparar_ticker
 from src.pipeline.feature_calculator import calcular_features_completas
 from src.pipeline.signal_engine import cargar_modelos_v3, evaluar_ticker
@@ -292,7 +292,7 @@ def main():
     )
     parser.add_argument(
         "--todos", action="store_true",
-        help="Escanear todos los tickers del universo (ALL_TICKERS)"
+        help="Escanear todos los tickers del universo (tabla activos)"
     )
     parser.add_argument(
         "--persistir", action="store_true",
@@ -310,7 +310,7 @@ def main():
     args = parser.parse_args()
 
     if args.todos:
-        tickers = ALL_TICKERS
+        tickers = get_universo()
     elif args.tickers:
         tickers = [t.upper().strip() for t in args.tickers]
     else:
