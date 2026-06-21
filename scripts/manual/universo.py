@@ -228,6 +228,15 @@ def cmd_add(args):
         _run("scripts/compute_fundamentales_ratios.py", ["--tickers", ticker])
         _run("scripts/refresh_ticker_pais.py", ["--tickers", ticker])
         _run("scripts/compute_fundamentales_sector.py", [])
+        # Multiplos al cierre (*_px) + comparativo de valuacion (DB->local, sin Yahoo)
+        try:
+            from scripts.compute_multiplos_px import compute_multiplos_px
+            from scripts.compute_fundamentales_sector import compute_sector_valuacion_px
+            n_px = compute_multiplos_px(eng_l)
+            n_sx = compute_sector_valuacion_px(eng_l)
+            log(f"   multiplos *_px: {n_px} | comparativo valuacion *_px: {n_sx}")
+        except Exception as e:
+            log(f"   [WARN] multiplos_px fallo ({e}); se llena en el proximo recovery.")
     else:
         log("6) [SKIP fundamentales]")
 
