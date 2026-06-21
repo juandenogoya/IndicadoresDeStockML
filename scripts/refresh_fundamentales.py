@@ -77,7 +77,7 @@ import psycopg2
 import psycopg2.extras
 from sqlalchemy import text
 
-from src.utils.config import ALL_TICKERS
+from src.data.universo import get_universo
 from src.utils.yfinance_lock import acquire as acquire_yf_lock
 from scripts.oneshot.create_fundamentales_tables import (
     get_railway_engine, get_local_engine, _parse_env_file,
@@ -454,7 +454,7 @@ def main():
     parser.add_argument("--target", choices=["railway", "local", "both"],
                         default="local", help="Donde escribir (default: local)")
     parser.add_argument("--tickers", default=None,
-                        help="Lista CSV de tickers a procesar (default: ALL_TICKERS)")
+                        help="Lista CSV de tickers a procesar (default: universo de tabla activos)")
     parser.add_argument("--lookback-q", type=int, default=LOOKBACK_Q_DEFAULT,
                         help=f"N trimestres recientes a guardar (default {LOOKBACK_Q_DEFAULT})")
     parser.add_argument("--chunk-size", type=int, default=CHUNK_SIZE_DEFAULT,
@@ -465,7 +465,7 @@ def main():
     if args.tickers:
         tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
     else:
-        tickers = sorted(set(ALL_TICKERS))
+        tickers = get_universo()
 
     targets = ["local", "railway"] if args.target == "both" else [args.target]
 

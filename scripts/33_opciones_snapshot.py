@@ -56,7 +56,7 @@ import yfinance as yf
 import psycopg2.extras
 from sqlalchemy import text
 from src.data.database import get_engine, get_connection
-from src.utils.config import ALL_TICKERS
+from src.data.universo import get_universo
 
 
 # ── Parametros configurables ──────────────────────────────────────────────────
@@ -1332,7 +1332,9 @@ def main():
         return
 
     fecha_override = date.fromisoformat(args.fecha) if args.fecha else None
-    tickers = args.ticker if args.ticker else list(ALL_TICKERS)
+    # Universo desde la tabla `activos` (fuente unica). En Oracle get_engine()
+    # apunta a Railway, donde `activos` esta sincronizada.
+    tickers = args.ticker if args.ticker else get_universo()
     cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override,
             intento=args.intento, engine=args.engine, force=args.force,
             solo_crudo=args.solo_crudo)

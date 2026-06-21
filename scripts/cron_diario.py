@@ -118,16 +118,10 @@ def paso_actualizar_datos() -> dict:
     from src.data.database import upsert_precios, query_df
     from src.indicators.technical import procesar_indicadores_ticker
 
-    # Obtener TODOS los tickers activos en DB
-    try:
-        df_activos = query_df(
-            "SELECT ticker FROM activos WHERE activo = TRUE ORDER BY ticker"
-        )
-        tickers_db = df_activos["ticker"].tolist() if not df_activos.empty else []
-    except Exception as e:
-        log(f"  [WARN] No se pudo leer activos de DB: {e}")
-        from src.utils.config import ALL_TICKERS
-        tickers_db = ALL_TICKERS
+    # Universo desde la tabla activos (fuente unica; el helper ya trae el
+    # fallback a config.ALL_TICKERS si la tabla no responde).
+    from src.data.universo import get_universo
+    tickers_db = get_universo()
 
     if not tickers_db:
         log("  [WARN] Lista de tickers vacia, saltando actualizacion.")
@@ -307,13 +301,14 @@ def paso_scanner() -> list:
     Corre el scanner para todos los tickers del universo.
     Retorna la lista de resultados.
     """
-    from src.utils.config import ALL_TICKERS
+    from src.data.universo import get_universo
     from src.pipeline.data_manager import preparar_ticker
     from src.pipeline.feature_calculator import calcular_features_completas
     from src.pipeline.signal_engine import cargar_modelos_v3, evaluar_ticker
     from src.pipeline.alert_classifier import clasificar_alerta
     from src.pipeline.telegram_notifier import enviar_resumen
 
+    universo   = get_universo()
     modelos    = cargar_modelos_v3()
     # Usar el ultimo dia habil como fecha del scan (no datetime.now() que puede
     # cruzar medianoche UTC si el cron tarda mucho o corre en re-run nocturno)
@@ -324,8 +319,8 @@ def paso_scanner() -> list:
     scan_fecha = datetime(_dia_habil.year, _dia_habil.month, _dia_habil.day, 21, 0, 0)
     resultados = []
 
-    for i, ticker in enumerate(ALL_TICKERS, 1):
-        log(f"  [{i:02d}/{len(ALL_TICKERS)}] {ticker}...", )
+    for i, ticker in enumerate(universo, 1):
+        log(f"  [{i:02d}/{len(universo)}] {ticker}...", )
         resultado_base = {
             "scan_fecha":        scan_fecha,
             "ticker":            ticker,
