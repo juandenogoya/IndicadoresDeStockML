@@ -48,6 +48,11 @@ Documentacion que existe hoy en docs/:
 - docs/reportes.md        : modulo scripts/reports/ -- generador de PDF e
                             infografias para compartir analisis en X
 - docs/estrategias_ft.md  : estrategias de forward testing
+- docs/gestion_universo.md : alta/baja de tickers del universo (Tarea 14).
+                            Fuente unica via tabla activos (src/data/universo),
+                            CLI universo.py (add/remove/list), insight del backfill
+                            2a (ticker nace caliente), dual-write Railway, tabla
+                            universo_cambios, point-in-time por construccion.
 - docs/bots_alpaca.md     : arquitectura de produccion de los 3 bots Alpaca
                             (Plan B): masticada senales_bot_diaria, cerebro
                             COMPARTIDO src/strategies/, adapters src/trading/,
@@ -122,6 +127,22 @@ Si necesitas mostrar la estructura de un DSN, usar placeholders:
 postgresql://<user>:<password>@<host>:<port>/<db>
 
 ## Patrones criticos del proyecto
+
+### Universo de tickers -- fuente UNICA: tabla `activos` (18/6/2026, Tarea 14)
+- El universo se sirve de `src/data/universo.get_universo()` (lee `activos`
+  WHERE activo=TRUE de la DB a la que apunte get_engine; activos vive en local Y
+  Railway, sincronizada). Fallback a `config.ALL_TICKERS` si la tabla falla.
+- NO usar `config.ALL_TICKERS` en codigo vivo nuevo -> usar get_universo(). Los
+  consumidores migrados: snapshot opciones, scanner, refresh fundamentales/pais,
+  cron_diario. config.ALL_TICKERS queda solo como fallback/legacy ML-BT.
+- Alta/baja: `scripts/manual/universo.py add|remove`. ADD dual-writea `activos`
+  a local+Railway (el snapshot corre Oracle->Railway y debe ver el ticker).
+  REMOVE = soft delete (activo=FALSE), conserva historia.
+- POINT-IN-TIME: los agregados sectoriales (calcular_pcr_sector_plazo etc.) se
+  computan por fecha sobre los tickers que TIENEN DATO ese dia -> alta/baja NO
+  reescribe la historia. SALVEDAD: cambiar el sector de un ticker existente
+  (reclasificacion) SI regrupa su historia (el JOIN toma el sector actual de
+  activos) -> setear sector una vez. Detalle: docs/gestion_universo.md.
 
 ### DB connection (src/data/database.py:get_engine())
 - Chequea `os.getenv("DATABASE_URL")` PRIMERO.
@@ -217,6 +238,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/recover_opciones_tickers.py` | Recovery quirurgico de tickers especificos |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
+| `scripts/manual/universo.py` (+ `.bat`) | Alta/baja de tickers del universo (Tarea 14). `add` (backfill 2a + indicadores/features/z-scores/fundamentales + dual-write activos local+Railway + log), `remove` (soft delete + guard posiciones FT), `list`. Solo acciones. Ver docs/gestion_universo.md |
+| `src/data/universo.py` | Fuente UNICA del universo: get_universo()/get_universo_sectores() leen de `activos` (fallback config.ALL_TICKERS). Lo usan snapshot/scanner/refresh/cron |
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
@@ -246,6 +269,12 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 
 Listado completo: usar `describe_table` del MCP o `information_schema`.
 Las criticas:
+- `activos` (ticker PK, nombre, sector, industry, activo BOOL, modelo_asignado) --
+  FUENTE UNICA del universo. activo=TRUE = universo vivo. Leida via
+  src/data/universo.get_universo(). En local Y Railway, sincronizada (dual-write
+  en alta/baja). 200 tickers (HOOD incorporado 18/6).
+- `universo_cambios` -- log de alta/baja (ticker, accion ALTA/BAJA, fecha, sector,
+  motivo, detalle JSONB). local+Railway. Auditoria/reproducibilidad point-in-time.
 - `precios_diarios` (OHLCV) | `indicadores_tecnicos`
 - `features_precio_accion` | `features_market_structure`
 - `alertas_scanner` (col: `scan_fecha`, `precio_fecha`)
