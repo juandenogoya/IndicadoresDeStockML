@@ -49,6 +49,9 @@ def cargar_datos_completos() -> pd.DataFrame:
         JOIN activos              a ON p.ticker = a.ticker
         JOIN indicadores_tecnicos i ON p.ticker = i.ticker AND p.fecha = i.fecha
         JOIN scoring_tecnico      s ON p.ticker = s.ticker AND p.fecha = s.fecha
+        -- Tarea 20: sectores diminutos (n<=3) excluidos -> sus z-scores serian ruido.
+        -- Decision del usuario: 9 sectores. Real Estate (3) y Utilities (1) afuera.
+        WHERE a.sector NOT IN ('Real Estate', 'Utilities')
         ORDER BY p.ticker, p.fecha
     """
     df = query_df(sql)

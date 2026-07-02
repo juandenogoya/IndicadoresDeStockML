@@ -53,6 +53,15 @@ Documentacion que existe hoy en docs/:
                             CLI universo.py (add/remove/list), insight del backfill
                             2a (ticker nace caliente), dual-write Railway, tabla
                             universo_cambios, point-in-time por construccion.
+- docs/ml_reentrenamiento.md : diagnostico del ML + esquema de reentrenamiento
+                            (Tarea 20). Global V3 (RF, 53 feats) desplegado, stale,
+                            cubre 123/200 pero POSITIVO en vivo. Modelos SECTORIALES
+                            rechazados por evidencia (el challenger desplego el global
+                            en los 6 sectores). Decisiones: motor RF-global, no
+                            reabrir concurso de algoritmos, lineal+calibracion como
+                            controles, walk-forward PURGADO (no split unico),
+                            ponderador sectorial validado o peso=1. 5 fases con
+                            compuertas. PREVIO a codear.
 - docs/bots_alpaca.md     : arquitectura de produccion de los 3 bots Alpaca
                             (Plan B): masticada senales_bot_diaria, cerebro
                             COMPARTIDO src/strategies/, adapters src/trading/,

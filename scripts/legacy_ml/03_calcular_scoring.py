@@ -16,6 +16,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.utils.config import ALL_TICKERS
+from src.data.universo import get_universo
 from src.scoring.rule_based import (
     procesar_scoring_todos,
     resumen_scoring,
@@ -44,7 +45,9 @@ def main():
     args = parser.parse_args()
 
     inicio = datetime.now()
-    tickers = args.tickers or ALL_TICKERS
+    # Fuente unica del universo (tabla activos, 200 tickers). Fallback interno a
+    # ALL_TICKERS si activos falla. Tarea 20: rebuild features_ml sobre los 200.
+    tickers = args.tickers or get_universo()
 
     print("\n" + "=" * 65)
     print("  FASE 2 — SCORING RULE-BASED")
