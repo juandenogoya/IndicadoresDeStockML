@@ -281,3 +281,40 @@ con ML propio); (2) probabilidades calibradas -> umbral COMPRA_FUERTE confiable.
 PRODUCCION (scanner que alimenta alertas_scanner + bot ML FT/Alpaca); al calibrar cambia
 la distribucion de prob -> RECALIBRAR el umbral COMPRA_FUERTE. Requiere listar archivos
 + aprobacion antes de codear. Homologar con FT via src/strategies/ml_scanner.
+
+## 9. Addendum -- validez predictiva del PCR (previo a sumar features de opciones)
+
+Antes de invertir en features de opciones para intentar subir el techo (unica
+palanca real segun seccion 8), se testeo si el PCR (put/call ratio) PREDICE el
+retorno futuro. Script: scripts/ml/pcr_predictive_validity.py (reutilizable).
+
+Metodo: Information Coefficient (Spearman cross-seccional por fecha) del PCR en t
+vs retorno a 5/10/20 dias, por ventana (corto/medio/largo). Dos medidas:
+- IC(nivel): rankea por el PCR crudo -> mezcla rasgos ESTATICOS del ticker.
+- IC(dinamico): rankea por PCR - baseline del propio ticker (la DESVIACION = el
+  verdadero "cambio de sentimiento", la señal tradeable).
+
+RESULTADO (48 dias, 2026-04-18 -> 2026-07-01, UN regimen alcista):
+- IC(nivel) FUERTE y consistente: pcr_oi ventana medio 10-20d IC +0.15/+0.17,
+  breadth ~90%, CONTRARIAN (PCR alto -> retorno alto). pcr_oi >> pcr_vol
+  (posicionamiento/OI predice mejor que flujo/volumen). Spread quintil sup-inf
+  +3 a +6% a 20d.
+- PERO IC(dinamico) se DERRUMBA a ~0 (incluso negativo en corto: -0.09).
+
+VEREDICTO: la aparente señal NO es "el sentimiento institucional se cumplio". Es
+un ARTEFACTO ESTATICO cross-seccional de un regimen (nombres que estructuralmente
+tienen PCR alto rindieron mejor en este mercado alcista). El CAMBIO de
+posicionamiento -- lo que realmente seria sentimiento -- no predice. Mismo patron
+que los spreads sectoriales "en vivo" (ruido de una ventana).
+
+DECISION: PREMATURO sumar PCR como feature del ML (inyectaria un factor fragil de
+un solo regimen -- justo la trampa a evitar). LIMITE DURO: opciones_snapshot
+arranca 2026-04-18 (snapshot nuevo, sin mas historia local). RE-CORRER el test con
+2+ regimenes de historia (crece dia a dia, ~6-12 meses). Mientras tanto las
+opciones se usan donde NO requieren validacion predictiva: muros como S/R,
+expected move, tablero de sintesis (descriptivo/riesgo).
+
+META-APRENDIZAJE (cierra el loop): tanto el techo del ML (seccion 8) como el
+bloqueo de las features de opciones vienen de LO MISMO -- falta de informacion
+across regimenes. Hoy no hay con que subir el edge predictivo; el valor esta en
+el ensamble de señales finas + usos descriptivos, y en acumular datos con paciencia.
