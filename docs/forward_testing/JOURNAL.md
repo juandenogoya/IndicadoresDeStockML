@@ -272,6 +272,57 @@ valida desde su `fecha_inicio` respectiva, sin filtro adicional.
 
 ---
 
+### 2026-07-18 — OBSERVACION
+**SMC_v1: analisis post-salida de los TIME_STOP (n=14) — el time stop se
+defiende en ganadoras; en perdedoras la evidencia es contradictoria**
+
+Pregunta: ?que hicieron los tickers DESPUES de que salimos por TIME_STOP_20/21/22D?
+?Conviene diferenciar la variable de salida entre posiciones en ganancia y en perdida?
+
+**Datos (14 salidas TIME_STOP historicas, retornos medidos desde el precio de salida):**
+
+Ganadoras al salir (10 de 14, avg +3.9% al cierre):
+| Horizonte | Retorno promedio post-salida | Subieron |
+|---|---|---|
+| +5d | -1.73% | 2/8 |
+| +10d | +1.75% | 4/6 |
+| +20d | -2.15% | 1/4 |
+
+Casos: JNJ salio +14.1% y cayo -7.6% en 5d. MO salio +8.1% y cayo -6.9% en 5d.
+ERIC salio +13.4% y a 20d estaba -11%. **El time stop cosecha cerca de techos
+locales.** Coherente con la naturaleza SMC: una posicion que llego al dia 20
+sin dispararse ni tocar el trailing es un impulso que no se desarrollo.
+NO hay evidencia de estar cortando corridas (distinto del caso TP-fijo de
+TECH_SECTOR que motivo OIEXIT_v1).
+
+Perdedoras al salir (4 de 14) — los dos casos decisivos se contradicen:
+- HAL: salio -1.2% -> cayo -16% mas en 20d (el time stop SALVO).
+- SE:  salio -3.2% -> subio +29% en 20d (el time stop COSTO carisimo).
+- Features al momento de salir NO discriminan: ambos con tech_score=0; SE tenia
+  el candle_score_5d MAS bajo del grupo (-5.0) y fue el que mas se recupero.
+
+**Contrafactual vivo — SMC_v2 (sin time stop) sobre los mismos tickers:**
+- HAL en v2: retuvo 36 dias -> TRAILING_SL -4.1% (peor que el -1.2% de v1).
+- PLD en v2: retuvo 32 dias -> TRAILING_SL -4.6% (peor que -3.2% de v1).
+- SE: v2 tampoco capturo el +29% (todos sus cierres son TRAILING_SL, avg -4.2%).
+- CSX (45 dias) y UPS (31 dias) siguen abiertas en v2 — ciclo sin cerrar.
+- v2 al 18/7 no cosecho NINGUNA ganadora todavia (10 cierres, todos TRAILING_SL).
+
+**Decision: NO tocar SMC_v1.**
+1. Muestra chica (14 ops; solo 4-6 con datos a +20d) — cambiar parametros con
+   esto seria sobreajuste.
+2. El time stop sobre ganadoras rinde (cosecha techos); el unico dolor real es
+   el caso SE y no hay feature que lo hubiera detectado.
+3. La comparacion v1-vs-v2 que YA CORRE es exactamente el experimento que
+   responde la pregunta (v2 retiene lo que v1 corta por tiempo).
+
+**Reevaluar cuando**: v1 acumule ~30 salidas TIME_STOP y las retenidas largas
+de v2 (CSX/UPS y sucesoras) hayan cerrado ciclo. Ahi comparar: R promedio
+capturado por retencion (v2) vs cosecha temprana (v1), y si aparece algun
+discriminador para perdedoras estancadas (tipo SE vs HAL).
+
+---
+
 ## Template de entrada
 
 ```
