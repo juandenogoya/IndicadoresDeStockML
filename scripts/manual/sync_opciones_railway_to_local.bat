@@ -43,9 +43,17 @@ echo.
 IF %ERRORLEVEL% NEQ 0 (
     echo.
     echo [ERROR] El sync de opciones termino con errores. Revisar output arriba.
+    echo         Se SALTA la retencion en Railway: sin sync verificado no se borra.
 ) ELSE (
     echo.
     echo [OK] Sync de opciones completado.
+    echo.
+    REM ── Retencion en Railway (incidente 2026-07-20: limite de consumo) ──
+    REM Purga opciones_snapshot en Railway dejando solo los ultimos 10 dias.
+    REM SOLO borra fechas verificadas como replicadas en local (el script
+    REM compara COUNT por fecha; ante deficit, esa fecha no se toca).
+    REM Momento natural: recien sincronizado = local probadamente fresco.
+    "%PYTHON%" "%ROOT%scripts\manual\retencion_opciones_railway.py" --quiet-skip
 )
 
 echo.

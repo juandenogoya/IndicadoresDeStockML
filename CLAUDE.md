@@ -255,6 +255,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/poblar_opciones_yq.bat` | Carga manual opciones US via yahooquery (UNA pasada) |
 | `scripts/manual/recover_opciones_tickers.py` | Recovery quirurgico de tickers especificos |
 | `scripts/manual/replay_opciones_spool.py` | Reinyecta a la DB los snapshots de opciones que quedaron en disco por DB caida (`--list` / `--dry-run` / `--target local\|railway`). Upsert idempotente |
+| `scripts/manual/retencion_opciones_railway.py` | Purga opciones_snapshot en RAILWAY dejando los ultimos 10 dias (causa raiz incidente 20/7: +580 MB/mes sin retencion). SOLO borra fechas verificadas replicadas en local (compara COUNT por fecha). Incluye VACUUM FULL (DELETE solo no devuelve disco). Encadenado al final de sync_opciones_railway_to_local.bat |
 | `src/utils/opciones_spool.py` | Red de seguridad en disco del snapshot de opciones (modulo puro, .csv.gz en streaming) |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
@@ -299,7 +300,10 @@ Las criticas:
 - `features_precio_accion` | `features_market_structure`
 - `alertas_scanner` (col: `scan_fecha`, `precio_fecha`)
 - `ticker_zscore_diario` | `opciones_zscore_diario`
-- `opciones_snapshot` | `opciones_resumen_diario`
+- `opciones_snapshot` | `opciones_resumen_diario` -- en RAILWAY, opciones_snapshot
+  tiene RETENCION de 10 dias (purga verificada post-sync, 20/7/2026); la historia
+  completa vive en LOCAL. Sin retencion crecia ~19 MB/dia y detuvo Railway por
+  limite de consumo (incidente 20/7).
 - `opciones_sector_zscore_diario` (PCR_vol+vol agregados por sector, z-score)
 - `opciones_pcr_plazo_diario` (PCR vol/OI + muros S/R por ventana corto/medio/largo,
   por ticker; fuente src/utils/opciones_plazo.py)
