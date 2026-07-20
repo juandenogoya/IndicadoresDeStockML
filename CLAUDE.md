@@ -135,6 +135,13 @@ postgresql://<user>:<password>@<host>:<port>/<db>
 - NO usar `config.ALL_TICKERS` en codigo vivo nuevo -> usar get_universo(). Los
   consumidores migrados: snapshot opciones, scanner, refresh fundamentales/pais,
   cron_diario. config.ALL_TICKERS queda solo como fallback/legacy ML-BT.
+- FALLBACK EN 3 NIVELES (20/6/2026, incidente Railway): `activos` -> **cache en
+  disco** (`data/cache/universo.json`, refrescado en cada lectura exitosa) ->
+  `config.ALL_TICKERS` (ultimo recurso). El cache existe porque ALL_TICKERS se
+  DESINCRONIZA EN SILENCIO: `universo.py add` escribe la tabla y no toca config
+  -> HOOD (alta 18/6) nunca entro a la lista, y con Railway caido el snapshot
+  habria capturado 199/200 sin avisar. El cache se auto-cura. Es POR MAQUINA
+  (refleja la DB que ve ese host). Sembrarlo: `universo.py cache`.
 - Alta/baja: `scripts/manual/universo.py add|remove`. ADD dual-writea `activos`
   a local+Railway (el snapshot corre Oracle->Railway y debe ver el ticker).
   REMOVE = soft delete (activo=FALSE), conserva historia.

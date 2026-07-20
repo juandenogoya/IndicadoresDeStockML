@@ -367,6 +367,9 @@ def main():
 
     sub.add_parser("list", help="Mostrar universo + ultimos cambios")
 
+    sub.add_parser("cache", help="Refrescar el cache en disco del universo "
+                                 "(red de seguridad si la DB se cae)")
+
     args = ap.parse_args()
     if args.cmd == "add":
         cmd_add(args)
@@ -374,6 +377,24 @@ def main():
         cmd_remove(args)
     elif args.cmd == "list":
         cmd_list(args)
+    elif args.cmd == "cache":
+        cmd_cache(args)
+
+
+def cmd_cache(args):
+    """
+    Reescribe data/cache/universo.json desde `activos`.
+
+    El cache se refresca solo en cada lectura exitosa, asi que normalmente no
+    hace falta. Sirve para SEMBRARLO en una maquina que todavia no lo tiene
+    (ej. Oracle recien clonado, o Oracle con su DB caida: ahi no puede
+    construirlo solo y sin cache caeria a la lista hardcodeada).
+    """
+    from src.data.universo import refrescar_cache, CACHE_PATH
+    data = refrescar_cache()
+    print(f"  Cache refrescado: {data['n']} tickers")
+    print(f"  Archivo         : {CACHE_PATH}")
+    print(f"  Actualizado     : {data['actualizado']}")
 
 
 if __name__ == "__main__":
