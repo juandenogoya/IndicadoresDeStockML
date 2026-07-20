@@ -646,7 +646,8 @@ def _check_datos_existentes(fecha: date) -> int:
 def cmd_run(tickers: list[str], dry_run: bool = False,
             fecha_override: Optional[date] = None, intento: int = 1,
             engine: str = "yfinance", force: bool = False,
-            solo_crudo: bool = False):
+            solo_crudo: bool = False, spool_dir: Optional[str] = None,
+            no_spool: bool = False):
     fecha_hoy      = fecha_override or date.today()
     _skip_telegram = os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1"
 
@@ -715,7 +716,25 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
     total_filas  = 0
     sin_opciones = 0
     errores      = 0
+    db_fallos    = 0        # tickers bajados OK pero que la DB rechazo
     resumenes    = []
+
+    # ── Spool en disco (incidente 2026-07-20: Railway caido = dato perdido) ──
+    # La chain vigente es IRRECUPERABLE al dia siguiente, asi que se vuelca a
+    # disco ANTES de intentar la DB. Si la DB responde bien, el spool se borra
+    # al final; si no, queda pendiente para replay_opciones_spool.py.
+    spool = None
+    if not dry_run and not no_spool:
+        try:
+            from src.utils.opciones_spool import SpoolWriter, DIR_SPOOL_DEFAULT
+            destino = spool_dir or os.path.join(ROOT, DIR_SPOOL_DEFAULT)
+            spool = SpoolWriter(fecha_hoy, destino)
+            spool.abrir()
+            log(f"  Spool     : {spool.path}")
+        except Exception as sp_err:
+            # El spool es una red de seguridad: que falle NO debe frenar la captura.
+            log(f"  [WARN] spool no disponible ({sp_err}); sigo solo contra DB.")
+            spool = None
 
     for i, ticker in enumerate(tickers, 1):
         precio = precios.get(ticker)
@@ -730,6 +749,13 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
                 time.sleep(1.0)   # pausa inter-ticker aumentada (era 0.2) -- suaviza burst
                 continue
 
+            # Al disco PRIMERO: si la DB esta caida, el dato igual sobrevive.
+            if spool is not None:
+                try:
+                    spool.write(filas)
+                except Exception as sp_err:
+                    log(f"  [WARN] spool write {ticker}: {sp_err}")
+
             # Agregar resumen en memoria (sin calls adicionales)
             resumen = _computar_resumen(ticker, fecha_hoy, filas, precio)
             resumenes.append(resumen)
@@ -739,11 +765,20 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
                 log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  "
                     f"{len(filas):5d} filas  PCR_vol={pcr_v}  [DRY RUN]")
             else:
-                n = persistir_filas(filas)
                 pcr_v = f"{resumen['pcr_vol']:.2f}" if resumen["pcr_vol"] else "N/A"
-                log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  "
-                    f"{n:5d} filas  PCR_vol={pcr_v}")
-                total_filas += n
+                # La DB puede estar caida (Railway detenido por limite de consumo).
+                # Eso NO es motivo para abortar: la chain ya esta en el spool.
+                try:
+                    n = persistir_filas(filas)
+                    total_filas += n
+                    log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  "
+                        f"{n:5d} filas  PCR_vol={pcr_v}")
+                except Exception as db_err:
+                    db_fallos += 1
+                    destino = "spool" if spool is not None else "PERDIDO"
+                    log(f"  [{i:3d}/{len(tickers)}] {ticker:<8s}  "
+                        f"{len(filas):5d} filas  PCR_vol={pcr_v}  "
+                        f"[DB FALLO -> {destino}] {str(db_err)[:80]}")
 
             time.sleep(1.0)   # pausa inter-ticker aumentada (era 0.3) -- suaviza burst
 
@@ -799,14 +834,59 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
         except Exception as p_err:
             log(f"  [WARN] PCR por plazo no calculado: {p_err}")
 
+    # ── Cierre del spool ─────────────────────────────────────────────────────
+    # INVARIANTE: un spool presente = dato pendiente de persistir. Si la DB
+    # tomo todo, se borra; si fallo aunque sea un ticker, se conserva entero
+    # (el upsert es ON CONFLICT DO NOTHING -> reinyectar de mas es inocuo).
+    if spool is not None:
+        spool.cerrar()
+        if db_fallos == 0 and spool.filas > 0:
+            spool.descartar()
+            log(f"  Spool descartado : DB persistio los {spool.filas:,} contratos.")
+        elif spool.filas > 0:
+            log("")
+            log(f"  [!] DB FALLO en {db_fallos} tickers. {spool.filas:,} contratos "
+                f"quedan en spool:")
+            log(f"      {spool.path}")
+            log(f"      Reinyectar con: python scripts/manual/replay_opciones_spool.py")
+            _alerta_spool_pendiente(fecha_hoy, spool.path, spool.filas, db_fallos, intento)
+        else:
+            spool.descartar()   # vacio, no deja basura
+
     log("")
     log(f"  Filas snapshot   : {total_filas:,}")
     log(f"  Sin opciones     : {sin_opciones}")
     log(f"  Errores          : {errores}")
+    if db_fallos:
+        log(f"  Fallos DB        : {db_fallos} (datos en spool)")
     log("  Completado.")
 
     if not dry_run:
         _post_run_check(fecha_hoy, total_filas, len(tickers), errores, sin_opciones, intento=intento)
+
+
+def _alerta_spool_pendiente(fecha, path, filas, db_fallos, intento):
+    """
+    Avisa por Telegram que la DB esta caida y el dato quedo en disco.
+    Sin esto el fallo es SILENCIOSO: el incidente de Railway del 2026-07-20 se
+    detecto dias despues, por casualidad.
+    """
+    if os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1":
+        return
+    try:
+        from src.pipeline.telegram_notifier import _send as _tg_send
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        nl = "\n"
+        _tg_send(
+            f"ALERTA Opciones snapshot -- DB inaccesible{nl}"
+            f"<i>{fecha} | {ts}</i>{nl}"
+            f"Intento {intento}/4: fallo la escritura en {db_fallos} tickers.{nl}"
+            f"DATO A SALVO en disco: {filas:,} contratos{nl}"
+            f"<code>{os.path.basename(path)}</code>{nl}"
+            f"Revisar la DB y correr replay_opciones_spool.py."
+        )
+    except Exception as tg_err:
+        log(f"  [WARN] Telegram no disponible: {tg_err}")
 
 
 # ── Chequeo post-escritura EOD ────────────────────────────────────────────────
@@ -1313,6 +1393,13 @@ def main():
                         help="Captura SOLO el crudo (opciones_snapshot). NO computa "
                              "resumen/zscore/pcr_plazo: se computan en LOCAL (Tarea 17). "
                              "Uso en la nube (Oracle/GH) post-migracion Plan C.")
+    parser.add_argument("--spool-dir", default=None,
+                        help="Directorio del spool en disco (default: <repo>/data/opciones_spool). "
+                             "El crudo se vuelca ahi ANTES de la DB; si la DB responde "
+                             "bien el archivo se borra al terminar.")
+    parser.add_argument("--no-spool", action="store_true",
+                        help="Desactiva la red de seguridad en disco. NO recomendado: "
+                             "sin spool, una DB caida = chain del dia PERDIDA.")
     args = parser.parse_args()
 
     if args.init:
@@ -1337,7 +1424,8 @@ def main():
     tickers = args.ticker if args.ticker else get_universo()
     cmd_run(tickers, dry_run=args.dry_run, fecha_override=fecha_override,
             intento=args.intento, engine=args.engine, force=args.force,
-            solo_crudo=args.solo_crudo)
+            solo_crudo=args.solo_crudo, spool_dir=args.spool_dir,
+            no_spool=args.no_spool)
 
 
 if __name__ == "__main__":

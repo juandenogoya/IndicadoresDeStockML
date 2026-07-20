@@ -210,6 +210,17 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   (regularMarketPrice si mercado cerrado, regularMarketPreviousClose si abierto),
   que coincide con el close de precios_diarios LOCAL.
 - **NO asumir** que precio_subyacente sale de precios_diarios: sale de yahooquery.
+- **SPOOL en disco (20/6/2026, incidente Railway)**: Railway se detuvo por limite de
+  consumo y el snapshot perdia el dato: `persistir_filas()` escribia por ticker y,
+  con la DB caida, cada ticker levantaba excepcion y la chain YA DESCARGADA se
+  descartaba. Ahora `33_opciones_snapshot.py` vuelca el crudo a
+  `data/opciones_spool/opciones_YYYY-MM-DD.csv.gz` **ANTES** de intentar la DB
+  (`src/utils/opciones_spool.py`, modulo puro, escritura en streaming). Un fallo de
+  DB ya NO aborta la captura. INVARIANTE: **archivo en el spool = dato pendiente de
+  persistir**; si la DB tomo todo, el spool se borra solo. Recuperacion:
+  `scripts/manual/replay_opciones_spool.py` (upsert idempotente). Alerta Telegram
+  automatica cuando queda spool pendiente (antes el fallo era SILENCIOSO).
+  Desactivable con `--no-spool` (no recomendado).
 
 ### PostgreSQL ON CONFLICT
 - Requiere unique index **FULL** (sin clausula WHERE).
@@ -236,6 +247,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/status_local.bat` / `status.bat` | Status DB local / Railway |
 | `scripts/manual/poblar_opciones_yq.bat` | Carga manual opciones US via yahooquery (UNA pasada) |
 | `scripts/manual/recover_opciones_tickers.py` | Recovery quirurgico de tickers especificos |
+| `scripts/manual/replay_opciones_spool.py` | Reinyecta a la DB los snapshots de opciones que quedaron en disco por DB caida (`--list` / `--dry-run` / `--target local\|railway`). Upsert idempotente |
+| `src/utils/opciones_spool.py` | Red de seguridad en disco del snapshot de opciones (modulo puro, .csv.gz en streaming) |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
 | `scripts/manual/universo.py` (+ `.bat`) | Alta/baja de tickers del universo (Tarea 14). `add` (backfill 2a + indicadores/features/z-scores/fundamentales + dual-write activos local+Railway + log), `remove` (soft delete + guard posiciones FT), `list`. Solo acciones. Ver docs/gestion_universo.md |
