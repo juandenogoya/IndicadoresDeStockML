@@ -571,6 +571,89 @@ prioridad baja, pero queda anotado.
 
 ---
 
+### 2026-07-21 — RESULTADO
+**Ventana comparable post-fix: las 10 estrategias le ganaron al mercado**
+
+Con los datos ya corregidos, se midieron las 10 estrategias sobre la ventana en
+que son comparables entre si: **desde el 2026-05-30**, fecha del fix del bug de
+`SCORE_DEGRADADO_0.0` (antes de esa fecha, la historia de las estrategias 4, 6,
+8 y 9 mide el bug, no la estrategia).
+
+**El dato que da vuelta la lectura**: el benchmark cambia de signo entre ventanas.
+
+| Ventana | Universo equiponderado |
+|---|---|
+| Completa (abril -> julio) | **+8.26%** |
+| **Post-fix (30/5 -> 20/7)** | **-4.95%** |
+
+Todo lo medido sobre la ventana completa estaba dominado por el rally de
+abril-mayo. En la ventana limpia **el mercado cayo ~5%**.
+
+**Resultados post-fix (n=34 dias habiles, ordenado por Sortino)**:
+
+| Estrategia | Ret. | vs bench | Max DD | Sortino | IR | Expos. |
+|---|---|---|---|---|---|---|
+| ML_SCANNER_v1 | **+2.67%** | +7.6 | 3.86% | +1.51 | **+3.39** | 56% |
+| SMC_v1 | **+1.30%** | +6.3 | 4.22% | +0.78 | +3.09 | 72% |
+| TECH_SECTOR_OIEXIT_v1 | -1.17% | +3.8 | **2.76%** | -1.39 | +3.14 | 82% |
+| SMC_v2 | -2.23% | +2.7 | 5.23% | -1.85 | +1.31 | 74% |
+| TECH_SECTOR_OPTIONS_v2 | -2.07% | +2.9 | 4.33% | -1.99 | +2.59 | 71% |
+| TECH_v1 | -2.99% | +2.0 | 5.31% | -2.04 | +1.10 | 75% |
+| TECH_SECTOR_v2 | -2.09% | +2.9 | 3.79% | -2.16 | +2.41 | 77% |
+| TECH_SECTOR_OPTIONS_v1 | -1.99% | +3.0 | 4.48% | -2.17 | +2.25 | 73% |
+| COMBO_v1 | -2.28% | +2.7 | 3.76% | -2.34 | +1.55 | 73% |
+| TECH_SECTOR_v1 | -2.34% | +2.6 | 3.73% | -2.44 | +1.57 | 65% |
+
+**Los 10 Information Ratio son POSITIVOS.** Ocho de diez estan en rojo absoluto
+pero todas cayeron menos que el indice, y dos subieron mientras el mercado
+bajaba. Sin el benchmark al lado, la conclusion habria sido "se rompieron todas
+despues del fix" — exactamente lo contrario de lo que paso.
+
+**Por operacion, desde el 30/5** (ordenado por profit factor):
+
+| Estrategia | n | win% | PF | Expectancy |
+|---|---|---|---|---|
+| SMC_v1 | 16 | 43.8 | **1.52** | +0.98% |
+| ML_SCANNER_v1 | 73 | 52.0 | **1.15** | +0.19% |
+| TECH_SECTOR_v2 | 174 | 39.7 | 0.84 | -0.32% |
+| COMBO_v1 | 159 | 28.3 | 0.80 | -0.44% |
+| TECH_SECTOR_OPTIONS_v2 | 73 | 38.4 | 0.79 | -1.01% |
+| TECH_v1 | 22 | 31.8 | 0.75 | -0.81% |
+| TECH_SECTOR_OPTIONS_v1 | 69 | 34.8 | 0.74 | -1.19% |
+| TECH_SECTOR_v1 | 160 | 23.1 | 0.67 | -0.85% |
+| SMC_v2 | 11 | 27.3 | 0.58 | -1.31% |
+| TECH_SECTOR_OIEXIT_v1 | 65 | 27.7 | **0.52** | -2.11% |
+
+**Observaciones**:
+1. **ML_SCANNER_v1 y SMC_v1 son las unicas con profit factor > 1 en las DOS
+   ventanas.** Es la senal mas robusta que hay hasta ahora.
+2. **TECH_SECTOR_v1 se degrado fuerte**: profit factor de 1.10 a 0.67 y acierto
+   de 36% a 23%. Opera 160 veces en 34 dias para perder en cada una.
+3. **El max drawdown es casi identico entre ventanas** en la mayoria (3.86 vs
+   3.86, 3.73 vs 3.73, 2.76 vs 2.76): la peor caida de cada estrategia ocurrio
+   en este periodo. Es el drawdown de un mercado en baja, que es cuando importa.
+4. **OIEXIT_v1 tiene el mejor drawdown (2.76%) y el peor profit factor (0.52)**:
+   protege bien el capital pero sus operaciones pierden. Coherente con una
+   estrategia de salida conservadora que corta rapido.
+
+**Lo que NO se puede afirmar**:
+- Ningun Sharpe es concluyente (n=34, los 10 IC incluyen cero).
+- El IR alto de todas es **en parte estructural**: con 56-82% de exposicion, en
+  una caida se pierde menos que un indice al 100% simplemente por tener caja.
+  No todo el IR es habilidad de seleccion.
+- Es **un solo regimen** (mercado en baja). Que ML_SCANNER lidere aca no dice
+  nada sobre un mercado alcista: en la ventana completa, que incluye el rally,
+  el orden es distinto.
+
+**Implementado**: el reporte HTML ahora muestra las DOS ventanas, con la
+comparable como tabla principal y la completa como secundaria, cada una con el
+retorno de su benchmark en el encabezado. Parametro `--desde`
+(default 2026-05-30, constante `VENTANA_COMPARABLE`).
+
+**Ref**: scripts/forward_testing/ft_reporte_html.py
+
+---
+
 ## Template de entrada
 
 ```

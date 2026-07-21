@@ -394,6 +394,27 @@ final**, cuando reflejen lo que efectivamente corre.
 El benchmark se reindexa a las fechas de **cada** estrategia (arrancan en dias
 distintos). La duracion se calcula sobre `fecha_datos`, no sobre la de registro.
 
+### Ventana comparable (constante `VENTANA_COMPARABLE`, `--desde`)
+
+El reporte muestra **dos ventanas**, y la principal NO es la historia completa:
+
+- **Ventana comparable — desde 2026-05-30** (default). Es la fecha del fix del
+  bug de `SCORE_DEGRADADO_0.0`: antes de eso la historia de las estrategias 4,
+  6, 8 y 9 mide el bug, no la estrategia. Es la unica ventana en la que las 10
+  son comparables entre si.
+- **Historia completa**, como secundaria: sirve para ver mas de un regimen de
+  mercado, pero no para rankear.
+
+Cada encabezado muestra **el retorno del benchmark de esa ventana**, y no por
+prolijidad: entre las dos el benchmark **cambia de signo** (+8.26% en la
+completa, -4.95% en la comparable). Leer los retornos contra cero en vez de
+contra el benchmark lleva a la conclusion opuesta a la correcta — con los datos
+del 21/7, ocho de diez estrategias estan en rojo absoluto en la ventana
+comparable y las diez le ganan al mercado. Ver JOURNAL 2026-07-21 RESULTADO.
+
+Las tablas se ordenan por **Sortino** (riesgo) y por **profit factor** (trade),
+no por el orden de los ids.
+
 **El retorno del bloque de riesgo difiere del resumen comparativo** y esta
 aclarado en el propio reporte: el de riesgo sale de la serie de equity, que
 termina en el ultimo cierre cargado; el del resumen usa el estado actual de la

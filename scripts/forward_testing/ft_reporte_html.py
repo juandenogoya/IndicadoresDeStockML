@@ -44,6 +44,12 @@ from src.utils.ft_metricas import (
 OUTPUT_DEFAULT = os.path.join(ROOT, "reportes", "ft_reporte.html")
 MAX_CERRADAS_TABLA = 20   # operaciones cerradas a mostrar por estrategia
 
+# Ventana comparable: fecha del fix del bug de score=0.0 (ver JOURNAL 2026-05-30).
+# Antes de esta fecha las estrategias 4, 6, 8 y 9 cerraban posiciones por un
+# score que siempre daba 0 -> su historia previa mide el bug, no la estrategia.
+# Es la ventana en la que las 10 son comparables entre si.
+VENTANA_COMPARABLE = "2026-05-30"
+
 
 # ── Helpers de formato ────────────────────────────────────────────────────────
 
@@ -105,6 +111,7 @@ def cargar_datos():
                    -- REGISTRO y el sistema es asincronico (ver METRICAS.md).
                    COALESCE(o.fecha_datos_salida, o.fecha_salida)
                      - COALESCE(o.fecha_datos, o.fecha_entrada) AS dias,
+                   COALESCE(o.fecha_datos_salida, o.fecha_salida) AS f_salida_datos,
                    p.close AS precio_actual
             FROM ft_operaciones o
             LEFT JOIN (
@@ -147,6 +154,15 @@ def cargar_datos():
     df_met = pd.DataFrame([dict(r._mapping) for r in metricas])
     df_bch = pd.DataFrame([dict(r._mapping) for r in benchmark])
     ests   = [dict(r._mapping) for r in estrategias]
+
+    # Normalizar fechas a Timestamp una sola vez: psycopg devuelve datetime.date
+    # y comparar eso con pd.Timestamp explota ("Cannot compare Timestamp with
+    # datetime.date").
+    if not df_met.empty:
+        df_met["fecha"] = pd.to_datetime(df_met["fecha"])
+    if not df_ops.empty and "f_salida_datos" in df_ops.columns:
+        df_ops["f_salida_datos"] = pd.to_datetime(df_ops["f_salida_datos"])
+
     return ests, df_ops, df_met, df_bch
 
 
@@ -161,18 +177,24 @@ def serie_benchmark(df_bch):
     return s.set_index("fecha")["idx"].astype(float)
 
 
-def calcular_riesgo(df_met_e, bench):
+def calcular_riesgo(df_met_e, bench, desde=None):
     """
     Metricas de riesgo de una estrategia sobre su equity a mercado.
 
     El benchmark se reindexa a las fechas de ESTA estrategia: cada una arranca
     en fecha distinta y compararlas contra una ventana fija seria comparar
     periodos distintos.
+
+    `desde` recorta la serie (ventana comparable post-fix).
     """
     if df_met_e is None or df_met_e.empty or len(df_met_e) < 2:
         return None
 
     sub = df_met_e.sort_values("fecha")
+    if desde is not None:
+        sub = sub[sub["fecha"] >= pd.Timestamp(desde)]
+    if len(sub) < 3:
+        return None
     equity = [float(v) for v in sub["equity"]]
     expos = [float(v) for v in sub["exposicion_pct"].dropna()]
 
@@ -316,7 +338,7 @@ tr:hover td { background: #f0f4f8; }
 """
 
 
-def tabla_riesgo(filas):
+def tabla_riesgo(filas, clave="riesgo"):
     """
     Tabla de metricas de riesgo, calculadas SOLO desde ft_equity_diaria.
 
@@ -328,9 +350,17 @@ def tabla_riesgo(filas):
     th = ("<tr><th>Estrategia</th><th>Dias</th><th>Retorno</th><th>Max DD</th>"
           "<th>Volat.</th><th>Sortino</th><th>Sharpe</th><th>IC95% Sharpe</th>"
           "<th>Inf. Ratio</th><th>Beta</th><th>Exposic.</th></tr>")
+    # Ordenado por Sortino: es el ratio primario del FT (long-only con stop =
+    # distribucion asimetrica por diseno).
+    def _orden(f):
+        r = f.get(clave)
+        if not r or r.get("sortino") is None:
+            return -999
+        return r["sortino"]
+
     trs = []
-    for f in filas:
-        r = f.get("riesgo")
+    for f in sorted(filas, key=_orden, reverse=True):
+        r = f.get(clave)
         if not r or r.get("insuficiente"):
             trs.append(f"<tr><td>{esc(f['nombre'])}</td>"
                        f"<td colspan='10' class='vacio'>Serie insuficiente</td></tr>")
@@ -368,14 +398,14 @@ def tabla_riesgo(filas):
     return f"<table class='riesgo'>{th}{''.join(trs)}</table>"
 
 
-def tabla_trade(filas):
+def tabla_trade(filas, clave="trade"):
     """Metricas a nivel operacion: aca esta el n grande y la senal real."""
     th = ("<tr><th>Estrategia</th><th>Oper.</th><th>Win rate</th>"
           "<th>Expectancy</th><th>Profit factor</th><th>Payoff</th>"
           "<th>Gan. media</th><th>Perd. media</th><th>Duracion</th></tr>")
     trs = []
-    for f in filas:
-        m = f.get("trade") or {}
+    for f in sorted(filas, key=lambda x: -((x.get(clave) or {}).get("profit_factor") or 0)):
+        m = f.get(clave) or {}
         if not m.get("n"):
             trs.append(f"<tr><td>{esc(f['nombre'])}</td>"
                        f"<td colspan='8' class='vacio'>Sin operaciones cerradas</td></tr>")
@@ -483,7 +513,7 @@ def tabla_cerradas(cerradas):
     return f"<table>{th}{''.join(trs)}</table>{nota}"
 
 
-def render_html(ests, df_ops, df_met, df_bch=None):
+def render_html(ests, df_ops, df_met, df_bch=None, desde=VENTANA_COMPARABLE):
     """Construye el documento HTML completo."""
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
     bench = serie_benchmark(df_bch)
@@ -504,13 +534,23 @@ def render_html(ests, df_ops, df_met, df_bch=None):
         df_met_e = (df_met[df_met["estrategia_id"] == e["id"]]
                     if not df_met.empty else pd.DataFrame())
         riesgo = calcular_riesgo(df_met_e, bench)
+        riesgo_comp = calcular_riesgo(df_met_e, bench, desde=desde)
 
         cerr = stats["cerradas"]
         trade = metricas_trade(cerr.to_dict("records")) if not cerr.empty else {"n": 0}
 
+        # Ventana comparable a nivel operacion: se filtra por la fecha del DATO
+        # de salida, no por la de registro.
+        trade_comp = {"n": 0}
+        if not cerr.empty and "f_salida_datos" in cerr.columns:
+            cc = cerr[pd.to_datetime(cerr["f_salida_datos"]) >= pd.Timestamp(desde)]
+            if not cc.empty:
+                trade_comp = metricas_trade(cc.to_dict("records"))
+
         filas.append({"nombre": e["nombre"].replace("FT_", ""),
                       "est": e, "stats": stats,
-                      "riesgo": riesgo, "trade": trade})
+                      "riesgo": riesgo, "riesgo_comp": riesgo_comp,
+                      "trade": trade, "trade_comp": trade_comp})
 
     # Resumen global
     saldo_total   = sum(f["stats"]["saldo"] for f in filas)
@@ -530,9 +570,20 @@ def render_html(ests, df_ops, df_met, df_bch=None):
     n_bench = 0 if bench is None else len(bench)
     ret_bench = ((bench.iloc[-1] / bench.iloc[0] - 1) * 100
                  if bench is not None and n_bench > 1 else None)
+    # Benchmark restringido a la ventana comparable
+    ret_bench_comp = None
+    if bench is not None:
+        bc = bench[bench.index >= pd.Timestamp(desde)]
+        if len(bc) > 1:
+            ret_bench_comp = (bc.iloc[-1] / bc.iloc[0] - 1) * 100
+
     # Fuera del f-string: Python 3.11 no admite expresiones multilinea adentro.
     bench_txt = f" ({fmt_pct(ret_bench)} en el periodo)" if ret_bench is not None else ""
     rf_txt = f"{RF_ANUAL_DEFAULT * 100:.1f}%"
+    bench_comp_txt = (f"<b class='{clase_signo(ret_bench_comp)}'>{fmt_pct(ret_bench_comp)}</b>"
+                      if ret_bench_comp is not None else "n/d")
+    bench_full_txt = (f"<b class='{clase_signo(ret_bench)}'>{fmt_pct(ret_bench)}</b>"
+                      if ret_bench is not None else "n/d")
 
     # Bloques por estrategia
     bloques = []
@@ -587,35 +638,54 @@ def render_html(ests, df_ops, df_met, df_bch=None):
   </div>
   {chart_html}
 
-  <h2>Riesgo</h2>
+  <h2>Riesgo &mdash; ventana comparable (desde {desde})</h2>
   <div class="aviso">
-    <b>Como leer esta tabla.</b> El <b>max drawdown</b> es la peor caida desde un
-    maximo previo: solo es calculable con la equity a mercado, y es la metrica
-    mas confiable de las de abajo.<br>
-    El <b>Sharpe</b> viene con su intervalo de confianza al 95% porque con estas
-    muestras (menos de 70 dias) el numero suelto no distingue habilidad de azar:
-    si el intervalo <b>incluye el cero</b>, se marca <span class="nc">no concl.</span>
-    y <b>no alcanza para justificar un cambio de estrategia</b>.
-    Se usa <b>Sortino</b> como ratio principal: las estrategias son long-only con
-    stop, o sea asimetricas por diseno, y el Sharpe castiga las subidas fuertes
-    que justamente se buscan. Tasa libre de riesgo: {rf_txt} anual.<br>
+    <b>Por que esta es la tabla principal.</b> El {desde} se corrigio el bug del
+    <code>SCORE_DEGRADADO_0.0</code>, que hacia que las estrategias 4, 6, 8 y 9
+    cerraran posiciones por un score que siempre daba cero. Su historia anterior
+    mide el bug, no la estrategia. Esta es la ventana en la que <b>las 10 son
+    comparables entre si</b>.<br>
+    Benchmark (universo equiponderado) en esta ventana: {bench_comp_txt}.
+    <b>Leer los retornos contra ese numero, no contra cero</b>: en un mercado en
+    baja, perder menos que el indice es agregar valor.<br><br>
+    <b>Como leer las columnas.</b> El <b>max drawdown</b> es la peor caida desde
+    un maximo previo; solo es calculable con la equity a mercado y es la metrica
+    mas confiable de la tabla.
+    El <b>Sharpe</b> va con su intervalo de confianza al 95%: con estas muestras
+    el numero suelto no distingue habilidad de azar, y si el intervalo
+    <b>incluye el cero</b> se marca <span class="nc">no concl.</span> y
+    <b>no alcanza para justificar un cambio de estrategia</b>.
+    Se ordena por <b>Sortino</b>, el ratio principal aca: las estrategias son
+    long-only con stop, o sea asimetricas por diseno, y el Sharpe castiga las
+    subidas fuertes que justamente se buscan. Tasa libre de riesgo: {rf_txt} anual.
     El <b>Information Ratio</b> mide el aporte por encima del benchmark: responde
-    "esto le gana a comprar todo el universo?".<br>
-    <b>Por que el retorno difiere del resumen de arriba:</b> esta tabla se calcula
-    sobre la serie de equity, que termina en el ultimo cierre cargado; el resumen
-    usa el estado actual de la estrategia, que ya incluye las operaciones de hoy.
-    El sistema es asincronico (opera con el OHLCV del dia anterior), asi que un
-    dia de diferencia entre ambas es lo esperado.
+    "esto le gana a comprar todo el universo?".
   </div>
-  {tabla_riesgo(filas)}
+  {tabla_riesgo(filas, "riesgo_comp")}
 
-  <h2>Metricas por operacion</h2>
+  <h2>Riesgo &mdash; historia completa</h2>
   <div class="sub">
-    Con 40-70 dias de serie, los ratios de arriba son ruidosos; aca el n es de
+    Toda la serie de cada estrategia. Benchmark del periodo: {bench_full_txt}.
+    Util para ver el comportamiento en mas de un regimen de mercado, pero
+    <b>no comparable entre estrategias</b>: incluye el periodo del bug para las
+    cuatro afectadas, y cada estrategia arranca en una fecha distinta.
+  </div>
+  {tabla_riesgo(filas, "riesgo")}
+
+  <h2>Metricas por operacion &mdash; desde {desde}</h2>
+  <div class="sub">
+    Con 30-70 dias de serie los ratios de arriba son ruidosos; aca el n es de
     decenas o centenas de operaciones y la senal es mas confiable.
     <b>Profit factor</b> = dolares ganados por cada dolar perdido (&gt;1 es rentable).
+    Ordenado por profit factor.
   </div>
-  {tabla_trade(filas)}
+  {tabla_trade(filas, "trade_comp")}
+
+  <h2>Metricas por operacion &mdash; historia completa</h2>
+  <div class="sub">
+    Incluye el periodo del bug de score para las estrategias 4, 6, 8 y 9.
+  </div>
+  {tabla_trade(filas, "trade")}
 
   <h2>Detalle por estrategia</h2>
   {''.join(bloques)}
@@ -625,7 +695,7 @@ def render_html(ests, df_ops, df_met, df_bch=None):
 
 # ── Runner ────────────────────────────────────────────────────────────────────
 
-def run(output):
+def run(output, desde=VENTANA_COMPARABLE):
     print(f"[ft_reporte_html] Leyendo DB local...")
     ests, df_ops, df_met, df_bch = cargar_datos()
     if not ests:
@@ -636,7 +706,7 @@ def run(output):
         print("[ft_reporte_html] [WARN] ft_equity_diaria vacia: sin metricas de "
               "riesgo ni grafico. Correr ft_compute_equity.py primero.")
 
-    html = render_html(ests, df_ops, df_met, df_bch)
+    html = render_html(ests, df_ops, df_met, df_bch, desde=desde)
 
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w", encoding="utf-8") as fh:
@@ -655,8 +725,11 @@ def main():
     )
     parser.add_argument("--output", default=OUTPUT_DEFAULT,
                         help=f"Ruta del HTML de salida (default: {OUTPUT_DEFAULT})")
+    parser.add_argument("--desde", default=VENTANA_COMPARABLE,
+                        help=f"Inicio de la ventana comparable YYYY-MM-DD "
+                             f"(default: {VENTANA_COMPARABLE}, fix del score=0.0)")
     args = parser.parse_args()
-    run(args.output)
+    run(args.output, desde=args.desde)
 
 
 if __name__ == "__main__":
