@@ -272,6 +272,70 @@ valida desde su `fecha_inicio` respectiva, sin filtro adicional.
 
 ---
 
+## 2026-07
+
+### 2026-07-21 — DISENO
+**Metricas de riesgo: la equity curve no era una equity curve**
+
+Al evaluar la incorporacion del Ratio de Sharpe a las 10 estrategias, el
+diagnostico sobre los datos existentes encontro tres problemas, el tercero
+bloqueante.
+
+**1. Contaminacion de calendario.** `ft_metricas_diarias` tenia 12 marks en dias
+NO habiles (8 sabados, 2 domingos, Juneteenth 19/6 y el 3/7 observado) y le
+faltaban 21 de 61 dias habiles (34%). Consecuencia de que la rutina nocturna es
+MANUAL: el bot solo escribe la fila del dia en que corre. Serie de muestreo
+irregular -> anualizar con raiz(252) es invalido.
+
+**2. n insuficiente.** 28-39 dias habiles por estrategia. IC95% del Sharpe de
+~+-5 puntos (Lo 2002). Nueve de diez estrategias tienen IC que incluye cero:
+indistinguibles del azar. Para separar Sharpe 0.5 de 1.0 con precision +-0.5
+harian falta ~15 anios. **No se resuelve esperando.**
+
+**3. BLOQUEANTE — `capital_total` no esta marcado a mercado.**
+`capital_total = cash + capital_inmovilizado`, y `capital_inmovilizado =
+SUM(capital_entrada)` = **costo de entrada**. Verificado: en el **100% de los
+dias sin cierres, en las 10 estrategias**, el capital no se mueve.
+Lo que llamabamos equity curve es una **curva de PnL realizado**.
+
+**Razon por la que importa**: toda metrica de riesgo sobre esa serie
+**subestima el riesgo**, y siempre en la misma direccion.
+- La "volatilidad" medida es la cadencia de salidas, no la fluctuacion real.
+- El max drawdown es **invisible**: -15% contra posiciones abiertas se ve plano.
+- Sesga el ranking a favor de estrategias lentas: menos salidas -> menos vol
+  medida -> mas Sharpe. Parte de la brecha ML_SCANNER_v1 (+3.08) vs
+  OIEXIT_v1 (-7.11) es artefacto de cadencia, no de riesgo.
+
+**Decision**: la equity diaria pasa a ser una **capa DERIVADA** en tabla nueva
+`ft_equity_diaria`, reconstruida desde `ft_operaciones` + `precios_diarios`
+(mismo patron que `fundamentales_ratios_q`). Es funcion pura del estado de
+operaciones y precios -> recomputable hacia atras, sin datos nuevos, sin
+depender de haber corrido el bot ese dia. `ft_metricas_diarias` **no se toca**
+(log operativo, la leen el reporte y el MCP).
+
+**Decisiones asociadas**:
+- **Sortino primario, Sharpe secundario**: las 10 son long-only con stop, o sea
+  distribucion asimetrica por diseno. Sharpe castiga la volatilidad al alza, que
+  es justo lo que la Fase 2 de OIEXIT_v1 busca capturar.
+- **Todo Sharpe se reporta con n e IC95%**; si el IC incluye cero se marca NO
+  CONCLUYENTE. Ningun cambio de estrategia se justifica con un ratio asi.
+- **Benchmark por ventana propia de cada estrategia** (arrancan entre el 23/4 y
+  el 27/5): universo equiponderado + ES=F. SPY no aplica (universo sin ETFs).
+- **Costos de transaccion siguen en STANDBY**; cuando entren, lo hacen aguas
+  arriba (PnL de `ft_operaciones`) y las metricas se recomputan solas.
+
+**Hallazgo que no necesita ningun ratio**: sobre 2026-04-23 -> 2026-07-21, ES=F
++4.77% y el universo equiponderado +1.55%, con **7 de 10 estrategias en
+negativo**. En un mercado que subio, la mayoria pierde contra comprar todo el
+universo. Solo ML_SCANNER_v1 (+7.38%) le gana claramente al benchmark.
+
+**Efecto esperado**: max drawdown real (hoy no existe), riesgo comparable entre
+estrategias, y separacion entre habilidad de seleccion y beta de mercado.
+**Resultado real**: (completar tras el backfill)
+**Ref**: docs/forward_testing/METRICAS.md, rama `feature/ft-metricas-riesgo`
+
+---
+
 ## Template de entrada
 
 ```

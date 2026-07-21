@@ -12,6 +12,7 @@ explorar y parametrizar de la mejor manera posible.
 |---|---|
 | [GLOSARIO.md](GLOSARIO.md) | Definiciones canonicas de todos los terminos, features y metricas |
 | [JOURNAL.md](JOURNAL.md) | Log cronologico de decisiones, hipotesis y observaciones |
+| [METRICAS.md](METRICAS.md) | Medicion de riesgo y rendimiento: equity a mercado (`ft_equity_diaria`), max drawdown, Sharpe/Sortino con IC, benchmarks |
 | **Estrategias activas** | |
 | [estrategias/ML_SCANNER_v1.md](estrategias/ML_SCANNER_v1.md) | Bot ML — scoring scanner + ML prob |
 | [estrategias/TECH_v1.md](estrategias/TECH_v1.md) | Bot Tecnico — SMA/MACD/RSI rule-based |
@@ -29,10 +30,15 @@ explorar y parametrizar de la mejor manera posible.
 
 ---
 
-## Estado actual (2026-05-18)
+## Estado actual (2026-07-21)
 
-> Forward Testing corre 100% en la DB **local** (Plan C). Los 9 bots se ejecutan
+> Forward Testing corre 100% en la DB **local** (Plan C). Los 10 bots se ejecutan
 > con `scripts/manual/ft_run_diario.bat`. Railway no recibe escrituras de FT.
+
+> **En curso (rama `feature/ft-metricas-riesgo`)**: capa de metricas de riesgo.
+> La equity a costo de `ft_metricas_diarias` se reemplaza, para fines de
+> medicion, por `ft_equity_diaria` (marcada a mercado, sin huecos ni fines de
+> semana). Ver [METRICAS.md](METRICAS.md).
 
 | ID | Estrategia | Estado | Inicio | Notas |
 |----|---|---|---|---|
