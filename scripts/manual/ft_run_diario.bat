@@ -205,6 +205,29 @@ REM   - El nombre de la estrategia
 REM   - El nombre del script .py
 
 
+REM ── PASO FINAL 0 - Recomputar la equity marcada a mercado ────
+REM  Reconstruye ft_equity_diaria desde ft_operaciones + precios_diarios.
+REM  Va DESPUES de los bots (ya movieron posiciones) y ANTES del reporte
+REM  (que lee esa tabla para las metricas de riesgo).
+REM
+REM  Por que corre TODOS los dias aunque no se opere: la equity a mercado
+REM  cambia porque el mercado se mueve, no porque haya operaciones. Y como
+REM  recomputa desde el origen en vez de ir agregando, si una noche no se
+REM  corre la rutina, la corrida siguiente rellena el hueco sola.
+REM
+REM  Si falla no se pierde nada: el dato vive en ft_operaciones y
+REM  precios_diarios, y la proxima corrida lo reconstruye entero.
+echo Recomputando equity a mercado (ft_equity_diaria)...
+echo. >> "%LOGFILE%"
+echo --- EQUITY A MERCADO --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\forward_testing\ft_compute_equity.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [WARN] ft_compute_equity.py fallo - el reporte usara la equity previa.
+) ELSE (
+    echo [OK] Equity recomputada.
+)
+
+
 REM ── PASO FINAL - Generar reporte HTML ────────────────────────
 echo Generando reporte HTML...
 echo. >> "%LOGFILE%"

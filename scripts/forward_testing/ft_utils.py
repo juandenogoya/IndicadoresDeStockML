@@ -116,6 +116,29 @@ def obtener_precios_cierre_todos() -> dict[str, float]:
     return {r.ticker: float(r.close) for r in rows}
 
 
+def obtener_fecha_datos(conn, ticker: str):
+    """
+    Fecha del OHLCV con el que se esta decidiendo/valuando este ticker.
+
+    El sistema es ASINCRONICO: los bots operan con el ultimo cierre disponible
+    en precios_diarios, que normalmente es el del dia habil anterior pero puede
+    ser mas viejo si la rutina nocturna (manual) se salteo noches. Medido sobre
+    1.811 operaciones: 18% mismo dia, 69% 1 dia antes, 8% entre 2 y 6 dias.
+
+    Como `obtener_precio_cierre()` devuelve el ultimo close (ORDER BY fecha DESC
+    LIMIT 1), la fecha de ese precio es exactamente MAX(fecha) del ticker. Por
+    eso se puede resolver aca sin tocar los 10 bots.
+
+    Se persiste en ft_operaciones.fecha_datos / .fecha_datos_salida porque
+    `fecha_entrada` es la fecha de REGISTRO, no la del dato: cruzar
+    fecha_entrada con precios_diarios o indicadores_tecnicos lee el dia
+    equivocado. Ver docs/forward_testing/METRICAS.md.
+    """
+    return conn.execute(text("""
+        SELECT MAX(fecha) FROM precios_diarios WHERE ticker = :tk
+    """), {"tk": ticker}).scalar()
+
+
 # ── Posiciones ────────────────────────────────────────────────────────────────
 
 def obtener_posiciones_abiertas(estrategia_id: int) -> list[dict]:
@@ -171,16 +194,22 @@ def abrir_operacion(
             log(f"  [SKIP] {ticker}: cash insuficiente para abrir ({capital_entrada:.2f})")
             return 0
 
+        # Fecha del OHLCV con el que se decidio (NO es `fecha`, que es el
+        # registro). Ver obtener_fecha_datos().
+        fecha_datos = obtener_fecha_datos(conn, ticker)
+
         # Insertar operacion
         result = conn.execute(text("""
             INSERT INTO ft_operaciones (
                 estrategia_id, ticker, lado,
                 fecha_entrada, precio_entrada, cantidad, capital_entrada,
-                stop_loss, take_profit, score_entrada, detalle_entrada
+                stop_loss, take_profit, score_entrada, detalle_entrada,
+                fecha_datos
             ) VALUES (
                 :eid, :ticker, :lado,
                 :fecha, :precio, :cantidad, :capital,
-                :sl, :tp, :score, :detalle
+                :sl, :tp, :score, :detalle,
+                :fecha_datos
             )
             RETURNING id
         """), {
@@ -195,6 +224,7 @@ def abrir_operacion(
             "tp":      take_profit,
             "score":   score,
             "detalle": json.dumps(detalle),
+            "fecha_datos": fecha_datos,
         })
         op_id = result.fetchone()[0]
 
@@ -254,14 +284,20 @@ def cerrar_operacion(
         pnl_pct         = round((precio_salida / precio_entrada - 1) * 100, 4)
         capital_salida  = round(precio_salida * cantidad, 2)
 
+        # Fecha del OHLCV con el que se decidio la salida. Se registra tambien
+        # cuando el precio de salida NO es un close (fills de SL/TP al nivel
+        # del stop): la DECISION igual se tomo con los datos de ese dia.
+        fecha_datos_salida = obtener_fecha_datos(conn, ticker)
+
         # Actualizar operacion
         conn.execute(text("""
             UPDATE ft_operaciones
-            SET fecha_salida  = :fecha,
-                precio_salida = :precio_salida,
-                pnl           = :pnl,
-                pnl_pct       = :pnl_pct,
-                motivo_salida = :motivo
+            SET fecha_salida       = :fecha,
+                precio_salida      = :precio_salida,
+                pnl                = :pnl,
+                pnl_pct            = :pnl_pct,
+                motivo_salida      = :motivo,
+                fecha_datos_salida = :fecha_datos_salida
             WHERE id = :op_id
         """), {
             "fecha":         fecha,
@@ -269,6 +305,7 @@ def cerrar_operacion(
             "pnl":           pnl,
             "pnl_pct":       pnl_pct,
             "motivo":        motivo,
+            "fecha_datos_salida": fecha_datos_salida,
             "op_id":         op_id,
         })
 

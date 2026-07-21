@@ -229,6 +229,61 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   automatica cuando queda spool pendiente (antes el fallo era SILENCIOSO).
   Desactivable con `--no-spool` (no recomendado).
 
+### FT asincronico -- usar `fecha_datos`, NO `fecha_entrada` (21/7/2026)
+- Los bots FT deciden y ejecutan con el OHLCV del **ultimo cierre disponible**,
+  no con el del dia en que corren. Es la convencion del proyecto, no un bug.
+- **El desfase NO es fijo**: depende de cuan rancia estaba `precios_diarios`
+  cuando corrio el bot (rutina nocturna manual). Medido sobre 1.811 ops:
+  16.7% mismo dia, 73.2% 1 dia, 6.2% 2 dias, 3.4% 5 dias, 0.6% 6 dias.
+- `ft_operaciones.fecha_entrada`/`fecha_salida` = fecha de REGISTRO.
+  `fecha_datos`/`fecha_datos_salida` = fecha del OHLCV usado. **Para cruzar con
+  precios_diarios, indicadores_tecnicos o cualquier tabla de mercado hay que
+  usar `fecha_datos`**; con la de registro se lee el dia equivocado, en silencio.
+- Las escribe `ft_utils.obtener_fecha_datos()` (MAX(fecha) del ticker). Los bots
+  no la manejan: `ft_utils` es el UNICO lugar que escribe `ft_operaciones`.
+
+### Splits -- precios_diarios NO se re-ajusta hacia atras (21/7/2026)
+- El pipeline diario solo trae los dias NUEVOS (ya ajustados por Yahoo). Cuando
+  un ticker hace split, la historia previa queda en la escala VIEJA -> la serie
+  del ticker queda **partida en dos** y todo lo que la cruza se rompe: SMA/RSI/
+  ATR, features de ML, y las posiciones abiertas de FT.
+- **Incidente 21/7/2026**: KLAC 10:1 (11/6) y CRWD 4:1 (30/6) sin aplicar. Ocho
+  operaciones de FT se cerraron al precio post-split con la cantidad pre-split
+  -> -12.709 USD de perdidas FICTICIAS y ~3.9 puntos de retorno de menos en 4
+  estrategias, con stops disparados por un derrumbe que no existio.
+- Herramienta: `scripts/manual/splits.py detectar|corregir`. Deteccion en 2
+  etapas: (1) barrido local de variaciones diarias > umbral, barato; (2)
+  verificacion contra Yahoo de los candidatos. **La etapa 2 es imprescindible**:
+  un movimiento real y un split se ven IDENTICOS en la etapa 1 (CAR -38%/-48% y
+  FISV -44% son movimientos REALES, confirmado).
+- **El ratio observado en el salto NO es el ratio del split** salvo que el
+  precio no se haya movido ese dia: KLAC dio 8.856 siendo 10:1 porque ademas
+  subio +12.9% real. No usar el ratio del salto como filtro.
+- **Un ratio constante NO alcanza para declarar split: tiene que ser ademas un
+  ratio PLAUSIBLE** (2,3,4,5,10,20...). ORCL (0.9841) y DELL (0.9744) dan
+  constante contra Yahoo y NO son splits -- corregirlos con divisor habria roto
+  datos sanos. El script los reporta como "DISCREPANCIA (no split)". Regla: el
+  detector recomienda una accion DESTRUCTIVA, asi que un falso positivo cuesta
+  mas que un falso negativo.
+- El detector cubre splits forward (caida) **e inversos** (suba).
+- **Correccion por DIVISOR, no re-descargando**: `precios_diarios` guarda el
+  close CRUDO tal como se bajo y nunca se re-ajusta por dividendos; el `Close`
+  de yahooquery viene ajustado por split Y dividendos (KLAC da 9.8369 en vez de
+  10; CRWD, sin dividendos, da 4.0000 exacto). Sobrescribir dejaria esos tickers
+  en otra base que el resto del universo.
+- **AUTOMATIZADO (21/7/2026)**: `splits.chequeo_diario()` corre dentro de
+  `recovery_incremental.py` (target=local), JUSTO DESPUES de traer los precios
+  nuevos, que es cuando el split se manifiesta. Barre los ultimos 7 dias
+  (query local, gratis) y solo sale a Yahoo si hay candidatos -- en un dia
+  normal, cero. Alerta por Telegram con el comando de correccion listo.
+  Standalone: `splits.py chequeo [--dias N] [--sin-alerta]`.
+- **DETECTA Y AVISA, NO CORRIGE.** Corregir reescribe precios_diarios (fuente de
+  verdad) y el detector ya dio falsos positivos una vez. La correccion la
+  dispara una persona con `splits.py corregir`.
+- OJO al integrarlo en otro script: `chequeo_diario(usar_lock=False)` cuando el
+  proceso YA tiene el lock de yfinance (caso recovery_incremental) -- pedirlo de
+  nuevo aborta el proceso entero.
+
 ### PostgreSQL ON CONFLICT
 - Requiere unique index **FULL** (sin clausula WHERE).
 - Partial unique index (`WHERE col IS NOT NULL`) NO sirve para ON CONFLICT
@@ -265,6 +320,9 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria |
+| `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
+| `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
+| `src/utils/ft_metricas.py` | Modulo PURO de metricas de riesgo (max DD, Sharpe con IC95%, Sortino, IR, beta) y de trade (expectancy, profit factor, payoff). Sin DB ni config |
 | `scripts/push_senales_bot.py` | Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
 | `scripts/alpaca/bot_ml.py` / `bot_tech_sector.py` / `bot_options.py` | Los 3 bots Alpaca Plan B (entrypoints GH Actions). Leen la masticada, deciden con el cerebro src/strategies/, ejecutan via src/trading/ejecucion_bot. `--dry-run` / `--ignore-frescura`. Ver docs/bots_alpaca.md |
 | `src/strategies/` | Cerebro de decision COMPARTIDO FT<->Alpaca (PURO): scoring (calcular_score_tecnico), sectorial (v1/v2), ml_scanner |
@@ -379,6 +437,16 @@ Las criticas:
   sector+region con fila mediana). Solo lectura, no recalcula.
 - `ft_*` (5 tablas Forward Testing: estrategias, operaciones, candidatos_diarios,
   metricas_diarias, posiciones_diarias) -- LOCAL es fuente de verdad
+- `ft_equity_diaria` (LOCAL) -- equity curve MARCADA A MERCADO por estrategia,
+  capa DERIVADA (funcion pura de ft_operaciones + precios_diarios, recomputable).
+  Existe porque `ft_metricas_diarias.capital_total` esta a COSTO de entrada
+  (`capital_inmovilizado = SUM(capital_entrada)`) y solo se mueve al cerrar una
+  operacion: es una curva de PnL realizado, no una equity curve -> sobre ella el
+  max drawdown de posiciones abiertas es INVISIBLE y toda metrica de riesgo
+  subestima el riesgo. Solo dias habiles NYSE, sin huecos (la rutina nocturna es
+  manual y le faltaba el 34% de los dias). **Las metricas de riesgo se calculan
+  SOLO desde aca.** `ft_metricas_diarias` queda intacta como log operativo.
+  La escribe `ft_compute_equity.py`. Ver docs/forward_testing/METRICAS.md
 - `senales_bot_diaria` (RAILWAY) -- tabla MASTICADA Plan B para los 3 bots Alpaca
   (Tarea 16). 1 fila por (ticker, fecha), ~18 cols, PK (ticker, fecha). El bot
   "solo opera": lee senales pre-computadas, no las crudas. Columnas: close, sector,

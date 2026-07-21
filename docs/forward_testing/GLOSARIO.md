@@ -159,13 +159,21 @@ Una posicion con +5% en 2 dias es mas eficiente que +5% en 15 dias.
 
 ## C. Metricas del Sistema
 
+> **ADVERTENCIA (2026-07-21)**: `capital_actual` / `capital_total` estan valuados
+> a **COSTO DE ENTRADA**, no a mercado. Solo se mueven cuando se cierra una
+> operacion. **No usarlos para medir riesgo, volatilidad ni drawdown**: la
+> serie resultante es una curva de PnL realizado y subestima el riesgo.
+> Para eso existe `ft_equity_diaria` (seccion G). Ver docs/forward_testing/METRICAS.md.
+
 ### capital_actual
 Valor total de la estrategia = cash_disponible + capital_inmovilizado.
 Se recalcula al final de cada corrida del bot.
+**A costo, no a mercado** (ver advertencia arriba).
 
 ### capital_inmovilizado
 Suma de `capital_entrada` de todas las operaciones abiertas.
 Capital comprometido, no disponible para nuevas posiciones.
+Es **cost basis**: no refleja el valor de mercado de las posiciones.
 
 ### cash_disponible
 Capital liquido disponible para abrir nuevas posiciones.
@@ -260,3 +268,63 @@ Los 9 sectores utilizados en estrategias sectoriales:
 | Consumer Defensive | Alimentos, bebidas, tabaco, higiene |
 
 Nota: Real Estate y Utilities no estan representados en el universo actual (199 tickers).
+
+---
+
+## G. Metricas de Riesgo (capa derivada — ft_equity_diaria)
+
+Diseno completo: [METRICAS.md](METRICAS.md). Definiciones canonicas:
+
+### equity (marcado a mercado)
+`cash + SUM(close(ticker, dia) * cantidad)` sobre las posiciones abiertas al
+cierre de ese dia. Es el valor **real** de la estrategia ese dia.
+Se distingue de `capital_actual` (seccion C), que esta a costo de entrada.
+
+### exposicion_pct
+`valor_mercado / equity`. Fraccion del capital efectivamente desplegada.
+Separa la habilidad de la estrategia del *cash drag*: dos estrategias con el
+mismo retorno pero distinta exposicion no son comparables directamente.
+
+### max drawdown
+`max_d( (peak_hasta_d - equity_d) / peak_hasta_d )`. La peor caida desde un
+maximo previo. **Solo es calculable con equity a mercado**: sobre la serie a
+costo el drawdown de posiciones abiertas es invisible.
+
+### Sharpe
+`(mean(r) - rf_d) / std(r) * sqrt(252)`, con `r` = retornos diarios de la equity
+y `rf_d` la tasa libre de riesgo diaria (default 4.0% anual).
+Mide exceso de retorno por unidad de volatilidad **total**.
+**Siempre se reporta con `n` e IC95%** (ver mas abajo).
+
+### Sortino
+Igual que Sharpe pero el denominador es la *downside deviation*:
+`sqrt(mean(min(r - rf_d, 0)^2))`. Solo castiga la volatilidad a la baja.
+**Es el ratio primario del FT**: las estrategias son long-only con stop, o sea
+asimetricas por diseno, y Sharpe penalizaria las subidas fuertes que las
+estrategias de corrida (OIEXIT_v1 Fase 2) justamente buscan.
+
+### Information Ratio (IR)
+`mean(r - r_bench) / std(r - r_bench) * sqrt(252)`. Mide si la **seleccion** de
+tickers aporta por encima del benchmark. Responde "¿esto le gana a comprar todo
+el universo?", que es la pregunta relevante en una estrategia long-only.
+
+### IC95% del Sharpe (Lo, 2002)
+`SE = sqrt((1 + SR_diario^2 / 2) / n) * sqrt(252)`, `IC95% = SR +- 1.96 * SE`.
+Con n<40 el intervalo mide varios puntos de Sharpe.
+**Regla**: si el IC incluye cero, el ratio se marca **NO CONCLUYENTE** y no
+alcanza para justificar un cambio de estrategia.
+
+### expectancy en R
+`R` = riesgo inicial de la operacion = `(precio_entrada - stop_loss_inicial) * cantidad`.
+Expectancy en R = PnL medio expresado en multiplos de ese riesgo.
+**Limitacion**: el trailing pisa `ft_operaciones.stop_loss`, por lo que el SL
+inicial no siempre es recuperable en la historia previa (ver METRICAS.md #6).
+
+### profit factor
+`SUM(pnl > 0) / abs(SUM(pnl < 0))`. Cuantos dolares gana por cada dolar que
+pierde. >1 es rentable; <1 pierde. Insensible al n, a diferencia del Sharpe.
+
+### benchmark equiponderado
+Indice sintetico del universo activo (`activos` WHERE activo=TRUE) con peso
+igual por ticker, reconstruido desde `precios_diarios` sobre **la misma ventana
+de cada estrategia**. Es el "comprar todo" contra el que se mide la seleccion.

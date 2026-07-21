@@ -636,6 +636,23 @@ def main():
     if not args.skip_futuros:
         pend_futuros = recover_futuros(engine, target_date, args, downloader)
 
+    # CHEQUEO DE SPLITS: corre JUSTO DESPUES de traer los precios nuevos, que es
+    # cuando un split se manifiesta (el pipeline trae el dia ya ajustado y la
+    # historia previa queda en la escala vieja -> SMA/RSI/ATR rotos y stops que
+    # se disparan solos). Ver "Splits" en CLAUDE.md e incidente KLAC/CRWD 21/7.
+    # Solo DETECTA y avisa por Telegram; NO corrige (corregir reescribe la fuente
+    # de verdad y el detector ya dio falsos positivos una vez). No critico.
+    # usar_lock=False: este proceso YA tiene el lock de yfinance (linea ~609),
+    # pedirlo de nuevo abortaria la recovery entera.
+    if not args.dry_run and args.target == "local":
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "scripts", "manual"))
+            from splits import chequeo_diario
+            print()
+            chequeo_diario(engine, dias=7, alertar=True, usar_lock=False, log=log)
+        except Exception as e:
+            log(f"\nSPLITS: ERROR en el chequeo (no critico): {str(e)[:120]}")
+
     # Z-SCORES de acciones (familia E del dashboard / actividad inusual).
     # Deriva de precios_diarios LOCAL (window functions SQL, sin Yahoo). Mantiene
     # ticker_zscore_diario al dia para el cruce accion+opciones del radar. Solo en
