@@ -1,8 +1,19 @@
 # Metricas de Riesgo y Rendimiento — Forward Testing
 
-**Estado**: DISENO (2026-07-21). Documento previo a codificar.
+**Estado**: IMPLEMENTADO (2026-07-21). Tabla, motor y modulo puro en produccion local.
 **Alcance**: como se mide el rendimiento y el riesgo de las 10 estrategias FT.
 **Rama**: `feature/ft-metricas-riesgo`
+
+> **PREREQUISITO RESUELTO — splits (2026-07-21)**: al construir la primera
+> equity a mercado, el control de cuadre destapo que `precios_diarios` no se
+> re-ajustaba ante splits (KLAC 10:1, CRWD 4:1). Ocho operaciones de FT tenian
+> -12.709 USD de perdidas ficticias y 4 estrategias reportaban ~3.9 puntos de
+> retorno de menos. Corregido antes de calcular cualquier metrica; detalle en
+> JOURNAL 2026-07-21 BUG FIX y en `scripts/manual/splits.py`.
+>
+> Leccion de diseno: **el control de cuadre valia mas que las metricas**. Fue
+> lo que convirtio "los numeros dan raro" en "estos 8 trades estan mal y este
+> es el motivo".
 
 ---
 
@@ -241,18 +252,26 @@ El corte **por `motivo_salida`** es el que conecta con el analisis de
 TIME_STOP en SMC_v1 (JOURNAL 2026-07-18): permite comparar la calidad de cada
 regla de salida entre versiones.
 
-### Limitacion conocida: expectancy en R
+### Expectancy en R — RESUELTO (2026-07-21)
 
-`R = (precio_entrada - stop_loss_inicial) * cantidad` requiere el SL **inicial**.
-Pero `ft_utils.actualizar_stop_loss()` hace `UPDATE ... SET stop_loss = :sl`,
-o sea el trailing **pisa** el valor original. En las estrategias con trailing el
-SL inicial no es recuperable desde la columna.
+`R = (precio_entrada - stop_loss_inicial) * cantidad` requiere el SL **inicial**,
+y `ft_utils.actualizar_stop_loss()` pisa la columna `stop_loss` con el trailing.
+La verificacion sobre las 1.811 operaciones dio mejor resultado del esperado:
 
-Plan: verificar en implementacion si `detalle_entrada` (JSONB) lo conserva.
-- Si lo conserva -> expectancy en R para todas.
-- Si no -> expectancy en R solo donde el SL es fijo, y se agrega columna
-  `stop_loss_inicial` a `ft_operaciones` para que quede disponible **hacia
-  adelante**. La historia previa no se puede reconstruir en R.
+- **Solo 3 estrategias usan trailing**: SMC_v1 (3), SMC_v2 (7) y OIEXIT_v1 (10).
+  En las otras 7 no hay trailing, asi que `ft_operaciones.stop_loss` **es** el
+  inicial.
+- **Las 3 con trailing conservan el SL inicial en `detalle_entrada`**:
+  `sl_inicial` (junto a `r_value`, `sl_source`, `tp_ref_3r`) en OIEXIT_v1;
+  `swing_low` en SMC_v1 y SMC_v2.
+
+Orden de resolucion del SL inicial (implementar en el consumidor):
+1. `detalle_entrada.sl_inicial`   (estrategia 10)
+2. `detalle_entrada.swing_low`    (estrategias 3, 7)
+3. `ft_operaciones.stop_loss`     (resto: sin trailing, es el inicial)
+
+**Conclusion: R es reconstruible para las 10 estrategias con historia completa.**
+No hace falta agregar columna ni resignar historia.
 
 ---
 
@@ -347,12 +366,44 @@ final**, cuando reflejen lo que efectivamente corre.
 
 ---
 
-## 11. Orden de implementacion
+## 11. Estado de implementacion
 
-1. **Tabla + motor + backfill.** Reconstruir la serie completa de las 10
-   estrategias. Validar: sin fines de semana, sin huecos, y el `equity` del
-   ultimo dia de una estrategia sin posiciones abiertas debe coincidir con
-   `ft_estrategias.capital_actual` (control de cuadre).
-2. **Modulo puro de metricas** + metricas de trade (n grande, valor inmediato).
-3. **Reporte HTML**: bloque de riesgo con IC y benchmark.
-4. **Cierre**: CLAUDE.md, memoria, JOURNAL con los primeros numeros reales.
+| Paso | Estado |
+|---|---|
+| 1. Tabla + motor + backfill | **HECHO** — 523 filas, 10 estrategias, cuadre exacto |
+| 2. Modulo puro + metricas de trade | **HECHO** — `src/utils/ft_metricas.py` |
+| 3. Reporte HTML con bloque de riesgo | PENDIENTE |
+| 4. Encadenar a `ft_run_diario.bat` | PENDIENTE |
+| 5. Detector de splits en el pipeline diario | PENDIENTE (hoy es manual) |
+
+### Control de cuadre (el invariante)
+
+El cash es **puro flujo realizado**, asi que el reconstruido debe coincidir
+exacto con `ft_estrategias.cash_disponible`, existan o no posiciones abiertas:
+
+```
+cash = capital_inicial - SUM(capital_entrada) + SUM(precio_salida * cantidad)
+```
+
+**Se calcula sobre TODAS las operaciones, sin corte de fecha** — no sobre el
+ultimo dia de la serie. La serie termina en el ultimo cierre de
+`precios_diarios`, pero el sistema es **asincronico** (los bots operan con el
+OHLCV del dia habil anterior), asi que normalmente hay operaciones fechadas
+DESPUES del ultimo precio disponible. Comparar contra el ultimo dia de la serie
+da un falso descuadre — fue el primer error del control.
+
+Tolerancia 0.05 USD: el cash se arma de sumas de `NUMERIC(12,2)` redondeados.
+
+### Nota sobre el fechado asincronico
+
+El 86% de las entradas se ejecuta al close del dia habil **anterior** a
+`fecha_entrada`. **No es un bug: es la convencion del sistema** — todo el
+proyecto (indicadores, osciladores, señales) opera sobre el OHLCV del dia
+anterior.
+
+Para la equity esto es indiferente: si la posicion se adquiere al cierre de
+d-1, el movimiento de d-1 a d es retorno **genuino** de la posicion. Se
+verifico algebraicamente que la serie de retornos es **identica** bajo las dos
+convenciones posibles de fechado (cash saliendo en d-1 marcado a costo, o cash
+saliendo en d marcado a mercado): `equity(d-1)` y `equity(d)` dan lo mismo en
+ambas. El motor no necesita ningun ajuste por esto.

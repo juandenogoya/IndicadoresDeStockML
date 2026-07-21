@@ -336,6 +336,113 @@ estrategias, y separacion entre habilidad de seleccion y beta de mercado.
 
 ---
 
+### 2026-07-21 — BUG FIX
+**Splits no aplicados: 12.709 USD de perdidas FICTICIAS en 4 estrategias**
+
+Al construir la equity a mercado, el control de cuadre expuso que
+`precios_diarios` **no se re-ajusta hacia atras cuando un ticker hace split**.
+El pipeline diario solo trae los dias nuevos (ya ajustados por Yahoo), asi que
+la historia previa queda en la escala VIEJA y la serie del ticker queda partida
+en dos.
+
+**Dos splits sin aplicar**: KLAC 10:1 el 2026-06-11 (536 filas mal) y CRWD 4:1
+el 2026-06-30 (548 filas mal).
+
+**Impacto en FT**: ocho posiciones abiertas cruzaron el split y se valuaron y
+cerraron al precio POST-split con la cantidad PRE-split -> perdidas de -72% a
+-88% que nunca ocurrieron. Peor: dispararon salidas reales
+(`STOP_LOSS_ATR`, `SL_PROTECCION`) por un derrumbe inexistente.
+
+| Estrategia | Antes | Despues | Δ |
+|---|---|---|---|
+| TECH_SECTOR_v1 (4) | -2.12% | **+1.79%** | +3.91 |
+| COMBO_v1 (5) | -2.45% | **+0.88%** | +3.33 |
+| TECH_SECTOR_v2 (6) | -5.66% | -1.75% | +3.91 |
+| TECH_SECTOR_OIEXIT_v1 (10) | -6.95% | -3.04% | +3.91 |
+
+**Alcance mas alla del FT**: toda SMA/RSI/ATR que cruce la fecha del split
+estaba corrupta para esos tickers, y con ella las features de ML.
+
+**Correccion aplicada**:
+1. `scripts/manual/splits.py` (nuevo) — deteccion en 2 etapas y correccion.
+   Etapa 1: barrido local de variaciones diarias > umbral (barato, sirve de
+   alerta temprana). Etapa 2: verificacion contra Yahoo SOLO de los candidatos.
+   **La etapa 2 es imprescindible**: un movimiento real y un split se ven
+   IDENTICOS en la etapa 1. Confirmo que CAR (-38% y -48% consecutivos el
+   22-23/4) y FISV (-44% el 29/10/2025) son movimientos REALES, no splits.
+2. Correccion por **divisor**, no re-descargando la serie ajustada.
+   **Razon**: `precios_diarios` guarda el close CRUDO tal como lo devolvio
+   Yahoo el dia que se bajo, y nunca se re-ajusta por dividendos hacia atras.
+   El `Close` de yahooquery viene ajustado por split Y dividendos (KLAC da
+   ratio 9.8369 en vez de 10 exacto; CRWD, que no paga dividendos, da 4.0000
+   clavado). Sobrescribir habria dejado a esos 2 tickers en una base distinta
+   a la de los otros 198 — cambiar un problema por otro mas sutil.
+3. Recomputo de indicadores, features y z-scores. Backup en `data/backups/`.
+4. `scripts/oneshot/fix_ft_ops_split.py` — corrige las 8 operaciones
+   (`precio_entrada /= ratio`, `cantidad *= ratio`; `capital_entrada` no cambia
+   porque `P*N == (P/r)*(N*r)`) y ajusta el cash de cada estrategia.
+
+**Limitacion que NO se puede corregir**: las salidas son **contrafacticas**. Con
+los precios correctos esos stops jamas se habrian disparado y las posiciones
+habrian seguido corriendo. Se arreglo la contabilidad, no la historia. Por eso
+las 8 operaciones llevan el sufijo **`_SPLIT_FIX`** en `motivo_salida`: sin la
+marca contaminarian el analisis por motivo de salida como si fueran evidencia
+sobre la calidad de esas reglas (un `SL_PROTECCION` que produce +19.9% es
+imposible). Marcadas, quedan en su propio bucket y se ven.
+
+**Deuda abierta**: el detector todavia es manual. Deberia correr en el pipeline
+diario (etapa 1 sobre los ultimos dias + alerta Telegram) para que un split no
+vuelva a pasar en silencio.
+
+**Ref**: scripts/manual/splits.py, scripts/oneshot/fix_ft_ops_split.py
+
+---
+
+### 2026-07-21 — RESULTADO
+**Primeras metricas de riesgo reales (equity a mercado, datos corregidos)**
+
+`ft_equity_diaria` reconstruida para las 10 estrategias: 523 filas, solo dias
+habiles, sin huecos, **cuadre exacto** del cash contra `ft_estrategias` en las
+10 (tolerancia 0.05 USD).
+
+| Estrategia | n | ret% | maxDD% | Sortino | Sharpe (IC95%) | IR | exp% |
+|---|---|---|---|---|---|---|---|
+| ML_SCANNER_v1 | 60 | +6.72 | 3.86 | +2.48 | +1.68 [-2.4,+5.7] | +0.97 | 63 |
+| TECH_v1 | 60 | +6.44 | 6.30 | +1.94 | +1.31 [-2.7,+5.4] | +1.08 | 75 |
+| SMC_v1 | 60 | +3.28 | 4.68 | +1.34 | +0.90 [-3.2,+5.0] | +0.12 | 64 |
+| TECH_SECTOR_v1 | 58 | +2.45 | 3.47 | +0.71 | +0.44 [-3.7,+4.6] | +0.06 | 65 |
+| COMBO_v1 | 57 | +1.85 | 3.50 | +0.56 | +0.39 [-3.8,+4.5] | -0.51 | 72 |
+| TECH_SECTOR_OPTIONS_v2 | 43 | +1.97 | 4.38 | +0.97 | +0.70 [-4.1,+5.5] | +0.43 | 67 |
+| TECH_SECTOR_v2 | 52 | -0.01 | 3.79 | -0.32 | -0.24 [-4.6,+4.1] | -0.94 | 77 |
+| TECH_SECTOR_OIEXIT_v1 | 38 | -0.81 | 2.76 | -1.06 | -0.82 [-5.9,+4.3] | +0.54 | 80 |
+| TECH_SECTOR_OPTIONS_v1 | 43 | -1.23 | 4.48 | -1.35 | -1.05 [-5.9,+3.8] | -1.40 | 72 |
+| SMC_v2 | 52 | -2.78 | 6.46 | -1.71 | -1.38 [-5.7,+3.0] | -1.38 | 66 |
+
+Benchmark equiponderado, misma ventana: **+2.74%, maxDD 5.79%, Sharpe +0.60**.
+
+**Observaciones**:
+1. **Los 10 IC95% incluyen cero.** Ningun Sharpe es concluyente, tal como se
+   anticipo. La regla de reportar el intervalo hace su trabajo: sin el,
+   ML_SCANNER_v1 con +1.68 se leeria como superioridad demostrada.
+2. **El max drawdown, visible por primera vez, es el hallazgo positivo**: 8 de
+   10 estrategias tienen maxDD MENOR al del benchmark (5.79%), varias por
+   bastante (OIEXIT_v1 2.76%, TECH_SECTOR_v1 3.47%). Controlan la caida aunque
+   no le ganen al indice en retorno. Esto era invisible con la curva a costo.
+3. **Se dio vuelta la lectura anterior**: con los datos corruptos eran 7 de 10
+   en negativo; corregido, 6 de 10 en positivo. La conclusion "la mayoria
+   pierde contra comprar todo el universo" **era en buena parte el artefacto**.
+4. **Las metricas de trade discriminan mejor que los ratios** a este n:
+   TECH_SECTOR_v1 hace 584 operaciones con profit factor 1.10 y 36% de acierto
+   (churn alto, margen finito); ML_SCANNER_v1 hace 112 con PF 1.41 y 53.6%.
+   OIEXIT_v1 tiene PF 0.52 y expectancy -2.12% en 66 trades: eso **no** es
+   artefacto de split, es la estrategia.
+
+**Resultado real**: (seguir observando; ningun cambio de estrategia justificado
+todavia por la regla de la seccion 8 de METRICAS.md)
+**Ref**: scripts/forward_testing/ft_compute_equity.py, src/utils/ft_metricas.py
+
+---
+
 ## Template de entrada
 
 ```
