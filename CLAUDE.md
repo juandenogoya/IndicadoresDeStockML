@@ -271,8 +271,18 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   de yahooquery viene ajustado por split Y dividendos (KLAC da 9.8369 en vez de
   10; CRWD, sin dividendos, da 4.0000 exacto). Sobrescribir dejaria esos tickers
   en otra base que el resto del universo.
-- PENDIENTE: el detector es manual. Deberia correr en el pipeline diario
-  (etapa 1 sobre los ultimos dias + alerta Telegram).
+- **AUTOMATIZADO (21/7/2026)**: `splits.chequeo_diario()` corre dentro de
+  `recovery_incremental.py` (target=local), JUSTO DESPUES de traer los precios
+  nuevos, que es cuando el split se manifiesta. Barre los ultimos 7 dias
+  (query local, gratis) y solo sale a Yahoo si hay candidatos -- en un dia
+  normal, cero. Alerta por Telegram con el comando de correccion listo.
+  Standalone: `splits.py chequeo [--dias N] [--sin-alerta]`.
+- **DETECTA Y AVISA, NO CORRIGE.** Corregir reescribe precios_diarios (fuente de
+  verdad) y el detector ya dio falsos positivos una vez. La correccion la
+  dispara una persona con `splits.py corregir`.
+- OJO al integrarlo en otro script: `chequeo_diario(usar_lock=False)` cuando el
+  proceso YA tiene el lock de yfinance (caso recovery_incremental) -- pedirlo de
+  nuevo aborta el proceso entero.
 
 ### PostgreSQL ON CONFLICT
 - Requiere unique index **FULL** (sin clausula WHERE).

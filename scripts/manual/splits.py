@@ -298,6 +298,108 @@ def recomputar_derivadas_bulk(desde):
     log(f"   ticker_zscore_diario: {n} filas")
 
 
+# ── Chequeo automatico (pipeline diario) ──────────────────────────────────────
+
+def chequeo_diario(engine, dias=7, umbral=0.25, alertar=True, usar_lock=True,
+                   max_verificar=6, log=log):
+    """
+    Chequeo desatendido para el pipeline diario. **Detecta y AVISA, NO corrige.**
+
+    Por que no corrige solo: corregir reescribe precios_diarios, que es la fuente
+    de verdad de todo el sistema, y el detector ya produjo falsos positivos una
+    vez (ORCL/DELL, ratio ~0.98). Una correccion automatica sobre un falso
+    positivo rompe datos sanos sin que nadie se entere. El costo de esperar a que
+    una persona corra `corregir` es bajo; el de corregir mal, no.
+
+    Barato por diseno: la etapa 1 es una query local sobre los ultimos `dias`.
+    La etapa 2 (red) solo corre si hay candidatos, que en un dia normal son cero.
+
+    Args:
+        usar_lock: False cuando lo llama un script que YA tiene el lock de
+                   yfinance (ej. recovery_incremental) -- pedirlo de nuevo
+                   aborta el proceso entero.
+
+    Returns dict: {candidatos, confirmados, discrepancias, error}
+    """
+    from datetime import timedelta
+    res = {"candidatos": [], "confirmados": [], "discrepancias": [], "error": None}
+
+    try:
+        desde = date.today() - timedelta(days=dias)
+        cand = detectar_candidatos(engine, umbral, desde)
+        if cand.empty:
+            log(f"SPLITS: sin variaciones > {umbral:.0%} en los ultimos {dias} dias. OK")
+            return res
+
+        cand = cand.copy()
+        cand["mag"] = cand["chg"].abs()
+        cand["es_caida"] = cand["chg"] < 0
+        tickers = (cand.sort_values(["es_caida", "mag"], ascending=[False, False])
+                   ["ticker"].drop_duplicates().tolist()[:max_verificar])
+        res["candidatos"] = tickers
+        log(f"SPLITS: {len(cand)} salto(s) > {umbral:.0%}; verificando {tickers} contra Yahoo...")
+
+        if usar_lock:
+            from src.utils import yfinance_lock
+            yfinance_lock.acquire("splits.py chequeo_diario")
+
+        for tk in tickers:
+            try:
+                r = verificar_split(engine, tk)
+            except Exception as e:
+                log(f"  {tk}: no se pudo verificar ({str(e)[:80]})")
+                continue
+            if r.get("es_split"):
+                res["confirmados"].append(r)
+                log(f"  {tk}: SPLIT CONFIRMADO {r['ratio_limpio']}:1 desde "
+                    f"{r['fecha_split']} ({r['n_filas_mal']} filas)")
+            elif r.get("detalle") and "NO es un ratio de split" in r["detalle"]:
+                res["discrepancias"].append(r)
+                log(f"  {tk}: discrepancia ratio {r['ratio']} (no es split)")
+            else:
+                log(f"  {tk}: movimiento real, OK")
+
+    except Exception as e:
+        res["error"] = str(e)[:200]
+        log(f"SPLITS: ERROR en el chequeo (no critico): {res['error']}")
+        return res
+
+    if alertar and (res["confirmados"] or res["discrepancias"]):
+        _alertar_telegram(res)
+    return res
+
+
+def _alertar_telegram(res):
+    """Alerta de split pendiente. Silenciosa si Telegram no esta configurado."""
+    try:
+        from src.pipeline.telegram_notifier import _send
+    except Exception:
+        return
+
+    lineas = ["*ALERTA: split sin aplicar en precios_diarios*", ""]
+    for r in res["confirmados"]:
+        lineas.append(
+            f"*{r['ticker']}* - split {r['ratio_limpio']}:1 desde {r['fecha_split']}\n"
+            f"  {r['n_filas_mal']} filas en la escala vieja")
+    if res["confirmados"]:
+        tks = " ".join(r["ticker"] for r in res["confirmados"])
+        lineas += [
+            "",
+            "La historia previa quedo en la escala vieja: SMA/RSI/ATR rotos y "
+            "stops que pueden dispararse solos sobre las posiciones abiertas.",
+            "",
+            f"`python scripts/manual/splits.py corregir {tks} --apply`",
+        ]
+    if res["discrepancias"]:
+        tks = ", ".join(r["ticker"] for r in res["discrepancias"])
+        lineas += ["", f"_Ademas, discrepancia contra Yahoo (NO es split, no "
+                       f"corregir con divisor): {tks}_"]
+    try:
+        _send("\n".join(lineas))
+    except Exception:
+        pass
+
+
 # ── Comandos ──────────────────────────────────────────────────────────────────
 
 def cmd_detectar(args):
@@ -389,6 +491,19 @@ def cmd_detectar(args):
     return 0
 
 
+def cmd_chequeo(args):
+    engine = get_engine()
+    log(f"Target: {engine.url.host}/{engine.url.database}")
+    res = chequeo_diario(engine, dias=args.dias, umbral=args.umbral,
+                         alertar=not args.sin_alerta)
+    if res["confirmados"]:
+        tks = " ".join(r["ticker"] for r in res["confirmados"])
+        log(f"[!] SPLITS SIN APLICAR: {tks}")
+        log(f"    python scripts/manual/splits.py corregir {tks} --apply")
+        return 1
+    return 0
+
+
 def cmd_corregir(args):
     engine = get_engine()
     log(f"Target: {engine.url.host}/{engine.url.database}")
@@ -428,6 +543,14 @@ def main():
     d.add_argument("--max-verificar", type=int, default=10,
                    help="tope de tickers a verificar contra Yahoo (default 10)")
     d.set_defaults(func=cmd_detectar)
+
+    ch = sub.add_parser("chequeo", help="chequeo desatendido para el pipeline diario")
+    ch.add_argument("--dias", type=int, default=7,
+                    help="ventana de barrido en dias corridos (default 7)")
+    ch.add_argument("--umbral", type=float, default=0.25)
+    ch.add_argument("--sin-alerta", action="store_true",
+                    help="no enviar Telegram (solo imprime)")
+    ch.set_defaults(func=cmd_chequeo)
 
     c = sub.add_parser("corregir", help="re-baja el historial ajustado y recomputa")
     c.add_argument("tickers", nargs="+")
