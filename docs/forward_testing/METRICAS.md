@@ -394,16 +394,64 @@ da un falso descuadre — fue el primer error del control.
 
 Tolerancia 0.05 USD: el cash se arma de sumas de `NUMERIC(12,2)` redondeados.
 
-### Nota sobre el fechado asincronico
+### Fechado asincronico: `fecha_datos` vs `fecha_entrada`
 
-El 86% de las entradas se ejecuta al close del dia habil **anterior** a
-`fecha_entrada`. **No es un bug: es la convencion del sistema** — todo el
-proyecto (indicadores, osciladores, señales) opera sobre el OHLCV del dia
-anterior.
+El sistema es **asincronico por diseno**: los bots deciden y ejecutan con el
+OHLCV del ultimo cierre disponible, no con el del dia en que corren. No es un
+bug — es la convencion de todo el proyecto (indicadores, osciladores, señales).
 
-Para la equity esto es indiferente: si la posicion se adquiere al cierre de
-d-1, el movimiento de d-1 a d es retorno **genuino** de la posicion. Se
-verifico algebraicamente que la serie de retornos es **identica** bajo las dos
-convenciones posibles de fechado (cash saliendo en d-1 marcado a costo, o cash
-saliendo en d marcado a mercado): `equity(d-1)` y `equity(d)` dan lo mismo en
-ambas. El motor no necesita ningun ajuste por esto.
+**Pero el desfase NO es fijo.** Medido sobre las 1.811 operaciones:
+
+| desfase (dias habiles) | entradas | causa |
+|---|---|---|
+| 0 (mismo dia) | 302 (16.7%) | la recovery ya habia corrido |
+| 1 | 1.325 (73.2%) | el caso tipico |
+| 2 | 112 (6.2%) | se salteo una noche |
+| 5 | 62 (3.4%) | se salteo una semana |
+| 6 | 10 (0.6%) | dia de lanzamiento (23/4 uso datos del 15/4) |
+
+Depende de cuan rancia estaba `precios_diarios` cuando corrio el bot, porque la
+rutina nocturna es manual.
+
+> **CORRECCION de una version previa de este documento.** Aca se afirmaba que la
+> serie de retornos era *identica* bajo cualquier convencion de fechado. Eso
+> **solo vale para desfase = 1**. Con desfase 2, 5 o 6, marcar la posicion por
+> primera vez el dia del REGISTRO mete varios dias de movimiento de mercado
+> como un salto de un solo dia: infla la volatilidad y distorsiona el drawdown.
+> Afectaba a ~10% de las operaciones.
+
+**Solucion**: columnas `fecha_datos` y `fecha_datos_salida` en `ft_operaciones`.
+
+- **Hacia adelante** las escribe `ft_utils` solo, via `obtener_fecha_datos()`:
+  como el precio que usan los bots ES el ultimo close, la fecha del dato es
+  `MAX(fecha)` de ese ticker. **Los 10 bots no necesitaron cambios** — todos
+  pasan por `abrir_operacion`/`cerrar_operacion`, que es el unico lugar del
+  proyecto que escribe `ft_operaciones`.
+- **La historia** se backfilleo con
+  `scripts/oneshot/add_fecha_datos_ft_operaciones.py`. El matching directo de
+  precio contra el close falla en las salidas por SL/TP (el precio es el nivel
+  del stop, no un cierre). Se resolvio con la observacion de que **todas las
+  operaciones de una misma corrida comparten la misma fecha de dato**: se agrupa
+  por `(estrategia, fecha de registro)`, se juntan los votos de las ops que si
+  matchean, y la moda del grupo se aplica a todo el grupo. **100% resuelto**,
+  entradas y salidas.
+
+`ft_compute_equity` usa `COALESCE(fecha_datos, fecha_entrada)`: si alguna
+quedara sin resolver se degrada a la fecha de registro en vez de perderla.
+
+**Efecto medido** (volatilidad anualizada, antes -> despues):
+
+| Estrategia | antes | despues |
+|---|---|---|
+| TECH_SECTOR_v1 (584 ops) | 19.7% | **16.7%** |
+| TECH_SECTOR_OPTIONS_v2 | 12.2% | 11.0% |
+| TECH_SECTOR_v2 | 13.2% | 11.7% |
+| ML_SCANNER_v1 | 14.9% | 14.5% |
+
+La caida mas grande es la de TECH_SECTOR_v1, que es justamente la de mayor
+churn (584 operaciones) y por lo tanto la mas expuesta al artefacto. Coherente.
+
+**Uso obligatorio en cualquier analisis**: para cruzar una operacion con
+`precios_diarios`, `indicadores_tecnicos` o cualquier tabla de mercado hay que
+usar `fecha_datos`, **no** `fecha_entrada`. Con la fecha de registro se lee el
+dia equivocado — silencioso y sistematico.

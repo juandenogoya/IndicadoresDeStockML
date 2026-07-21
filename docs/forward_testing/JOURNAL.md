@@ -443,6 +443,63 @@ todavia por la regla de la seccion 8 de METRICAS.md)
 
 ---
 
+### 2026-07-21 — BUG FIX
+**`fecha_entrada` no es la fecha del dato: el desfase asincronico NO es fijo**
+
+Planteado por el usuario al revisar los calculos: los indicadores, osciladores
+y estrategias se calculan con **el cierre del dia puntual del dato**, no del dia
+en que se registra la operacion. Si eso no queda explicito, los reportes
+informan mal.
+
+Al medirlo aparecio algo peor que un desfase constante de un dia:
+
+| desfase (dias habiles) | entradas | causa |
+|---|---|---|
+| 0 | 302 (16.7%) | la recovery ya habia corrido |
+| 1 | 1.325 (73.2%) | el caso tipico |
+| 2 | 112 (6.2%) | se salteo una noche |
+| 5 | 62 (3.4%) | se salteo una semana |
+| 6 | 10 (0.6%) | lanzamiento: el 23/4 se opero con datos del 15/4 |
+
+El precio es "el ultimo cierre que habia en `precios_diarios` cuando corrio el
+bot", y cuan viejo sea depende de cuando se corrio la recovery por ultima vez
+(rutina manual).
+
+**Por que importa (no es solo etiquetado)**:
+1. La equity marcaba la posicion por primera vez el dia del REGISTRO. Con
+   desfase 5, eso mete **cinco dias de movimiento como un salto de un solo
+   dia** -> infla volatilidad y distorsiona drawdown. ~10% de las operaciones.
+2. Cualquier analisis que cruce `fecha_entrada` con `indicadores_tecnicos` de
+   esa misma fecha **lee el dia equivocado**. Silencioso y sistematico.
+
+**Nota**: una version previa de METRICAS.md afirmaba que la serie de retornos
+era identica bajo cualquier convencion de fechado. Eso vale SOLO para desfase=1;
+quedo corregido en el documento.
+
+**Solucion**: columnas `fecha_datos` / `fecha_datos_salida` en `ft_operaciones`.
+- Hacia adelante las escribe `ft_utils.obtener_fecha_datos()`: el precio que
+  usan los bots ES el ultimo close, asi que la fecha es `MAX(fecha)` del ticker.
+  **Los 10 bots no necesitaron cambios**: `ft_utils` es el unico lugar del
+  proyecto que escribe `ft_operaciones`.
+- La historia se backfilleo al 100%. El matching de precio contra el close falla
+  en salidas por SL/TP (el precio es el nivel del stop, no un cierre); se
+  resolvio con la observacion de que **todas las operaciones de una misma
+  corrida comparten la misma fecha de dato** -> se agrupa por (estrategia,
+  fecha de registro), se juntan los votos de las que si matchean y la moda del
+  grupo se aplica a todo el grupo.
+
+**Efecto medido** (volatilidad anualizada): TECH_SECTOR_v1 19.7% -> **16.7%**,
+OPTIONS_v2 12.2% -> 11.0%, TECH_SECTOR_v2 13.2% -> 11.7%. La caida mayor es la
+de TECH_SECTOR_v1, la de mayor churn (584 ops) y por lo tanto la mas expuesta
+al artefacto — coherente.
+
+Ademas las series arrancan antes (ML_SCANNER_v1 y TECH_v1 pasan de 60 a 66 dias)
+porque la primera operacion es del 15/4, no del 23/4.
+
+**Ref**: scripts/oneshot/add_fecha_datos_ft_operaciones.py, ft_utils.py
+
+---
+
 ## Template de entrada
 
 ```

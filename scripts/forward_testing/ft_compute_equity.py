@@ -81,16 +81,36 @@ def cargar_estrategias(engine, estrategia_id=None):
 
 
 def cargar_operaciones(engine, ids):
+    """
+    Carga las operaciones usando la FECHA DEL DATO, no la de registro.
+
+    `fecha_entrada` / `fecha_salida` son cuando se REGISTRO la operacion;
+    `fecha_datos` / `fecha_datos_salida` son la fecha del OHLCV con el que se
+    decidio y al que se ejecuto. El sistema es asincronico y el desfase NO es
+    fijo: 18% mismo dia, 69% un dia, 8% entre 2 y 6 dias habiles (depende de
+    cuan rancia estaba la data cuando corrio el bot).
+
+    Usar la fecha de registro haria que una posicion entrada con datos de hace
+    5 dias se marcara por primera vez recien el dia del registro, metiendo
+    CINCO dias de movimiento de mercado como un salto de un solo dia -> infla
+    la volatilidad y distorsiona el drawdown.
+
+    COALESCE por si alguna quedara sin resolver: se degrada a la fecha de
+    registro en vez de perder la operacion.
+    """
     with engine.connect() as conn:
         df = pd.read_sql(text("""
             SELECT estrategia_id, ticker,
-                   fecha_entrada, precio_entrada, cantidad, capital_entrada,
-                   fecha_salida, precio_salida, pnl
+                   COALESCE(fecha_datos, fecha_entrada)       AS fecha_entrada,
+                   COALESCE(fecha_datos_salida, fecha_salida) AS fecha_salida,
+                   fecha_entrada AS fecha_registro,
+                   precio_entrada, cantidad, capital_entrada,
+                   precio_salida, pnl
             FROM ft_operaciones
             WHERE estrategia_id = ANY(:ids)
         """), conn, params={"ids": list(ids)})
 
-    for col in ("fecha_entrada", "fecha_salida"):
+    for col in ("fecha_entrada", "fecha_salida", "fecha_registro"):
         df[col] = pd.to_datetime(df[col])
     for col in ("precio_entrada", "cantidad", "capital_entrada", "precio_salida", "pnl"):
         df[col] = pd.to_numeric(df[col], errors="coerce")

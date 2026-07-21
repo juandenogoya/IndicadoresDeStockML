@@ -229,6 +229,19 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   automatica cuando queda spool pendiente (antes el fallo era SILENCIOSO).
   Desactivable con `--no-spool` (no recomendado).
 
+### FT asincronico -- usar `fecha_datos`, NO `fecha_entrada` (21/7/2026)
+- Los bots FT deciden y ejecutan con el OHLCV del **ultimo cierre disponible**,
+  no con el del dia en que corren. Es la convencion del proyecto, no un bug.
+- **El desfase NO es fijo**: depende de cuan rancia estaba `precios_diarios`
+  cuando corrio el bot (rutina nocturna manual). Medido sobre 1.811 ops:
+  16.7% mismo dia, 73.2% 1 dia, 6.2% 2 dias, 3.4% 5 dias, 0.6% 6 dias.
+- `ft_operaciones.fecha_entrada`/`fecha_salida` = fecha de REGISTRO.
+  `fecha_datos`/`fecha_datos_salida` = fecha del OHLCV usado. **Para cruzar con
+  precios_diarios, indicadores_tecnicos o cualquier tabla de mercado hay que
+  usar `fecha_datos`**; con la de registro se lee el dia equivocado, en silencio.
+- Las escribe `ft_utils.obtener_fecha_datos()` (MAX(fecha) del ticker). Los bots
+  no la manejan: `ft_utils` es el UNICO lugar que escribe `ft_operaciones`.
+
 ### Splits -- precios_diarios NO se re-ajusta hacia atras (21/7/2026)
 - El pipeline diario solo trae los dias NUEVOS (ya ajustados por Yahoo). Cuando
   un ticker hace split, la historia previa queda en la escala VIEJA -> la serie
