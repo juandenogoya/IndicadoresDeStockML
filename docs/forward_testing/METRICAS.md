@@ -372,9 +372,41 @@ final**, cuando reflejen lo que efectivamente corre.
 |---|---|
 | 1. Tabla + motor + backfill | **HECHO** — 523 filas, 10 estrategias, cuadre exacto |
 | 2. Modulo puro + metricas de trade | **HECHO** — `src/utils/ft_metricas.py` |
-| 3. Reporte HTML con bloque de riesgo | PENDIENTE |
-| 4. Encadenar a `ft_run_diario.bat` | PENDIENTE |
+| 3. Reporte HTML con bloque de riesgo | **HECHO** |
+| 4. Encadenar a `ft_run_diario.bat` | **HECHO** (paso final 0, antes del reporte) |
 | 5. Detector de splits en el pipeline diario | PENDIENTE (hoy es manual) |
+
+### Reporte HTML
+
+`ft_reporte_html.py` suma tres bloques y cambia la fuente del grafico:
+
+- **Grafico**: pasa a leer `ft_equity_diaria.equity` (a mercado) en vez de
+  `ft_metricas_diarias.capital_total` (a costo), y superpone el **universo
+  equiponderado** como linea negra punteada, reescalado a 100k. Lo que quede por
+  debajo de esa linea no esta aportando por seleccionar.
+- **Riesgo**: max DD, volatilidad, Sortino, Sharpe **con IC95% y marca
+  `no concl.`**, Information Ratio, beta y exposicion media. Con texto explicito
+  de como leerla — el reporte se mira meses despues y el IC sin explicacion se
+  ignora.
+- **Por operacion**: n, win rate, expectancy, profit factor, payoff, ganancia y
+  perdida medias, duracion. Es donde hay senal real a este horizonte.
+
+El benchmark se reindexa a las fechas de **cada** estrategia (arrancan en dias
+distintos). La duracion se calcula sobre `fecha_datos`, no sobre la de registro.
+
+**El retorno del bloque de riesgo difiere del resumen comparativo** y esta
+aclarado en el propio reporte: el de riesgo sale de la serie de equity, que
+termina en el ultimo cierre cargado; el del resumen usa el estado actual de la
+estrategia, que ya incluye las operaciones de hoy. Un dia de diferencia es lo
+esperado en un sistema asincronico.
+
+### Encadenado
+
+En `ft_run_diario.bat`, `ft_compute_equity.py` corre **despues de los 10 bots y
+antes del reporte**. Corre todos los dias aunque no se opere, porque la equity a
+mercado cambia por el movimiento del mercado, no por la actividad. Si falla no se
+pierde nada: el dato vive en `ft_operaciones` + `precios_diarios` y la corrida
+siguiente lo reconstruye entero.
 
 ### Control de cuadre (el invariante)
 
