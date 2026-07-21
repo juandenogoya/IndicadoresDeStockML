@@ -500,6 +500,77 @@ porque la primera operacion es del 15/4, no del 23/4.
 
 ---
 
+### 2026-07-21 — AUDITORIA
+**Barrido sistematico de datos que corrompen decisiones. 3 hallazgos**
+
+Despues del incidente de splits, se audito el resto de los insumos que usan las
+estrategias buscando el mismo tipo de bug: dato malo -> decision mala, en
+silencio.
+
+**LIMPIO (verificado, sin accion)**:
+- **Alineacion indicadores/precios**: las 4 tablas al mismo dia y **los 200
+  tickers con desfase 0** entre su ultimo indicador y su ultimo precio. No
+  existe el riesgo de decidir con indicadores de un dia y ejecutar con el
+  precio de otro.
+- **NULLs en indicadores**: cero en sma21/50/200, rsi14, atr14, macd sobre
+  15.000 filas del periodo. Cero ATR=0 (que habria dado SL = precio).
+- **Dias sin precio**: ninguno. El camino `if not precio: continue` de
+  `evaluar_cierres` (que retendria una posicion sin evaluarla, en silencio)
+  nunca se activo por falta de dato.
+- **PnL extremos**: los |pnl%| > 30 son movimientos REALES (ARM +50%, MU +48%,
+  RKLB +34%), no datos rotos.
+- **Duracion 0** (entra y sale con el mismo dato): 108 ops, **104 anteriores al
+  30/5 y todas con pnl exactamente 0** -> es el churn del bug de score=0.0 ya
+  documentado, no un problema nuevo.
+
+**HALLAZGO 1 — errata propia en el fix de splits**
+`fix_ft_ops_split.py` corrigio `precio_entrada` y `cantidad` de las 8 ops pero
+**olvido `stop_loss` y `take_profit`**, que quedaron en la escala vieja (ej.
+entrada 201.14 con SL 1847.31, o sea 10x por encima del precio de entrada de
+una posicion LONG). El PnL estaba bien (no depende del SL) pero el registro era
+incoherente y rompia el calculo de expectancy en R. Reparado con
+`fix_ft_ops_split_sltp.py` (idempotente); las distancias quedaron en 8-11%,
+coherentes con stops por ATR. El script original quedo corregido para futuras
+corridas.
+
+**HALLAZGO 2 — el detector de splits era ciego a los splits INVERSOS**
+`cmd_detectar` filtraba `chg < 0` porque un split forward divide el precio.
+Pero un split **inverso multiplica** el precio y se veria como un salto hacia
+arriba. Corregido: ahora se verifican tambien las subidas, priorizando las
+caidas en el orden.
+
+**HALLAZGO 3 (el mas grave) — el detector generaba FALSOS POSITIVOS destructivos**
+Al ampliar el barrido, el detector declaro "SPLIT CONFIRMADO" para ORCL
+(ratio 0.9841) y DELL (0.9744). **No existe un split de 0.98:1.** La logica
+declaraba split con solo ver un ratio *constante*, sin exigir que fuera un ratio
+*plausible*. Seguir esa recomendacion habria dividido datos sanos por 0.98,
+corrompiendolos.
+
+Corregido: `es_split = (not disperso) AND (ratio_limpio is not None)`. Los
+ratios constantes pero no-plausibles se reportan aparte como
+"DISCREPANCIA (no split) -- NO corregir con divisor".
+
+> **Principio que deja el hallazgo 3**: este script recomienda una accion
+> DESTRUCTIVA sobre la fuente de verdad. Un falso positivo cuesta mucho mas que
+> un falso negativo, y el criterio de deteccion tiene que estar calibrado en esa
+> direccion.
+
+**Sobre la discrepancia ORCL/DELL**: es real pero **no afecta al FT**. ORCL
+difiere hasta 2025-04-09 y DELL hasta 2025-07-21, ambas muy anteriores al inicio
+del forward testing (2026-04-15). Queda como observacion para revisar en el
+contexto de ML (features_ml cubre 2025-03 -> 2026-03 y si las incluye). Origen
+probable: ajuste por dividendos o un backfill viejo con otra base.
+
+**Pendiente relacionado (fuera del FT)**: los bots Alpaca tienen el mismo patron
+de SL en valor absoluto y **nunca contrastan sus posiciones contra el broker**
+(`alpaca_client.get_open_positions()` existe y no la llama nadie). Los splits de
+KLAC les pegaron igual: -1877.44 en bot_candle y -2164.89 en bot_tech. Es paper,
+prioridad baja, pero queda anotado.
+
+**Ref**: scripts/oneshot/fix_ft_ops_split_sltp.py, scripts/manual/splits.py
+
+---
+
 ## Template de entrada
 
 ```

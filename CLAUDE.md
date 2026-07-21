@@ -259,6 +259,13 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - **El ratio observado en el salto NO es el ratio del split** salvo que el
   precio no se haya movido ese dia: KLAC dio 8.856 siendo 10:1 porque ademas
   subio +12.9% real. No usar el ratio del salto como filtro.
+- **Un ratio constante NO alcanza para declarar split: tiene que ser ademas un
+  ratio PLAUSIBLE** (2,3,4,5,10,20...). ORCL (0.9841) y DELL (0.9744) dan
+  constante contra Yahoo y NO son splits -- corregirlos con divisor habria roto
+  datos sanos. El script los reporta como "DISCREPANCIA (no split)". Regla: el
+  detector recomienda una accion DESTRUCTIVA, asi que un falso positivo cuesta
+  mas que un falso negativo.
+- El detector cubre splits forward (caida) **e inversos** (suba).
 - **Correccion por DIVISOR, no re-descargando**: `precios_diarios` guarda el
   close CRUDO tal como se bajo y nunca se re-ajusta por dividendos; el `Close`
   de yahooquery viene ajustado por split Y dividendos (KLAC da 9.8369 en vez de

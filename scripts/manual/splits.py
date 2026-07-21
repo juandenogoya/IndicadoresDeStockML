@@ -145,19 +145,38 @@ def verificar_split(engine, ticker, desde=None):
         return {"ticker": ticker, "es_split": False, "n_filas_mal": 0,
                 "detalle": "la DB coincide con Yahoo: movimiento real, no split"}
 
-    ratio = mal["ratio"].median()
+    ratio = float(mal["ratio"].median())
     disperso = ((mal["ratio"].max() - mal["ratio"].min()) / ratio) > TOL_CONSTANTE
+    limpio = _ratio_limpio(ratio)
     fecha_split = comp[(comp["ratio"] - 1.0).abs() <= 0.01].index.min()
+
+    # Un ratio CONSTANTE no alcanza para declarar split: tiene que ser ademas
+    # un ratio PLAUSIBLE de split. ORCL (0.9841) y DELL (0.9744) dan constante
+    # pero no existe un split de 0.98:1 -- es otra discrepancia (ajuste por
+    # dividendos / backfill viejo). Sin este filtro el script recomendaba
+    # "corregir ORCL DELL", o sea dividir datos sanos por 0.98 y romperlos.
+    # Este script recomienda una accion DESTRUCTIVA: un falso positivo cuesta
+    # mas que un falso negativo.
+    es_split = (not disperso) and (limpio is not None)
+
+    detalle = None
+    if disperso:
+        detalle = "ratio disperso: no es un cambio de escala limpio"
+    elif limpio is None:
+        detalle = (f"ratio {ratio:.4f} constante pero NO es un ratio de split "
+                   f"plausible -- discrepancia de datos a investigar, NO corregir "
+                   f"con divisor")
 
     return {
         "ticker":       ticker,
-        "es_split":     not disperso,
-        "ratio":        round(float(ratio), 4),
-        "ratio_limpio": _ratio_limpio(float(ratio)),
+        "es_split":     es_split,
+        "ratio":        round(ratio, 4),
+        "ratio_limpio": limpio,
         "fecha_split":  fecha_split.date() if pd.notna(fecha_split) else None,
         "n_filas_mal":  len(mal),
         "rango_mal":    (mal.index.min().date(), mal.index.max().date()),
         "disperso":     disperso,
+        "detalle":      detalle,
     }
 
 
@@ -304,11 +323,15 @@ def cmd_detectar(args):
     # se haya movido ese dia. KLAC dio 8.856 siendo un split 10:1, porque el
     # 11/6 ademas subio +12.9% real. Por eso `ratio_limpio` es informativo y
     # NO se usa como filtro: el unico juez confiable es Yahoo (etapa 2).
-    # Un split fuerza el precio hacia ABAJO, asi que priorizamos las caidas.
-    caidas = cand[cand["chg"] < 0].copy()
-    caidas["mag"] = caidas["chg"].abs()
-    sospechosos = (caidas.sort_values("mag", ascending=False)["ticker"]
-                   .drop_duplicates().tolist())
+    #
+    # Se priorizan las CAIDAS (un split forward divide el precio) pero NO se
+    # descartan las subidas: un split INVERSO multiplica el precio y se veria
+    # como un salto hacia arriba. Filtrar solo caidas dejaba ese caso ciego.
+    cand = cand.copy()
+    cand["mag"] = cand["chg"].abs()
+    cand["es_caida"] = cand["chg"] < 0
+    sospechosos = (cand.sort_values(["es_caida", "mag"], ascending=[False, False])
+                   ["ticker"].drop_duplicates().tolist())
 
     print()
     if not sospechosos:
@@ -331,6 +354,7 @@ def cmd_detectar(args):
     yfinance_lock.acquire("splits.py")
 
     confirmados = []
+    revisar = []
     for tk in sospechosos:
         r = verificar_split(engine, tk)
         if r.get("es_split"):
@@ -339,18 +363,29 @@ def cmd_detectar(args):
                 f"(limpio {r['ratio_limpio']}) desde {r['fecha_split']} "
                 f"| {r['n_filas_mal']} filas mal")
         elif r.get("es_split") is False:
-            log(f"  {tk}: OK -- {r.get('detalle', '')}")
+            det = r.get("detalle") or ""
+            if "NO es un ratio de split" in det:
+                revisar.append(r)
+                log(f"  {tk}: [!] DISCREPANCIA (no split) ratio {r['ratio']} "
+                    f"en {r['n_filas_mal']} filas -- {det}")
+            else:
+                log(f"  {tk}: OK -- {det}")
         else:
             log(f"  {tk}: INDETERMINADO ({r.get('error', 'ratio disperso')}) "
                 f"-- revisar a mano")
 
     print()
+    if revisar:
+        log(f"[!] {len(revisar)} ticker(s) con discrepancia contra Yahoo que NO es "
+            f"un split: {' '.join(r['ticker'] for r in revisar)}")
+        log("    NO corregir con divisor. Investigar el origen (ajuste por "
+            "dividendos, backfill viejo, fuente distinta).")
     if confirmados:
         tks = " ".join(c["ticker"] for c in confirmados)
         log(f"SPLITS SIN APLICAR: {tks}")
         log(f"Corregir con: python scripts/manual/splits.py corregir {tks} --apply")
         return 1
-    log("Ningun split pendiente: todas las caidas son movimientos reales.")
+    log("Ningun split pendiente: los saltos restantes son movimientos reales.")
     return 0
 
 

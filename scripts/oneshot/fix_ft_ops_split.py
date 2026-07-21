@@ -9,8 +9,16 @@ QUE PASO:
     el split se valuaron y cerraron al precio POST-split con la cantidad
     PRE-split -> perdidas ficticias de -72% a -88%.
 
+ERRATA (corregida por scripts/oneshot/fix_ft_ops_split_sltp.py):
+    La primera version de este script olvido dividir **stop_loss y take_profit**,
+    que quedaron en la escala vieja (ej. entrada 201.14 con SL 1847.31). El PnL
+    no dependia de ellos, pero el registro quedaba incoherente y rompia el
+    calculo de expectancy en R. Lo detecto la auditoria de calidad de datos.
+    El bloque de UPDATE de mas abajo ya los incluye.
+
 QUE CORRIGE ESTE SCRIPT (aritmetica):
-    precio_entrada /= ratio ; cantidad *= ratio
+    precio_entrada /= ratio ; cantidad *= ratio ; stop_loss /= ratio ;
+    take_profit /= ratio
     capital_entrada queda IGUAL: P*N == (P/r)*(N*r). El titular de N acciones
     pre-split pasa a tener N*r acciones al precio P/r; es la misma posicion.
     Luego recomputa pnl y pnl_pct, y ajusta el cash de la estrategia por la
@@ -159,12 +167,18 @@ def main():
             motivo = r.motivo_salida
             if motivo and not motivo.endswith("_SPLIT_FIX"):
                 motivo = f"{motivo}_SPLIT_FIX"
+            # stop_loss y take_profit TAMBIEN se dividen: estan en valor
+            # absoluto y un SL de la escala vieja queda 10x por encima del
+            # precio (fue la errata de la primera version, ver cabecera).
             conn.execute(text("""
                 UPDATE ft_operaciones
                 SET precio_entrada = :pe, cantidad = :cant,
+                    stop_loss   = stop_loss   / :ratio,
+                    take_profit = take_profit / :ratio,
                     pnl = :pnl, pnl_pct = :pnl_pct, motivo_salida = :motivo
                 WHERE id = :id
             """), {"pe": float(r.precio_entrada_new), "cant": int(r.cantidad_new),
+                   "ratio": float(r.ratio),
                    "pnl": float(r.pnl_new), "pnl_pct": float(r.pnl_pct_new),
                    "motivo": motivo, "id": int(r.id)})
 
