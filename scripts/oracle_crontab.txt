@@ -35,3 +35,10 @@ HOME=/home/ubuntu
 # --- Earnings calendar (Nasdaq) ------------------------------
 # Refresh semanal -- lunes 12:00 UTC (pre-mercado). Escribe Railway.
 0 12 * * 1 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/refresh_earnings_calendar.py --target railway >> /tmp/cron_earnings_calendar.log 2>&1
+
+# --- Backfill historico de balances (earnings_historico) -- TEMPORAL ----------
+# Diario 07:00 UTC (tras los intentos de opciones). AV free 25/dia -> ~10 dias.
+# Escribe a Railway (transito). APAGAR cuando --target railway --status diga
+# 200/200: luego sync final (sync_railway_to_local.py --tabla earnings_historico)
+# + DROP en Railway. De ahi en mas el incremental corre en Windows (target local).
+0 7 * * * cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && source venv/bin/activate && python3 scripts/refresh_earnings_historico.py --target railway --backfill >> /tmp/cron_earnings_hist.log 2>&1

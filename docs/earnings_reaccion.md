@@ -76,6 +76,27 @@ que lo necesita":
 3. Incremental      -> tickers cuya proxima fecha (`earnings_calendar`) ya paso
    respecto de la ultima `announcement_date` -> apendicea el Q nuevo.
 
+## Backfill inicial via Oracle (transito por Railway) -- TEMPORAL
+
+Para no gotear ~10 dias a mano en Windows, el backfill inicial corre en Oracle
+(siempre-on) escribiendo a Railway, y se baja a local UNA vez al terminar:
+
+```
+1. Oracle cron diario 07:00 UTC: refresh_earnings_historico.py --target railway
+   --backfill  (crea la tabla en Railway si no existe; ~20 tickers/dia)
+2. NO se sincroniza durante la fase: Railway acumula sola ~10 dias.
+3. Cuando --target railway --status dice 200/200:
+   a. sync final:  sync_railway_to_local.py --tabla earnings_historico
+      (merge idempotente ON CONFLICT DO NOTHING; preserva lo que ya hay en local)
+   b. APAGAR el cron (quitar la linea en Oracle + scripts/oracle_crontab.txt)
+   c. DROP TABLE earnings_historico en Railway (era transito; local es la verdad)
+4. De ahi en mas: incremental en Windows (target local, default).
+```
+
+Notas: mismo limite AV (25/dia por key) -> Oracle NO acelera, solo desatiende.
+Durante la fase, NO correr el backfill tambien en Windows con la misma key (se
+reparten los 25 y se desperdicia cuota). La AV key vive en el .env de Oracle.
+
 ## Operacion
 
 - Backfill / tanda diaria: `scripts/manual/refresh_earnings_historico.bat`
