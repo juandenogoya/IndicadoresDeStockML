@@ -240,6 +240,13 @@ def cmd_add(args):
     else:
         log("6) [SKIP fundamentales]")
 
+    # 6b. historia de balances (fecha de anuncio por Q, para la vista de
+    # reaccion a balances). 1 llamada a Alpha Vantage. Si la cuota free ya se
+    # agoto hoy, el batch reanudable (refresh_earnings_historico --backfill) lo
+    # levanta despues: aca no bloquea el alta.
+    log("6b) Historia de balances (Alpha Vantage)...")
+    _run("scripts/refresh_earnings_historico.py", ["--ticker", ticker])
+
     # 7. log
     _log_cambio(eng_l, ticker, "ALTA", args.sector, args.motivo, detalle)
     try:
