@@ -48,6 +48,12 @@ Documentacion que existe hoy en docs/:
 - docs/reportes.md        : modulo scripts/reports/ -- generador de PDF e
                             infografias para compartir analisis en X
 - docs/estrategias_ft.md  : estrategias de forward testing
+- docs/earnings_reaccion.md : vista "Reaccion a balances" del dashboard +
+                            tabla earnings_historico. Fecha de anuncio por Q
+                            desde Alpha Vantage (la variable que faltaba: no la
+                            daban earnings_calendar ni fundamentales), regla del
+                            dia 0 (pre/post-market), backfill reanudable/cuota-
+                            aware (key free 25/dia). LOCAL-only.
 - docs/gestion_universo.md : alta/baja de tickers del universo (Tarea 14).
                             Fuente unica via tabla activos (src/data/universo),
                             CLI universo.py (add/remove/list), insight del backfill
@@ -329,6 +335,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `src/trading/senales_adapter.py` / `ejecucion_bot.py` | Adapters Alpaca: data (masticada->cerebro) + ejecucion (alpaca_client + posiciones_bot*/operaciones_bot*) |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
+| `scripts/refresh_earnings_historico.py` (+ `scripts/manual/refresh_earnings_historico.bat`) | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` (llena faltantes+desactualizados, <=20/corrida), sin flags = incremental, `--ticker X` (alta), `--status`. LOCAL-only. Ver docs/earnings_reaccion.md |
+| `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": precio + volumen en las 7 ruedas post-balance por trimestre, dia 0 ajustado por pre/post-market |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
@@ -375,6 +383,13 @@ Las criticas:
 - `features_regimen_macro` | `features_ml` | `features_sector`
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
   desde Nasdaq por `refresh_earnings_calendar.py`)
+- `earnings_historico` (LOCAL) -- fecha de anuncio de cada balance por trimestre
+  (ticker, fiscal_period_end, announcement_date, report_time pre/post-market).
+  PK (ticker, fiscal_period_end); JOIN con fundamentales_*_q por esa clave.
+  Fuente Alpha Vantage EARNINGS (backfill reanudable/cuota-aware, key free
+  25/dia). Base de la vista "Reaccion a balances" del dashboard. La variable que
+  faltaba: earnings_calendar solo tiene la proxima fecha y fundamentales tiene
+  el CIERRE fiscal, no el anuncio. Ver docs/earnings_reaccion.md
 - `fundamentales_income_q` | `fundamentales_balance_q` | `fundamentales_cashflow_q`
   | `fundamentales_valuation_q` -- 4 tablas de analisis fundamental trimestral,
   ultimos 8 Q por ticker (income/balance/cashflow + ratios PE/PB/PS/PEG/EV-EBITDA).

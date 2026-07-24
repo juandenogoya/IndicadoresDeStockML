@@ -526,13 +526,17 @@ def main():
 
     modo = st.sidebar.radio("Vista",
                             ["Informe por ticker", "Radar del dia",
-                             "Analisis Financiero", "Consultas (IA)"],
+                             "Analisis Financiero", "Reaccion a balances",
+                             "Consultas (IA)"],
                             key="modo")
     st.sidebar.divider()
     if modo == "Radar del dia":
         _vista_radar()
     elif modo == "Analisis Financiero":
         _vista_financiera(tickers)
+    elif modo == "Reaccion a balances":
+        from dashboard.earnings_reaccion import construir_reaccion
+        construir_reaccion(tickers)
     elif modo == "Consultas (IA)":
         _vista_chat()
     else:
