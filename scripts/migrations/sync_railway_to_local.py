@@ -218,6 +218,59 @@ def sync_ticker_fecha(
 
 # ── Sync: alertas_scanner ─────────────────────────────────────────────────────
 
+def sync_earnings_historico(rail_eng, local_eng, dry_run: bool):
+    """
+    Trae earnings_historico Railway -> local (sync FINAL del backfill hecho en
+    Oracle). Merge idempotente por (ticker, fiscal_period_end) con ON CONFLICT
+    DO NOTHING: preserva el schema/PK local y las filas ya cargadas, suma el
+    resto. Una vez traido todo, la tabla Railway se puede dropear (transito).
+    """
+    log("earnings_historico -- merge idempotente (ticker, fiscal_period_end)...")
+
+    # Si la tabla no existe en Railway aun (backfill no arrancado), no hay nada.
+    try:
+        df = pd.read_sql(
+            "SELECT ticker, fiscal_period_end, announcement_date, report_time, "
+            "fetched_at FROM earnings_historico ORDER BY ticker, fiscal_period_end",
+            rail_eng)
+    except Exception as e:
+        log(f"  Railway sin earnings_historico ({str(e)[:60]}). Nada que traer.")
+        return 0
+
+    log(f"  Filas en Railway: {len(df)} ({df['ticker'].nunique()} tickers)")
+    if df.empty:
+        log("  OK - Railway vacio")
+        return 0
+    if dry_run:
+        log(f"  DRY-RUN: mergearia hasta {len(df)} filas")
+        return len(df)
+
+    sql = (
+        "INSERT INTO earnings_historico "
+        "(ticker, fiscal_period_end, announcement_date, report_time, fetched_at) "
+        "VALUES (%(ticker)s, %(fiscal_period_end)s, %(announcement_date)s, "
+        "%(report_time)s, %(fetched_at)s) "
+        "ON CONFLICT (ticker, fiscal_period_end) DO NOTHING"
+    )
+    local_env = _parse_env_file(os.path.join(ROOT, ".env"))
+    conn = _opciones_local_conn(local_env)
+    inserted = 0
+    try:
+        cur = conn.cursor()
+        records = df.where(pd.notnull(df), None).to_dict("records")
+        psycopg2.extras.execute_batch(cur, sql, records, page_size=500)
+        conn.commit()
+        cur.execute("SELECT COUNT(*), COUNT(DISTINCT ticker) FROM earnings_historico")
+        inserted, n_tk = cur.fetchone()
+        log(f"  OK - local ahora: {inserted} filas / {n_tk} tickers")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return inserted
+
+
 def sync_alertas(rail_eng, local_eng, dry_run: bool):
     """
     Incremental por precio_fecha (la columna usada en el unique index).
@@ -840,6 +893,7 @@ TABLAS_DISPONIBLES = [
     "futuros_diarios",
     "opciones",
     "earnings_calendar",
+    "earnings_historico",
     "forward_testing",
     "bt_historico",
     "features_ml",
@@ -921,6 +975,12 @@ def main():
     # 8b. earnings_calendar (replace completo — tabla de estado actual)
     correr("earnings_calendar",
            lambda: sync_earnings_calendar(rail_eng, local_eng, dry_run))
+
+    # 8c. earnings_historico (sync FINAL del backfill de Oracle; merge idempotente).
+    #     NO esta en el ciclo normal: se corre a mano con --tabla earnings_historico
+    #     cuando el backfill en Railway esta completo. Aca queda para el modo full.
+    correr("earnings_historico",
+           lambda: sync_earnings_historico(rail_eng, local_eng, dry_run))
 
     # 9. forward_testing — NO se sincroniza: FT corre en local (ver guard)
     correr("forward_testing", lambda: sync_forward_testing_guard(dry_run))

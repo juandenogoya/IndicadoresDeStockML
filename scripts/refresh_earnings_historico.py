@@ -95,6 +95,52 @@ def get_local_engine():
     return create_engine(f"postgresql+psycopg2://{user}:{pwd}@{host}:{port}/{name}")
 
 
+def get_railway_engine():
+    """
+    Engine -> Railway. DATABASE_URL vive en .env.local (Windows) o en .env
+    (Oracle, que escribe a Railway y no tiene .env.local). Uso: el backfill
+    corre en Oracle contra Railway; el sync final baja la tabla a local.
+    """
+    url = ""
+    for fname in (".env.local", ".env"):
+        url = _parse_env_file(os.path.join(ROOT, fname)).get("DATABASE_URL", "").strip()
+        if url:
+            break
+    if not url:
+        raise RuntimeError("DATABASE_URL no encontrado en .env.local ni .env "
+                           "(necesario para --target railway).")
+    url = url.replace("postgres://", "postgresql://", 1)
+    if "postgresql+psycopg2" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return create_engine(url, connect_args={"sslmode": "require"}, pool_pre_ping=True)
+
+
+# DDL identico al de create_earnings_historico_table.py; aca se auto-crea para
+# que el backfill en Railway (Oracle) no dependa de un paso previo manual.
+_DDL = [
+    """
+    CREATE TABLE IF NOT EXISTS earnings_historico (
+        ticker             VARCHAR(20) NOT NULL,
+        fiscal_period_end  DATE        NOT NULL,
+        announcement_date  DATE        NOT NULL,
+        report_time        VARCHAR(24),
+        fetched_at         TIMESTAMP   NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (ticker, fiscal_period_end)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_earnings_hist_ticker_anndate "
+    "ON earnings_historico (ticker, announcement_date)",
+]
+
+
+def ensure_table(engine):
+    """Crea earnings_historico en el engine dado si no existe (idempotente)."""
+    with engine.connect() as conn:
+        for stmt in _DDL:
+            conn.execute(text(stmt.strip()))
+        conn.commit()
+
+
 def _api_key() -> str:
     k = _ENV.get("ALPHA_VANTAGE_API_KEY", "").strip()
     if not k:
@@ -257,14 +303,20 @@ def main():
     ap.add_argument("--max-calls", type=int, default=MAX_CALLS_DEF,
                     help=f"Maximo de llamadas por corrida (default {MAX_CALLS_DEF})")
     ap.add_argument("--status", action="store_true", help="Muestra que falta y sale")
+    ap.add_argument("--target", choices=["local", "railway"], default="local",
+                    help="DB destino. 'railway' = backfill desde Oracle (default local).")
     ap.add_argument("--dry-run", action="store_true", help="No escribe en DB")
     args = ap.parse_args()
 
-    engine = get_local_engine()
+    engine = get_railway_engine() if args.target == "railway" else get_local_engine()
+    # Auto-crea la tabla en el target (idempotente): en Railway el backfill de
+    # Oracle no depende de un create previo manual.
+    if not args.dry_run:
+        ensure_table(engine)
 
     print()
     print(SEP)
-    print(f"  REFRESH earnings_historico (Alpha Vantage, LOCAL)"
+    print(f"  REFRESH earnings_historico (Alpha Vantage, {args.target.upper()})"
           f"{'  [DRY-RUN]' if args.dry_run else ''}")
     print(SEP)
 
