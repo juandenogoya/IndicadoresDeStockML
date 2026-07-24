@@ -140,9 +140,10 @@ def construir_reaccion(tickers: list):
     ev = _eventos(ticker)
     if ev.empty:
         st.warning(
-            f"No hay historia de balances para {ticker} en earnings_historico.\n\n"
-            "Correr el backfill: `scripts/manual/refresh_earnings_historico.bat` "
-            "(la key free trae ~20 tickers por dia)."
+            f"No hay historia local de balances para {ticker}.\n\n"
+            "El backfill inicial corre en Oracle -> Railway; local se completa "
+            "con el sync final. Para traer solo este ticker ya:\n"
+            f"`python scripts/refresh_earnings_historico.py --ticker {ticker}`"
         )
         return
 

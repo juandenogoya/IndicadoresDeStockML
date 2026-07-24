@@ -99,10 +99,11 @@ reparten los 25 y se desperdicia cuota). La AV key vive en el .env de Oracle.
 
 ## Operacion
 
-- Backfill / tanda diaria: `scripts/manual/refresh_earnings_historico.bat`
-  (o `refresh_earnings_historico.py --backfill [--max-calls N]`).
-- Ver que falta: `refresh_earnings_historico.py --status`.
-- Incremental (post-earnings season): `refresh_earnings_historico.py` sin flags.
+- Backfill inicial: en Oracle contra Railway (ver seccion anterior). Manual
+  equivalente: `refresh_earnings_historico.py --backfill [--max-calls N]`.
+- Ver que falta: `refresh_earnings_historico.py [--target railway] --status`.
+- Incremental (post-earnings season, Windows->local): `refresh_earnings_historico.py`
+  sin flags. Ticker puntual: `--ticker X` (lo usa universo.py add).
 - Vista: dashboard -> "Reaccion a balances" (`dashboard/earnings_reaccion.py`).
   Selector de ticker + cuantos trimestres comparar; panel de precio (% acumulado
   desde el cierre previo) y de volumen (multiplo del promedio de 20 ruedas
