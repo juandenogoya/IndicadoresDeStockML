@@ -68,6 +68,13 @@ Documentacion que existe hoy en docs/:
                             para X/redes (formato 4:5, layout 5 bloques, set de
                             indicadores por perfil banco/no-banco, decisiones).
                             Motor: scripts/reports/make_infografia_fundamental.py
+- docs/infografia_simple.md : spec de la TERCERA infografia (simple/social, 4:5):
+                            1 tarjeta combinada tecnico+fundamental con 2 GRAFICOS
+                            (precio+muros mas fuertes; PER del ticker vs PER mediano
+                            del sector por trim. calendario) + chips de opciones por
+                            plazo + cinta de veredicto. SVG inline (sin matplotlib),
+                            sin LLM. Motor: make_infografia_simple.py + boton en el
+                            dashboard (vista "Informe por ticker")
 - docs/fundamentales_calculo.md : diseno v2 del calculo de ratios fundamentales
                             -- inventario de claves crudas de yahooquery,
                             perfiles banco/no-banco (clasificacion multi-Q +
