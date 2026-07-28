@@ -1,0 +1,111 @@
+/* ============================================================
+   infografia_simple.css
+   Infografia SIMPLE (tecnico + fundamental) para redes. Formato 4:5
+   (1080x1350). Paleta crema/alto contraste, consistente con las otras
+   dos infografias. Ver spec: docs/infografia_simple.md
+   ============================================================ */
+
+:root {
+    --bg:          #faf8f3;
+    --bg-bloque:   #ffffff;
+    --texto:       #1a1a1a;
+    --texto-suave: #6b6b6b;
+    --verde:       #1a7f37;
+    --rojo:        #cf222e;
+    --neutro:      #9aa0a6;
+    --borde:       #e0ddd5;
+    --acento:      #111;
+    --page-w:      1080px;
+}
+
+@page { size: 1080px 1350px; margin: 0; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--texto);
+    width: var(--page-w);
+}
+
+.fg-container { width: var(--page-w); padding: 30px 40px; }
+
+/* ── Encabezado ──────────────────────────────────────────── */
+.fg-header {
+    display: flex; align-items: center; gap: 26px;
+    border-bottom: 4px solid var(--acento);
+    padding-bottom: 12px; margin-bottom: 14px;
+}
+.ticker-big { font-size: 76px; font-weight: 800; letter-spacing: -2px; line-height: 1; }
+.header-meta { flex: 1; }
+.sector { font-size: 26px; font-weight: 700; }
+.cierre { font-size: 23px; margin-top: 5px; }
+.cierre .fecha { color: var(--texto-suave); font-size: 19px; }
+
+/* ── Cinta de veredicto ──────────────────────────────────── */
+.veredicto {
+    border-radius: 12px; padding: 13px 22px; margin-bottom: 16px; color: #fff;
+}
+.v-estado { font-size: 34px; font-weight: 800; letter-spacing: 0.5px; }
+.v-frase { font-size: 18px; font-weight: 500; margin-top: 3px; opacity: 0.95; }
+
+/* ── Bloques ─────────────────────────────────────────────── */
+.fg-bloque {
+    background: var(--bg-bloque); border: 1px solid var(--borde);
+    border-radius: 14px; padding: 12px 22px; margin-bottom: 11px;
+}
+.fg-bloque h2 {
+    font-size: 23px; font-weight: 800; margin-bottom: 6px;
+    border-bottom: 3px solid var(--acento); padding-bottom: 6px;
+}
+
+/* ── Graficos SVG ────────────────────────────────────────── */
+.chart { width: 100%; height: auto; display: block; }
+.nivel-lbl { font-size: 17px; fill: #fff; font-weight: 700; }
+.px-lbl    { font-size: 19px; fill: var(--acento); font-weight: 800; }
+.ax-lbl    { font-size: 15px; fill: var(--texto-suave); }
+.s-lbl     { font-size: 15px; fill: var(--texto-suave); font-weight: 600; }
+.t-lbl     { font-size: 19px; fill: var(--acento); font-weight: 800; }
+
+/* Leyenda del grafico PER vs sector */
+.chart-legend { font-size: 16px; color: var(--texto-suave); margin-bottom: 2px; }
+.lg { margin-right: 24px; }
+.sw { display: inline-block; width: 20px; height: 14px; margin-right: 8px;
+      border-radius: 3px; vertical-align: middle; }
+.sw-line { height: 5px; background: var(--acento); }
+.sw-bar { background: #aac4e0; }
+
+/* ── Tabla de opciones ───────────────────────────────────── */
+.op-tabla { width: 100%; border-collapse: collapse; }
+.op-tabla th {
+    text-align: left; font-size: 16px; color: var(--texto-suave);
+    text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 6px 8px;
+    border-bottom: 1px solid var(--borde);
+}
+.op-tabla th:nth-child(2), .op-tabla th:nth-child(3) { text-align: center; }
+.op-tabla td { padding: 9px 6px; }
+.op-tabla tbody tr + tr td { border-top: 1px solid #f0ede5; }
+.op-tabla td:nth-child(2), .op-tabla td:nth-child(3) { text-align: center; }
+.op-plazo { font-size: 22px; font-weight: 700; }
+.chip {
+    display: inline-block; min-width: 108px; text-align: center;
+    padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 20px;
+    color: #fff; font-variant-numeric: tabular-nums;
+}
+.chip.alcista { background: var(--verde); }
+.chip.neutral { background: var(--neutro); }
+.chip.bajista { background: var(--rojo); }
+.leyenda-chip { font-size: 14px; color: var(--texto-suave); font-style: italic; margin-top: 8px; }
+
+/* ── Varios ──────────────────────────────────────────────── */
+.sin-datos { color: var(--texto-suave); font-style: italic; font-size: 18px; padding: 22px 0; }
+.nota { font-size: 15px; color: var(--texto-suave); font-style: italic; margin-top: 6px; }
+
+/* ── Footer ──────────────────────────────────────────────── */
+.fg-footer {
+    border-top: 3px solid var(--acento); padding-top: 12px; margin-top: 2px;
+    font-size: 16px; color: var(--texto-suave); text-align: center;
+}
+.fg-footer .handle { font-weight: 700; color: var(--texto); }
+.fg-footer .sep { margin: 0 9px; }

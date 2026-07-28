@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="infografia_simple.css">
+</head>
+<body>
+<div class="fg-container">
+
+  <div class="fg-header">
+    <div class="ticker-big">{{ ticker }}</div>
+    <div class="header-meta">
+      <div class="sector">{{ sector }}</div>
+      <div class="cierre">USD {{ cierre }} <span class="fecha">({{ fecha_cierre }})</span></div>
+    </div>
+  </div>
+
+  <div class="veredicto" style="background: {{ estado_color }};">
+    <div class="v-estado">{{ estado }}</div>
+    {% if frase %}<div class="v-frase">{{ frase }}</div>{% endif %}
+  </div>
+
+  <div class="fg-bloque">
+    <h2>Precio y muros de opciones</h2>
+    {{ chart_precio | safe }}
+    {% if not hay_muros %}<div class="nota">Sin muros de opciones liquidos para marcar.</div>{% endif %}
+  </div>
+
+  <div class="fg-bloque">
+    <h2>Opciones por plazo</h2>
+    {% if hay_op %}
+    <table class="op-tabla">
+      <thead><tr><th>Plazo</th><th>PCR vol</th><th>Sesgo OI</th></tr></thead>
+      <tbody>
+        {% for f in filas_op %}
+        <tr>
+          <td class="op-plazo">{{ f.plazo }}</td>
+          <td><span class="chip {{ f.pcr_cls }}">{{ f.pcr_txt }}</span></td>
+          <td><span class="chip {{ f.oi_cls }}">{{ f.oi_txt }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="leyenda-chip">PCR vol: &lt;0.7 alcista / 0.7-1.0 neutral / &gt;1.0 bajista &nbsp;.&nbsp; Sesgo OI = posicionamiento acumulado</div>
+    {% else %}
+    <div class="sin-datos">Sin datos de opciones para este ticker.</div>
+    {% endif %}
+  </div>
+
+  <div class="fg-bloque">
+    <h2>Valuacion - PER: {{ ticker }} vs su sector</h2>
+    <div class="chart-legend">
+      <span class="lg"><i class="sw sw-line"></i>{{ ticker }}</span>
+      <span class="lg"><i class="sw sw-bar"></i>{{ sector }} (mediana del sector)</span>
+    </div>
+    {{ chart_fund | safe }}
+  </div>
+
+  <div class="fg-footer">
+    <span class="handle">{{ handle }}</span><span class="sep">.</span>
+    {{ fecha_legible }}<span class="sep">.</span>
+    descriptivo, no recomendacion
+  </div>
+
+</div>
+</body>
+</html>

@@ -157,6 +157,30 @@ def _sidebar_export(ticker, datos, sintesis):
             use_container_width=True,
         )
 
+    if st.sidebar.button("Infografia simple (PNG)", use_container_width=True,
+                         key="ig_simple_btn"):
+        with st.spinner("Generando infografia..."):
+            try:
+                # Import diferido: el modulo trae weasyprint. Solo al pedirlo.
+                from scripts.reports.make_infografia_simple import generar_infografia_simple
+                path = generar_infografia_simple(ticker)
+                with open(path, "rb") as f:
+                    st.session_state["ig_simple_bytes"] = f.read()
+                st.session_state["ig_simple_name"] = path.name
+                st.session_state["ig_simple_ticker"] = ticker
+            except Exception as exc:
+                st.sidebar.error(f"Error generando infografia: {exc}")
+
+    if (st.session_state.get("ig_simple_ticker") == ticker
+            and st.session_state.get("ig_simple_bytes")):
+        st.sidebar.download_button(
+            f"Descargar {st.session_state['ig_simple_name']}",
+            data=st.session_state["ig_simple_bytes"],
+            file_name=st.session_state["ig_simple_name"],
+            mime="image/png",
+            use_container_width=True,
+        )
+
 
 def _vista_informe(tickers):
     if "ticker" not in st.session_state:
