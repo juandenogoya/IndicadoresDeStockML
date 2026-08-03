@@ -214,20 +214,17 @@ perfilado bien hecho es requisito de esto.
 
 ## 11. Cuestiones abiertas (a decidir antes de construir)
 
-- Periodo del ATR quincenal (o si se incluye).
-- Metrica exacta de drawdown (max DD historico, DD promedio, frecuencia de DD >
-  umbral, etc.). Reuso posible: `src/utils/ft_metricas.py` (modulo puro de
-  metricas de riesgo, ya tiene max DD).
-- Ventana de beta (2 anios? 1 anio? multi-ventana como la vol?) y contra que
-  indice (SPY vs futuros ES).
-- Ventanas de vol solapadas (rolling) vs no solapadas (calendario) -- afecta el
-  numero de muestras y la autocorrelacion.
-- Umbrales absolutos concretos por eje, calibrados contra las anclas.
-- Formato de salida: tabla nueva (perfiles_ticker?), vista en el dashboard,
-  ambos. Point-in-time si alguna vez lo consumen los bots/FT.
-- Frecuencia de recomputo del perfil (mensual? semanal?) dado que es estable.
+Resueltas en Fase 0 (ver seccion 13): drawdown (max_dd 1a + hist), ventana e
+indice de beta (1 anio vs futuros ES), ventanas de vol (calendario no solapadas),
+quincenal (descartado), frecuencia de recomputo (mensual standalone).
+
+Pendientes:
+
+- Umbrales absolutos concretos por eje, calibrados contra las anclas (Fase 4).
+- Detalle del score continuo y la regla de consistencia (Fase 2).
+- Point-in-time / versionado si alguna vez lo consumen los bots/FT.
 - UI: landing de la vista general como scatter (beta vs ATR%) vs tabla grande
-  rankeable. Y "Por cartera" como subtabs vs dropdown selector.
+  rankeable. Y "Por cartera" como subtabs vs dropdown selector (Fase 5).
 
 ## 12. Presentacion (UI en el dashboard)
 
@@ -257,7 +254,62 @@ Matiz de nombre: "Carteras" sugiere cartera construida (pesos, sizing). v1 es la
 **segmentacion** (universo clasificado por perfil), NO una cartera ponderada. La
 construccion real (elegir N + ponderar) seria un paso posterior.
 
-## 13. Politica de trabajo
+## 13. Plan de implementacion (por fases)
+
+Decisiones de Fase 0 (calibracion) CERRADAS (3/8/2026):
+
+- **Benchmark para beta**: futuros ES (`futuros_diarios`, ya disponible).
+- **Ventana de beta**: 1 anio de retornos diarios.
+- **Drawdown**: `max_dd` de `ft_metricas`, dos columnas -> `max_dd_1a` (1 anio,
+  estado reciente) + `max_dd_hist` (historia completa, caracter estructural).
+- **Timeframes de vol**: SOLO Diario / Semanal / Mensual. Quincenal DESCARTADO.
+- **Ventanas**: barras de **calendario, no solapadas** (W-FRI y fin de mes). Una
+  semana corta por feriado es una barra valida igual (el resample agrupa por
+  periodo, no cuenta dias). ATR 14 (D) / 8 (W) / 6 (M), configurables.
+
+Reuso confirmado: `ft_metricas.beta()` y `ft_metricas.max_drawdown()` (puros).
+`weekly_tf.py` resamplea solo el CLOSE -> para ATR hace falta OHLC semanal/
+mensual (unico calculo nuevo de resample).
+
+Fases:
+
+- **Fase 1 -- Motor de metricas por ticker** (`src/utils/`, puro) -- HECHA (3/8/2026):
+  - `src/utils/volatilidad_mtf.py`: resample OHLC a W-FRI y M + ATR% por TF.
+    Puro (pandas + ta). Excluye la barra en curso. Tests en
+    `tests/test_volatilidad_mtf.py`.
+  - `src/utils/perfil_metricas.py`: orquesta -> dado OHLC del ticker + serie del
+    benchmark, devuelve {atr_pct_d/w/m, beta, max_dd_1a, max_dd_hist}. Reusa
+    `ft_metricas.beta`/`max_drawdown`. Tests en `tests/test_perfil_metricas.py`.
+  - 16 tests verdes + smoke test contra DB real (KO/JPM/NVDA vs ES=F): la beta
+    reproduce el gradiente (KO -0.28 / JPM 0.84 / NVDA 1.86), el ATR% crece con
+    el horizonte y el drawdown ordena igual (37% / 44% / 66%). Diseno validado.
+  - CONSTRAINT DESCUBIERTO: `futuros_diarios` (ES=F) arranca 2025-05-09 (~15
+    meses). La beta queda acotada a ~1 anio (coincide con la decision). Para
+    beta multi-anio habria que sumar SPY al universo de precios. La beta de KO
+    salio negativa en esta ventana (regime-dependiente) -> a revisar en Fase 4;
+    refuerza que la beta sola no alcanza (por eso prior sectorial + varios ejes).
+- **Fase 2 -- Clasificador** (`src/utils/`, puro):
+  - `src/utils/perfil_riesgo.py` (nuevo): prior sectorial + umbrales/percentiles
+    -> etiqueta (4 cajas) + score continuo + ranking intra-caja + flag de
+    consistencia + excepcion. Umbrales configurables. Test clave: las anclas
+    caen donde deben.
+- **Fase 3 -- Persistencia** (`scripts/` + tabla, LOCAL):
+  - `scripts/oneshot/create_perfiles_carteras_table.py` (nuevo): crea
+    `perfiles_ticker`.
+  - `scripts/compute_perfiles_carteras.py` (nuevo) + `.bat`: lee precios/activos/
+    benchmark, corre Fase 1+2 sobre los 200, UPSERT. Standalone **mensual** (el
+    perfil es estable, no va en el recovery diario).
+- **Fase 4 -- Validacion / calibracion** (analisis): correr sobre el universo,
+  chequear anclas, tunear umbrales de Fase 2. Iterativo.
+- **Fase 5 -- Dashboard** (`dashboard/`): `dashboard/carteras.py` (nuevo) con las
+  3 vistas (Mapa / Por cartera / Excepciones-Validacion) + enganche en sidebar.
+- **Fase 6 -- Overlay opciones** (posterior, no bloquea v1): chip PCR/OI donde
+  haya cobertura.
+
+Dependencias: 0 -> 1 -> 2 -> 3 -> (4 itera sobre 2) -> 5. Fase 6 y Proyecto 2
+(estacionalidad/rotacion) fuera de este plan.
+
+## 14. Politica de trabajo
 
 Antes de codear cualquier archivo en `src/` o `scripts/`: listar los archivos a
 crear/modificar y pedir aprobacion (regla del proyecto). Este documento es solo
