@@ -1,10 +1,18 @@
 # Reaccion a balances -- vista del dashboard + earnings_historico
 
-Analiza el comportamiento REAL del precio y el volumen en las ruedas posteriores
-a cada balance de un ticker (desde 2020). Sin estimaciones ni sorpresa de
-analistas: solo el hecho duro (cuando reporto) cruzado con como reacciono el
-precio. Decision del usuario: interesa el impacto observado, no lo que el
-consenso esperaba.
+Analiza el comportamiento REAL del precio y el volumen en una ventana SIMETRICA
+(N ruedas ANTES y N DESDE el dia 0) alrededor de cada balance de un ticker
+(desde 2020). Sin estimaciones ni sorpresa de analistas: solo el hecho duro
+(cuando reporto) cruzado con como reacciono el precio. Decision del usuario:
+interesa el impacto observado, no lo que el consenso esperaba.
+
+Es un analisis DESCRIPTIVO / de psicologia de mercado, NO predictivo: no busca
+adivinar la direccion del proximo gap (depende de la sorpresa, que no usamos).
+Lo que caracteriza es la MAGNITUD tipica (riesgo-evento), el estilo de reaccion
+(gapea y continua vs revierte) y el comportamiento pre-balance (run-up, carga de
+volumen) -- propiedades relativamente persistentes por ticker. El overlay de
+varios trimestres muestra la DISPERSION de resultados (eso es el hallazgo), no
+un unico camino.
 
 ## El problema que resuelve: no teniamos la fecha de anuncio historica
 
@@ -76,7 +84,38 @@ que lo necesita":
 3. Incremental      -> tickers cuya proxima fecha (`earnings_calendar`) ya paso
    respecto de la ultima `announcement_date` -> apendicea el Q nuevo.
 
+## Ventana y filtros de la vista (dashboard/earnings_reaccion.py)
+
+La vista se arma con `construir_series(ticker, anios, trimestres, n_ruedas)` y
+muestra TRES paneles superpuestos por trimestre, con una linea vertical en el
+dia 0 (separa pre de post):
+
+1. **Precio (USD)** -- el cierre REAL en dolares (sin normalizar). Cada trimestre
+   en su banda de precio; muestra el movimiento en crudo.
+2. **Precio (%)** -- variacion acumulada vs el cierre de la rueda PREVIA al dia 0
+   (ese punto es el 0%: "el ultimo precio limpio antes de la reaccion"). Es un
+   nivel contra UNA referencia fija, NO el retorno dia-a-dia. Normaliza para
+   comparar trimestres en la misma escala. El salto de offset -1 a 0 = gap de
+   reaccion.
+3. **Volumen** -- MULTIPLO (no %) del promedio de `VOL_BASE_N=50` ruedas ANTES de
+   la ventana pre (referencia fija por evento). "1.0" = volumen normal previo;
+   la linea horizontal en 1.0 ES esa media de 50 ruedas. Mas estable/legible que
+   la direccion del precio.
+
+Controles (sidebar): selector de ticker; **filtro de anios** (multi-seleccion,
+por cierre fiscal); **toggle de trimestres Q1-Q4** (`st.pills` multi) -- ambos
+combinan con AND, ej. Q1 en varios anios = estacionalidad de la reaccion; y
+slider **N de ruedas por lado (1 a 10, default 7)**. La ventana es -N..N-1: el
+dia 0 CUENTA como la primera rueda post. Ventanas truncadas (balance viejo sin N
+ruedas antes, o reciente sin N despues) se muestran con lo que exista.
+
 ## Backfill inicial via Oracle (transito por Railway) -- TEMPORAL
+
+> ESTADO 4/8/2026: backfill COMPLETO (200/200 tickers, 5225 filas, cierre
+> 2019-Q4..2026-Q2). Cron de Oracle **apagado** y **sync a local hecho** (local es
+> ahora la fuente de verdad). Falta SOLO el paso 3: `DROP TABLE earnings_historico`
+> en Railway (el usuario lo hara manual). De aca en mas: incremental en Windows
+> (target local, default).
 
 Para no gotear ~10 dias a mano en Windows, el backfill inicial corre en Oracle
 (siempre-on) escribiendo a Railway, y se baja a local UNA vez al terminar:
@@ -105,6 +144,7 @@ reparten los 25 y se desperdicia cuota). La AV key vive en el .env de Oracle.
 - Incremental (post-earnings season, Windows->local): `refresh_earnings_historico.py`
   sin flags. Ticker puntual: `--ticker X` (lo usa universo.py add).
 - Vista: dashboard -> "Reaccion a balances" (`dashboard/earnings_reaccion.py`).
-  Selector de ticker + cuantos trimestres comparar; panel de precio (% acumulado
-  desde el cierre previo) y de volumen (multiplo del promedio de 20 ruedas
-  previas), superpuestos por trimestre, dia 0 marcado.
+  Selector de ticker + filtro de anios + toggle de trimestres Q1-Q4 + slider de
+  ruedas por lado (1-10). Tres paneles (precio USD, precio %, volumen x prom 50),
+  ventana pre+post superpuesta por trimestre, dia 0 marcado. Detalle en la
+  seccion "Ventana y filtros de la vista".
