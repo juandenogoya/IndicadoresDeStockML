@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="ficha_empresa.css">
+</head>
+<body>
+<div class="fe-container">
+
+  <div class="fe-header">
+    <div class="head-left">
+      <div class="ticker-big">{{ ticker }}</div>
+      {% if nombre %}<div class="nombre">{{ nombre }}</div>{% endif %}
+      <div class="sector">{{ sector }}</div>
+    </div>
+    <div class="head-right">
+      <div class="precio">{{ precio }}</div>
+      <div class="precio-fecha">al {{ fecha_px }}</div>
+      <div class="periodo">{{ periodo }}</div>
+      <div class="moneda">Cifras en {{ moneda }}</div>
+    </div>
+  </div>
+
+  {% for s in sections %}
+  <div class="fe-section">
+    <div class="sec-titulo">{{ s.titulo }}</div>
+    <div class="tiles cols-{{ s.tiles|length }}">
+      {% for t in s.tiles %}
+      <div class="tile">
+        <div class="t-label">{{ t.label }}</div>
+        <div class="t-valor">{{ t.valor }}</div>
+        {% if t.sub %}<div class="t-sub {{ t.sub_cls }}">{{ t.sub }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="fe-footer">
+    <span class="handle">{{ handle }}</span><span class="sep">.</span>
+    Fuente: fundamentales (yahooquery)<span class="sep">.</span>
+    {{ fecha_legible }}<span class="sep">.</span>
+    descriptivo, no recomendacion
+  </div>
+
+</div>
+</body>
+</html>

@@ -181,6 +181,16 @@ honesto que un margen roto.
 > El override vive como lista explicita en el codigo del compute (no hardcode
 > disperso), documentada aca.
 
+> ACTUALIZACION 5/8/2026 -- los 18 financieros se FIJAN en `FINANCIERO_OVERRIDE`:
+> la regla auto (4.1) fue calibrada con ~49 Q de historia (NII 35/49 = 0.71). Con
+> la retencion actual de **8 trimestres**, el `nii_ratio` de varios bancos cae bajo
+> el umbral 0.70 (JPM/C/GS/CB dan 5/8 = 0.62, porque los Q recientes -- incluido el
+> "stub" recien reportado -- aun no traen NetInterestIncome poblado) -> la regla
+> los tiraba a `no_financiero`. Como la curaduria de 4.3 YA es la fuente de verdad,
+> se pinean los 18 explicitamente en el override; asi el perfil no depende de la
+> ventana de datos. La regla auto queda como backstop para tickers nuevos. Decision
+> del usuario: identificar los casos particulares, no ajustar un umbral por default.
+
 ### 4.3 Curaduria CONFIRMADA (usuario, 2026-06-01)
 Evidencia multi-Q (fraccion de Q con cada marcador). Perfil final = decision.
 

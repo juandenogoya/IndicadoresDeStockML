@@ -81,6 +81,13 @@ Documentacion que existe hoy en docs/:
                             override curado), formulas por perfil. PREVIO a
                             codificar. Validado contra balances oficiales
                             MU/XP/JPM (crudos exactos al millon).
+- docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
+                            de empresa" fondo OSCURO (4:5). La empresa contra SI
+                            MISMA: ultimo Q reportado + variacion INTERANUAL (sin
+                            pares/benchmark). Adapta secciones por perfil
+                            (banco: ROE/ROTCE/efficiency; no-banco: margenes/ROIC/
+                            FCF). Ancla al ultimo Q con income real (evita el stub
+                            recien reportado). Motor: make_ficha_empresa.py.
 - docs/checklist_recovery_manual.md : flujos de recovery manual
 - dashboard/README.md     : spec del Dashboard (informe descriptivo por ticker).
                             v1 + Fase 2 v1 desarrollados 28/5/2026 en rama
@@ -358,6 +365,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
 | `scripts/reports/make_infografia.bat <TICKER>` | Infografia PNG para X (datos del MCP, sin LLM). Ver docs/reportes.md |
 | `scripts/reports/build_yaml.bat <TICKER>` + `make_report.bat <yaml>` | Reporte PDF detallado con narrativa del LLM |
+| `scripts/reports/make_ficha_empresa.py <TICKER>` | Ficha "presentacion de empresa" PNG (fondo oscuro 4:5): ultimo Q reportado + variacion interanual, la empresa contra si misma (sin pares). Adapta por perfil banco/no-banco. Ver docs/ficha_empresa.md |
 
 ## Tablas DB principales
 

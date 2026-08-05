@@ -57,8 +57,19 @@ from scripts.oneshot.create_fundamentales_tables import (
 SEP = "=" * 64
 
 # -- Clasificacion de perfil (ver docs/fundamentales_calculo.md seccion 4) -----
-# Override manual: hibridos que la regla auto no captura bien. Curado 2026-06-01.
-FINANCIERO_OVERRIDE = {"XP"}      # broker; op income de Yahoo es basura
+# Override manual = LISTA CURADA de financieros (la fuente de verdad, doc 4.3).
+# Se FIJAN los 18 explicitamente (17 bancos/aseguradoras + XP) en vez de confiar
+# en la regla auto (4.1): con la retencion actual de 8 trimestres, el nii_ratio
+# de bancos como JPM/C/GS/CB cae a 0.62 (5/8 Q con NetInterestIncome) y no llega
+# al umbral 0.70 -> quedarian mal clasificados. La regla auto fue calibrada con
+# ~49 Q de historia; con 8 Q es fragil para el NII. La curaduria explicita no
+# depende de la ventana de datos (decision usuario 5/8/2026). La regla auto queda
+# como BACKSTOP para tickers nuevos/desconocidos fuera de esta lista.
+FINANCIERO_OVERRIDE = {
+    "JPM", "BAC", "C", "WFC", "GS", "MS", "AXP", "SCHW", "AIG", "CB",
+    "PGR", "LNC", "NU", "UPST", "ITUB", "BBD", "BSBR",  # 17 por estructura bancaria
+    "XP",                                               # broker; op income Yahoo basura
+}
 # (opcional) forzar no-financiero pese a la regla, si hiciera falta a futuro:
 NO_FINANCIERO_OVERRIDE = set()
 

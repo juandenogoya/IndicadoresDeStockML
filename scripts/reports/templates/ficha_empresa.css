@@ -1,0 +1,94 @@
+/* ============================================================
+   ficha_empresa.css
+   Ficha de empresa (presentacion) para redes. Formato 4:5 (1080x1350).
+   Fondo OSCURO (navy + dorado + crema) para diferenciarla de las otras
+   infografias (crema). Ver spec: docs/ficha_empresa.md
+   ============================================================ */
+
+:root {
+    --bg:        #0e1a2b;
+    --panel:     #16273c;
+    --panel-2:   #12213340;
+    --border:    #274058;
+    --gold:      #d9b45b;
+    --cream:     #f3efe3;
+    --muted:     #93a6bd;
+    --up:        #4cc38a;
+    --down:      #f0625d;
+    --page-w:    1080px;
+}
+
+@page { size: 1080px 1350px; margin: 0; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--cream);
+    width: var(--page-w);
+}
+
+.fe-container { width: var(--page-w); min-height: 1350px; padding: 40px 46px; }
+
+/* -- Encabezado ------------------------------------------------ */
+.fe-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    border-bottom: 3px solid var(--gold);
+    padding-bottom: 20px; margin-bottom: 26px;
+}
+.ticker-big {
+    font-size: 78px; font-weight: 800; letter-spacing: -2px; line-height: 0.95;
+    color: var(--gold);
+}
+.nombre { font-size: 27px; font-weight: 700; margin-top: 8px; color: var(--cream); }
+.sector { font-size: 19px; font-weight: 500; margin-top: 4px; color: var(--muted); }
+.head-right { text-align: right; padding-top: 6px; }
+.precio { font-size: 40px; font-weight: 800; color: var(--cream); line-height: 1; }
+.precio-fecha { font-size: 16px; color: var(--muted); margin-top: 3px; }
+.periodo { font-size: 18px; font-weight: 600; color: var(--gold); margin-top: 14px; }
+.moneda { font-size: 15px; color: var(--muted); margin-top: 3px; }
+
+/* -- Secciones ------------------------------------------------- */
+.fe-section { margin-bottom: 22px; }
+.sec-titulo {
+    font-size: 20px; font-weight: 700; color: var(--cream);
+    text-transform: uppercase; letter-spacing: 0.6px;
+    padding-bottom: 9px; margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* -- Grilla de tiles ------------------------------------------- */
+.tiles { display: grid; gap: 14px; }
+.cols-1 { grid-template-columns: 1fr; }
+.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.cols-5 { grid-template-columns: repeat(3, 1fr); }   /* 3 + 2 */
+
+.tile {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px 20px;
+}
+.t-label {
+    font-size: 15px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+}
+.t-valor {
+    font-size: 44px; font-weight: 800; color: var(--cream); line-height: 1;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.cols-4 .t-valor { font-size: 33px; }
+.t-sub {
+    font-size: 17px; font-weight: 600; margin-top: 9px; color: var(--muted);
+}
+.t-sub.up   { color: var(--up); }
+.t-sub.down { color: var(--down); }
+
+/* -- Footer ---------------------------------------------------- */
+.fe-footer {
+    border-top: 1px solid var(--border); padding-top: 16px; margin-top: 8px;
+    font-size: 15px; color: var(--muted); text-align: center;
+}
+.fe-footer .handle { font-weight: 700; color: var(--gold); }
+.fe-footer .sep { margin: 0 9px; color: var(--border); }
