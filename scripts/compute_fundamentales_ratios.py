@@ -57,8 +57,19 @@ from scripts.oneshot.create_fundamentales_tables import (
 SEP = "=" * 64
 
 # -- Clasificacion de perfil (ver docs/fundamentales_calculo.md seccion 4) -----
-# Override manual: hibridos que la regla auto no captura bien. Curado 2026-06-01.
-FINANCIERO_OVERRIDE = {"XP"}      # broker; op income de Yahoo es basura
+# Override manual = LISTA CURADA de financieros (la fuente de verdad, doc 4.3).
+# Se FIJAN los 18 explicitamente (17 bancos/aseguradoras + XP) en vez de confiar
+# en la regla auto (4.1): con la retencion actual de 8 trimestres, el nii_ratio
+# de bancos como JPM/C/GS/CB cae a 0.62 (5/8 Q con NetInterestIncome) y no llega
+# al umbral 0.70 -> quedarian mal clasificados. La regla auto fue calibrada con
+# ~49 Q de historia; con 8 Q es fragil para el NII. La curaduria explicita no
+# depende de la ventana de datos (decision usuario 5/8/2026). La regla auto queda
+# como BACKSTOP para tickers nuevos/desconocidos fuera de esta lista.
+FINANCIERO_OVERRIDE = {
+    "JPM", "BAC", "C", "WFC", "GS", "MS", "AXP", "SCHW", "AIG", "CB",
+    "PGR", "LNC", "NU", "UPST", "ITUB", "BBD", "BSBR",  # 17 por estructura bancaria
+    "XP",                                               # broker; op income Yahoo basura
+}
 # (opcional) forzar no-financiero pese a la regla, si hiciera falta a futuro:
 NO_FINANCIERO_OVERRIDE = set()
 
@@ -456,6 +467,38 @@ def _upsert(env, rows):
         conn.close()
 
 
+def _purgar_huerfanas(env, tickers_procesados):
+    """Borra filas de fundamentales_ratios_q cuyo (ticker, fiscal_period_end) ya
+    NO tiene respaldo en fundamentales_income_q: trimestres que envejecieron fuera
+    de la ventana de datos crudos (lookback_q) y quedaron huerfanos. La tabla es
+    una capa DERIVADA (recomputable); un Q sin income crudo no se puede recomputar
+    y no lo consume nadie (todo usa el ultimo Q). Mantiene ratios_q en sync con la
+    ventana (limpia el cruft de la migracion v1->v2 y evita su reacumulacion).
+    Scopeado a los tickers procesados -> corridas con --tickers no tocan otros."""
+    if not tickers_procesados:
+        return 0
+    conn = psycopg2.connect(
+        host=env.get("DB_HOST", "localhost"), port=int(env.get("DB_PORT", 5432)),
+        dbname=env.get("DB_NAME", "activos_ml"), user=env.get("DB_USER", "postgres"),
+        password=env.get("DB_PASSWORD", ""),
+    )
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM fundamentales_ratios_q r "
+            "WHERE r.ticker = ANY(%s) "
+            "  AND NOT EXISTS (SELECT 1 FROM fundamentales_income_q i "
+            "                  WHERE i.ticker = r.ticker "
+            "                    AND i.fiscal_period_end = r.fiscal_period_end)",
+            (list(tickers_procesados),),
+        )
+        n = cur.rowcount
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Computa fundamentales_ratios_q v2 (local)")
     parser.add_argument("--tickers", default=None, help="CSV de tickers (default: todos)")
@@ -513,6 +556,8 @@ def main():
         env = _parse_env_file(os.path.join(ROOT, ".env"))
         n = _upsert(env, all_rows)
         log(f"UPSERT local: {n} filas.")
+        purgadas = _purgar_huerfanas(env, universo)
+        log(f"Purga huerfanas (sin income de respaldo): {purgadas} filas.")
 
     print()
     print(SEP)

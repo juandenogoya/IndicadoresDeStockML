@@ -81,6 +81,13 @@ Documentacion que existe hoy en docs/:
                             override curado), formulas por perfil. PREVIO a
                             codificar. Validado contra balances oficiales
                             MU/XP/JPM (crudos exactos al millon).
+- docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
+                            de empresa" fondo OSCURO (4:5). La empresa contra SI
+                            MISMA: ultimo Q reportado + variacion INTERANUAL (sin
+                            pares/benchmark). Adapta secciones por perfil
+                            (banco: ROE/ROTCE/efficiency; no-banco: margenes/ROIC/
+                            FCF). Ancla al ultimo Q con income real (evita el stub
+                            recien reportado). Motor: make_ficha_empresa.py.
 - docs/checklist_recovery_manual.md : flujos de recovery manual
 - dashboard/README.md     : spec del Dashboard (informe descriptivo por ticker).
                             v1 + Fase 2 v1 desarrollados 28/5/2026 en rama
@@ -343,7 +350,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/refresh_earnings_historico.py` | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` (llena faltantes+desactualizados, <=20/corrida), sin flags = incremental, `--ticker X` (alta), `--status`, `--target local\|railway`. Backfill inicial corre en Oracle->Railway (cron temporal); incremental en Windows (target local). Ver docs/earnings_reaccion.md |
-| `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": precio + volumen en las 7 ruedas post-balance por trimestre, dia 0 ajustado por pre/post-market |
+| `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
@@ -358,6 +365,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/oneshot/migrate_ft_railway_to_local.py` | Migracion puntual ft_* Railway -> local (one-shot, scripts/oneshot/) |
 | `scripts/reports/make_infografia.bat <TICKER>` | Infografia PNG para X (datos del MCP, sin LLM). Ver docs/reportes.md |
 | `scripts/reports/build_yaml.bat <TICKER>` + `make_report.bat <yaml>` | Reporte PDF detallado con narrativa del LLM |
+| `scripts/reports/make_ficha_empresa.py <TICKER>` | Ficha "presentacion de empresa" PNG (fondo oscuro 4:5): ultimo Q reportado + variacion interanual, la empresa contra si misma (sin pares). Adapta por perfil banco/no-banco. Ver docs/ficha_empresa.md |
 
 ## Tablas DB principales
 

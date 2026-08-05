@@ -350,6 +350,38 @@ def _sidebar_export_infografia(tk):
         )
 
 
+def _ficha_empresa_boton(tk):
+    """Boton (area principal) para generar la ficha de empresa (PNG) del ticker
+    EN PANTALLA: presentacion contra si misma (ultimo Q + variacion interanual).
+    Import diferido (weasyprint). Muestra la ficha inline + descarga."""
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button(f"Generar ficha de {tk} (PNG)", key="ficha_emp_btn",
+                     use_container_width=True):
+            with st.spinner("Generando ficha..."):
+                try:
+                    from scripts.reports.make_ficha_empresa import generar_ficha_empresa
+                    path = generar_ficha_empresa(tk)
+                    with open(path, "rb") as f:
+                        st.session_state["ficha_emp_bytes"] = f.read()
+                    st.session_state["ficha_emp_name"] = path.name
+                    st.session_state["ficha_emp_ticker"] = tk
+                except Exception as exc:
+                    st.error(f"Error generando ficha: {exc}")
+    if (st.session_state.get("ficha_emp_ticker") == tk
+            and st.session_state.get("ficha_emp_bytes")):
+        with c2:
+            st.download_button(
+                f"Descargar {st.session_state['ficha_emp_name']}",
+                data=st.session_state["ficha_emp_bytes"],
+                file_name=st.session_state["ficha_emp_name"],
+                mime="image/png", key="ficha_emp_dl", use_container_width=True)
+        st.image(st.session_state["ficha_emp_bytes"], use_container_width=True)
+    st.caption(f"Ficha de presentacion (PNG, fondo oscuro) SOLO de {tk}: el "
+               "ultimo trimestre reportado + variacion interanual, la empresa "
+               "contra si misma (sin pares). Descriptivo, no recomienda.")
+
+
 def _vista_financiera(tickers):
     st.subheader("Analisis Financiero")
     st.caption("Foto fundamental del ultimo trimestre reportado: valuacion, "
@@ -381,6 +413,9 @@ def _vista_financiera(tickers):
             linea += f" | cierre USD {cierre:,.2f} ({fecha_cierre})"
         st.markdown(linea)
         st.caption(texto_peer_basis(data))
+
+        with st.expander(f"Ficha de empresa (PNG) -- solo {tk}", expanded=False):
+            _ficha_empresa_boton(tk)
 
         bloques = construir_bloques_ticker(data)
         for b in bloques:
