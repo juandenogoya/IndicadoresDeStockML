@@ -191,6 +191,16 @@ honesto que un margen roto.
 > ventana de datos. La regla auto queda como backstop para tickers nuevos. Decision
 > del usuario: identificar los casos particulares, no ajustar un umbral por default.
 
+> PURGA de huerfanas (5/8/2026): el compute ahora, tras el UPSERT, BORRA las filas
+> de `fundamentales_ratios_q` cuyo (ticker, fiscal_period_end) ya no tiene respaldo
+> en `fundamentales_income_q` (trimestres que envejecieron fuera de la ventana
+> lookback_q y quedaban huerfanos -- p.ej. 145 filas NULL-profile remanentes de la
+> migracion v1->v2, que nunca se reescribian). La tabla es DERIVADA/recomputable y
+> un Q sin income crudo no se puede recalcular ni lo consume nadie (todo usa el
+> ultimo Q). Mantiene ratios_q en sync con la ventana y evita reacumulacion.
+> `_purgar_huerfanas` esta SCOPEADA a los tickers procesados -> corridas con
+> `--tickers X` no tocan el resto del universo.
+
 ### 4.3 Curaduria CONFIRMADA (usuario, 2026-06-01)
 Evidencia multi-Q (fraccion de Q con cada marcador). Perfil final = decision.
 
