@@ -288,26 +288,57 @@ Fases:
     beta multi-anio habria que sumar SPY al universo de precios. La beta de KO
     salio negativa en esta ventana (regime-dependiente) -> a revisar en Fase 4;
     refuerza que la beta sola no alcanza (por eso prior sectorial + varios ejes).
-- **Fase 2 -- Clasificador** (`src/utils/`, puro):
-  - `src/utils/perfil_riesgo.py` (nuevo): prior sectorial + umbrales/percentiles
-    -> etiqueta (4 cajas) + score continuo + ranking intra-caja + flag de
-    consistencia + excepcion. Umbrales configurables. Test clave: las anclas
-    caen donde deben.
-- **Fase 3 -- Persistencia** (`scripts/` + tabla, LOCAL):
-  - `scripts/oneshot/create_perfiles_carteras_table.py` (nuevo): crea
-    `perfiles_ticker`.
-  - `scripts/compute_perfiles_carteras.py` (nuevo) + `.bat`: lee precios/activos/
-    benchmark, corre Fase 1+2 sobre los 200, UPSERT. Standalone **mensual** (el
-    perfil es estable, no va en el recovery diario).
-- **Fase 4 -- Validacion / calibracion** (analisis): correr sobre el universo,
-  chequear anclas, tunear umbrales de Fase 2. Iterativo.
-- **Fase 5 -- Dashboard** (`dashboard/`): `dashboard/carteras.py` (nuevo) con las
-  3 vistas (Mapa / Por cartera / Excepciones-Validacion) + enganche en sidebar.
+- **Fase 2 -- Clasificador** (`src/utils/perfil_riesgo.py`, puro) -- HECHA (5/8/2026).
+  Dos decisiones del usuario cambiaron el diseno original:
+  - **DATA-DRIVEN, no umbrales a mano**: el riesgo cuantitativo NO usa cortes
+    absolutos tipeados ni listas curadas de tickers. Cada eje (ATR%_w, ATR%_m,
+    beta, drawdown_1a) -> PERCENTIL del ticker dentro del universo; composite =
+    promedio (peso IGUAL); caja por CUARTIL del composite (<25/25-50/50-75/>=75).
+    Misma vara estadistica para los 200; los unicos "parametros" son los cuartiles.
+  - **PERFIL PURO + contexto sectorial**: el perfil = comportamiento cuantitativo
+    puro (`caja_cuant`), SIN capar por el sector. El sector queda como contexto
+    (`caja_base`, prior top-down por el mapa aprobado) y fuente del flag
+    `excepcion` (comportamiento se despega 2+ cajas de su sector). `movio` reporta
+    ese despegue (con signo), ya no limita. Se descarto el cap +/-1 y el override
+    de semis: el caja_cuant es robusto (percentil sobre 200, promedio de 4 ejes).
+  - Funciones: `caja_base(sector)`, `rank_percentil`, `caja_por_cuartil`,
+    `perfilar_universo(rows)` (necesita el universo entero: los cortes son
+    relativos a la distribucion), `rankear_intra_caja`. Tests: `tests/
+    test_perfil_riesgo.py` (13). Distribucion 46/57/53/44; anclas conservadoras
+    (KO/WMT/PG/JNJ/MCD) 5/5. Los "misses" (JPM/BAC->Conservadora, NVDA->Arriesgada)
+    NO son errores: espejo honesto de la ventana de ~15 meses (bancos y NVDA
+    calmos). Se estabiliza con mas historia (Fase 4 / mas anios de benchmark).
+- **Fase 3 -- Persistencia** (`scripts/` + tabla, LOCAL) -- HECHA (5/8/2026):
+  - `scripts/oneshot/create_perfiles_carteras_table.py`: crea `perfiles_ticker`
+    (28 cols, PK (ticker, fecha) -> historia mensual = habilita ver DRIFT).
+  - `scripts/compute_perfiles_carteras.py` + `scripts/manual/compute_perfiles_
+    carteras.bat`: lee precios/activos/benchmark (ES=F), corre Fase 1+2 sobre los
+    200, UPSERT idempotente. `--dry-run`, `--fecha`. Standalone **mensual** (el
+    perfil es estable, no va en el recovery diario). LOCAL-only (Plan C).
+  - Prerequisito de datos: `activos.industry` se rellena desde yahooquery
+    assetProfile con `scripts/manual/refresh_industria.py` (antes 62% NULL desde
+    yfinance; ahora 200/200). El audit confirmo 0 discrepancias de sector.
+- **Fase 4 -- Validacion** -- HECHA (5/8/2026), integrada en el dashboard: con la
+  clasificacion DATA-DRIVEN (cuartiles del universo) ya no hay umbrales a mano que
+  "tunear" -- la validacion es confirmar que las anclas caen donde deben y que la
+  distribucion es sana. Vive en la sub-vista "Excepciones / Validacion" de la vista
+  Carteras (scorecard de anclas + tabla de excepciones). Anclas conservadoras 5/5;
+  los desajustes (JPM/BAC->Conservadora, NVDA->Arriesgada) NO son errores: espejo de
+  la ventana ~15 meses. Calibracion futura = sumar SPY para beta multi-anio (mas
+  historia estabiliza), no re-tunear cortes.
+- **Fase 5 -- Dashboard** (`dashboard/carteras.py`) -- HECHA (5/8/2026): 3 vistas
+  (Mapa = scatter beta vs ATR%m coloreado por perfil + distribucion; Por cartera =
+  tickers de un perfil rankeados intra-caja; Excepciones / Validacion). Enganchada en
+  el sidebar (`app.py`, radio "Carteras"). SOLO lectura de perfiles_ticker. Verificada
+  headless con streamlit AppTest (3 subvistas sin excepcion).
 - **Fase 6 -- Overlay opciones** (posterior, no bloquea v1): chip PCR/OI donde
-  haya cobertura.
+  haya cobertura. PENDIENTE.
+- **Capa posterior -- "activa vs seguimiento"**: seleccion DINAMICA dentro de cada
+  caja (que sumo hoy a la cartera vs que solo miro). Es OTRA capa (timing/tecnico/
+  opciones), no el clasificador. PENDIENTE.
 
-Dependencias: 0 -> 1 -> 2 -> 3 -> (4 itera sobre 2) -> 5. Fase 6 y Proyecto 2
-(estacionalidad/rotacion) fuera de este plan.
+Dependencias: 0 -> 1 -> 2 -> 3 -> 4/5. Fase 6, la capa activa/seguimiento y
+Proyecto 2 (estacionalidad/rotacion) fuera de este plan inicial.
 
 ## 14. Politica de trabajo
 

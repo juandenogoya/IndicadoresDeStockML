@@ -357,6 +357,9 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental. Ver docs/fundamentales_calculo.md |
 | `src/utils/multiplos_px.py` | Logica pura del recalculo de multiplos al cierre (sin DB) |
 | `scripts/refresh_ticker_pais.py` | Trae country/region por ticker (yahooquery assetProfile) -> tabla ticker_pais. Encadenado al refresh .bat |
+| `scripts/manual/refresh_industria.py` | Rellena activos.industry desde yahooquery assetProfile (antes 62% NULL desde yfinance; ahora 200/200). Dual-write local+Railway, `--status`/`--dry-run`, avisa si un sector difiere pero NO lo toca. Usa yfinance_lock |
+| `scripts/compute_perfiles_carteras.py` (+ `.bat`) | Perfilado de carteras (Fase 3): corre el motor puro perfil_metricas (ATR% multi-TF+beta+drawdown) + perfil_riesgo (clasificacion data-driven por percentil del universo, perfil puro) sobre los 200 y UPSERT en perfiles_ticker. MENSUAL, LOCAL-only. `--dry-run`/`--fecha`. Ver docs/perfiles_carteras.md |
+| `src/utils/perfil_riesgo.py` | Clasificador PURO de perfil de riesgo: percentil por eje -> composite -> caja por cuartil (perfil=comportamiento); sector = contexto (caja_base) + flag excepcion. perfilar_universo(rows) necesita el universo entero |
 | `scripts/compute_fundamentales_sector.py` | Computa fundamentales_ticker_vs_sector (ticker vs mediana de pares regionales; parametrizable --regions). Encadenado al refresh .bat |
 | `scripts/oneshot/create_fundamentales_ratios_table.py` | Crea la tabla fundamentales_ratios_q (one-shot, archivado en scripts/oneshot/) |
 | `scripts/oneshot/create_fundamentales_sector_table.py` | Crea la tabla fundamentales_ticker_vs_sector (one-shot, archivado en scripts/oneshot/) |
@@ -491,6 +494,15 @@ Las criticas:
   (default 'local'; columna pensada para cuotas multiusuario a futuro). LOCAL-only
   (Plan C: log de frontend local). La escribe el dashboard con el engine local normal
   (NO el rol mcp_reader). Creada por scripts/oneshot/create_llm_uso_tokens_table.py.
+- `perfiles_ticker` (LOCAL) -- snapshot del PERFIL DE RIESGO de cada ticker para
+  segmentar carteras (Conservadora/Moderada/Arriesgada/Especulativa). Capa DERIVADA
+  y recomputable (funcion de precios_diarios + futuros ES + activos via el motor puro
+  perfil_metricas/perfil_riesgo). PK (ticker, fecha) = historia mensual (habilita ver
+  DRIFT de caja). El perfil = COMPORTAMIENTO cuantitativo puro (percentil composite de
+  ATR%_w/m+beta+drawdown dentro del universo -> caja por cuartil); el sector es CONTEXTO
+  (caja_base, prior top-down) + flag `excepcion` (comportamiento se despega 2+ cajas del
+  sector). La pobla scripts/compute_perfiles_carteras.py, cadencia MENSUAL (no va en el
+  recovery diario). LOCAL-only (Plan C). Ver docs/perfiles_carteras.md.
 
 ## Flujo de recovery manual (caso comun: Oracle cron fallo)
 
