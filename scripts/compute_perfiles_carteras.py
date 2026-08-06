@@ -74,10 +74,13 @@ def construir_clasificaciones(universo, precios, bench):
                      "industry": r["industry"], "metricas": met})
 
     clasifs = perfil_riesgo.perfilar_universo(rows)
-    # adjunta metricas crudas + fecha_datos (perfilar_universo solo devuelve pct)
+    # adjunta lo que el clasificador puro NO devuelve: industry (no la usa para
+    # clasificar), metricas crudas y fecha_datos.
     met_by_tk = {r["ticker"]: r["metricas"] for r in rows}
+    ind_by_tk = {r["ticker"]: r["industry"] for r in rows}
     for c in clasifs:
         c["_met"] = met_by_tk.get(c["ticker"], {})
+        c["industry"] = ind_by_tk.get(c["ticker"])
         c["_fecha_datos"] = fecha_datos.get(c["ticker"])
     return clasifs
 

@@ -150,7 +150,7 @@ def _excepciones(df):
                 "despega 2+ cajas de su sector (la senal mas interesante).")
     if not exc.empty:
         exc = exc.sort_values("score_riesgo", ascending=False)
-        cols = ["ticker", "sector", "caja_base", "perfil", "movio",
+        cols = ["ticker", "sector", "industry", "caja_base", "perfil", "movio",
                 "score_riesgo", "atr_pct_m", "beta"]
         cols = [c for c in cols if c in exc.columns]
         show = exc[cols].copy()
@@ -159,6 +159,7 @@ def _excepciones(df):
         st.dataframe(
             show, use_container_width=True, hide_index=True,
             column_config={
+                "industry": st.column_config.TextColumn("industria"),
                 "caja_base": st.column_config.TextColumn("sector base"),
                 "perfil": st.column_config.TextColumn("perfil (comportamiento)"),
                 "movio": st.column_config.NumberColumn("despegue", format="%+d"),
