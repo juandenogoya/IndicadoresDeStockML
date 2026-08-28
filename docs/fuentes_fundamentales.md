@@ -642,3 +642,48 @@ cosas, y las tres estan:
 Todo lo demas -- bloque bancario, paridad total de ratios con yahooquery,
 point-in-time consumible, capa derivada -- es una decision aparte, tomada
 despues, con un consumidor concreto que lo pida.
+
+### Ventana de retencion y las dos fechas de publicacion (28/8/2026)
+
+**Retencion: 2018-01-01 en adelante** (4.781 filas, 33 trimestres promedio por
+ticker, 143 de 147 con 5 anios completos). SEC tiene ~19 anios pero el techo
+real de cualquier analisis contra precio es `precios_diarios`, que arranca el
+2/1/2020 -- y en 2024 para 60 de los 147 tickers. Guardar 2007 era peso muerto.
+
+El corte NO es 2020 sino 2018 porque **el TTM necesita pista de despegue**: el
+primer dia con precio necesita el TTM del ultimo trimestre publico en esa
+fecha (Q3-2019 para un calendario normal), y ese TTM se extiende hasta
+Q4-2018. Verificado: de los 147, **129 tienen un trimestre publico al 2/1/2020
+y los 129 tienen TTM completo de 4 trimestres; cero sin TTM**. Los 18
+restantes salieron a bolsa despues o su precio arranca en 2024.
+
+El cache en disco conserva la historia completa: recuperarla es correr con
+`--desde` mas viejo, sin salir a la red.
+
+**Dos fechas de publicacion, que responden preguntas distintas:**
+
+| campo | que responde |
+|---|---|
+| `filed_primero` | desde cuando el trimestre fue PUBLICO -- con esta se arma la serie |
+| `filed_ultimo` | de que presentacion viene el valor guardado (procedencia) |
+
+Un trimestre no esta disponible el dia que cierra. Medido: **AAPL publica a
+los 34 dias, JPM entre 31 y 44**; mediana estable de 31-35 dias para
+2019-2026. Armar la serie con `period_end` adelantaria cada trimestre mas de
+un mes -- sesgo sistematico en la direccion que hace ver mejor un backtest.
+
+`filed_primero` es el filed MAS VIEJO del periodo, no el del hecho elegido:
+`_elegir` se queda con la ultima reexpresion, cuya fecha puede ser anios
+posterior.
+
+**INVARIANTE: un periodo no puede ser publico antes de terminar.** Hay hechos
+con fecha de cierre futura en filings anteriores (proyecciones, compromisos)
+que daban lag negativo, hasta -309 dias en un caso real. Se descartan al
+RECOLECTAR y en las dos ramas (duracion e instantaneos): filtrarlos despues de
+tomar el minimo dejaba el periodo sin fecha en vez de con la correcta, y los
+instantaneos se enganchan por cercania (+-45 dias) trayendo su propia fecha.
+Resultado: 4.781 filas con fecha, cero lags negativos.
+
+CAVEAT: para periodos pre-2015 el lag da ~350 dias, porque su 10-Q original
+quedo fuera de la retencion XBRL de SEC y su primera aparicion es como
+comparativo anios despues. Irrelevante dentro de la ventana 2018+.

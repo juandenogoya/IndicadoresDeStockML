@@ -45,6 +45,19 @@ from src.utils.sec_xbrl import CONCEPTOS, normalizar
 SEP = "=" * 64
 CACHE_DEFECTO = os.path.join(ROOT, "data", "sec_cache")
 
+# VENTANA DE RETENCION. SEC tiene ~19 anios, pero el techo real de cualquier
+# analisis contra precio es `precios_diarios`, que arranca en 2020-01-02 (y en
+# 2024 para 60 de los 147 tickers). Guardar 2007 en adelante seria peso muerto.
+#
+# El corte NO es 2020 sino 2018: el TTM necesita PISTA DE DESPEGUE. El primer
+# dia con precio (2/1/2020) necesita el TTM del ultimo trimestre publico en esa
+# fecha -- para un calendario normal, Q3-2019 -- y ese TTM se extiende hasta
+# Q4-2018. Cortar en 2020 dejaria el primer anio de la serie sin TTM valido.
+#
+# El cache en disco conserva TODO, asi que la historia previa es re-derivable
+# en cualquier momento con --desde.
+DESDE_DEFECTO = "2018-01-01"
+
 CONCEPTOS_ORD = list(CONCEPTOS)
 COLS = (["ticker", "cik", "period_end", "fiscal_year", "fiscal_quarter"]
         + CONCEPTOS_ORD + ["origen", "filed_primero", "filed_ultimo"])
@@ -181,6 +194,26 @@ def reemplazar_avisos(env, ticker, filas):
     return len(filas)
 
 
+def purgar_fuera_de_ventana(env, tickers, desde):
+    """
+    Borra los periodos anteriores a la ventana de retencion.
+
+    Scopeado a los tickers procesados: una corrida con --tickers no toca al
+    resto. Es seguro porque el cache en disco conserva la historia completa --
+    volver a traerla es correr con --desde mas viejo, sin salir a la red.
+    """
+    if not tickers:
+        return 0
+    with _conn(env) as cx:
+        with cx.cursor() as cur:
+            cur.execute("DELETE FROM fundamentales_sec_q "
+                        "WHERE ticker = ANY(%s) AND period_end < %s",
+                        (list(tickers), desde))
+            n = cur.rowcount
+        cx.commit()
+    return n
+
+
 def upsert_ingesta(env, fila):
     cols = ["ticker", "cik", "ultimo_accn", "ultimo_form", "ultimo_filed",
             "periodos", "periodo_min", "periodo_max", "avisos",
@@ -201,7 +234,11 @@ def main():
     p = argparse.ArgumentParser(description="Refresh de la fuente SEC XBRL (LOCAL)")
     p.add_argument("--tickers", help="CSV de tickers; default: todos los USA")
     p.add_argument("--cache", default=CACHE_DEFECTO, help="Directorio del cache")
-    p.add_argument("--desde", help="Recorta los periodos a >= esta fecha")
+    p.add_argument("--desde", default=DESDE_DEFECTO,
+                   help=f"Recorta los periodos a >= esta fecha (default: "
+                        f"{DESDE_DEFECTO}; ver VENTANA DE RETENCION)")
+    p.add_argument("--sin-purga", action="store_true",
+                   help="No borra los periodos anteriores a --desde")
     p.add_argument("--forzar", action="store_true",
                    help="Re-baja companyfacts aunque no haya filing nuevo")
     p.add_argument("--solo-normalizar", action="store_true",
@@ -238,7 +275,9 @@ def main():
         mb = sum(v["bytes"] for v in estados.values()) / 1e6
         log(f"  {resumen}  |  descargado: {mb:.1f} MB")
 
+    log(f"ventana de retencion: periodos >= {args.desde}")
     n_filas = n_avisos = n_ok = n_sin = 0
+    procesados = []
     for ticker, cik in pares:
         datos = client.leer_cache(args.cache, ticker)
         if datos is None:
@@ -264,11 +303,19 @@ def main():
         else:
             n_filas += len(filas)
             n_avisos += len(avisos)
+        procesados.append(ticker)
         n_ok += 1
+
+    n_purga = 0
+    if not args.dry_run and not args.sin_purga:
+        n_purga = purgar_fuera_de_ventana(env, procesados, args.desde)
+        if n_purga:
+            log(f"purgados {n_purga} periodos anteriores a {args.desde}")
 
     print()
     print(SEP)
     print(f"  OK  |  tickers: {n_ok}  |  filas: {n_filas}  |  avisos: {n_avisos}"
+          f"{'  |  purgados: ' + str(n_purga) if n_purga else ''}"
           f"{'  |  sin cache: ' + str(n_sin) if n_sin else ''}")
     print(SEP)
     print()

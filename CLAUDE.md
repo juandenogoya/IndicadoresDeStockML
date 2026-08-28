@@ -438,7 +438,8 @@ Las criticas:
   yahooquery siguen intactas. `fundamentales_sec_q`: 1 fila por (ticker,
   period_end), 31 columnas de concepto + fiscal_year/fiscal_quarter + `origen`
   JSONB (rastro de auditoria: que tag produjo cada numero y si se derivo por
-  desacumulacion). 147 tickers USA, 9.062 filas, 2007-2026. UNA tabla y no
+  desacumulacion). 147 tickers USA, 4.781 filas, ventana 2018-2026 (5 anios + runway
+  del TTM; el cache en disco conserva 2007+ y es re-derivable con --desde). UNA tabla y no
   cuatro porque SEC no organiza por estado contable: publica hechos sueltos.
   Las columnas se generan DESDE src/utils/sec_xbrl.py para que el esquema no
   se desincronice. El point-in-time NO se almacena: se re-deriva con
