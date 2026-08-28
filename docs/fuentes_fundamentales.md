@@ -4,10 +4,13 @@ Registro de la investigacion sobre de donde traer los estados contables
 trimestrales. NO es documentacion de codigo en produccion: es el conocimiento
 que costo trabajo obtener y que no se puede derivar leyendo el repo.
 
-Nada de lo aca descripto esta implementado salvo los arreglos del
-`refresh_fundamentales.bat` (ver "Arreglos aplicados"). El prototipo del
-normalizador SEC vive en `scripts/oneshot/sec_xbrl_prototipo.py` y es
-material de investigacion, no un script operativo.
+ESTADO: la etapa de investigacion esta cerrada y la **Fase 1 (normalizador)
+esta implementada** en `src/utils/sec_xbrl.py` -- ver la seccion final. Falta
+decidir la fuente (seccion 10) y construir la ingesta y la capa derivada.
+
+`scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
+queda como material historico reproducible; el modulo bueno es el de
+`src/utils/`.
 
 ---
 
@@ -407,3 +410,109 @@ Ninguna tomada al cierre de esta etapa.
 **Queda como estaba** (decision pendiente, no bug): las capas derivadas corren
 aunque el refresh falle. Tiene sentido para un refresh PARCIAL; con un fallo
 total es trabajo al pedo. Distinguir uno de otro es una decision de diseno.
+
+---
+
+## 11. Fase 1 -- el normalizador implementado (27/8/2026)
+
+`src/utils/sec_xbrl.py`. Modulo PURO: sin DB, sin red, sin config, solo
+stdlib. Tests en `tests/test_sec_xbrl.py` (22 casos sinteticos, sin red ni
+DB ni dependencia del cache de 522 MB).
+
+API: `normalizar(companyfacts, hasta_filed=None, desde=None)` devuelve
+`{entidad, cik, periodos[], avisos[], meta{}}`. Cada periodo trae
+`period_end`, `fiscal_year`, `fiscal_quarter` y los conceptos presentes --
+un concepto ausente NO aparece como clave, nunca se rellena con cero.
+`hasta_filed` habilita el point-in-time.
+
+### Lo que cambio respecto del prototipo
+
+**Desacumulacion general.** El prototipo solo derivaba el Q4 (FY - 9M). Ahora
+desacumula toda la cadena (Q2 = H1 - Q1, Q3 = 9M - H1, Q4 = FY - 9M), que es
+como se informan el estado de resultados y el de flujo. Resultado sobre los
+147 tickers, mediana de trimestres por concepto:
+
+| concepto | prototipo | modulo |
+|---|---|---|
+| cfo | 36 | **71** |
+| capex | 35 | **68** |
+| d_and_a | 40 | **69** |
+
+**El EPS acumulado NO es un promedio ponderado -- es aditivo.** Este fue el
+error conceptual mas caro de la fase. El prototipo anulaba todos los Q4 de
+EPS por no saber derivarlos. La verificacion en AAPL FY2025 lo zanjo:
+
+```
+EPS anual 7.46 | EPS de 9 meses 5.62 | Q4 real 1.85
+resta simple        7.46 - 5.62          = 1.84   <- correcto
+formula ponderada   4*7.46 - 3*5.62      = 12.98  <- absurdo
+```
+
+El EPS de 9 meses es `resultado_9m / acciones_promedio_9m`, que se comporta
+como la SUMA de los EPS trimestrales. La algebra de promedio ponderado
+(`k*acum_k - (k-1)*acum_(k-1)`) aplica al NUMERO DE ACCIONES, que si es un
+promedio. Confundirlos da resultados sin sentido. El modulo trata cada uno
+con su metodo y lo documenta en el docstring de `_serie_ponderada`.
+
+**El EPS se calcula sobre el resultado de los accionistas COMUNES.** Usar
+`NetIncomeLoss` a secas en el control cruzado hacia fallar todo el sector
+financiero, donde los dividendos preferidos ya estan descontados del EPS
+publicado. JPM pasaba 36 de 73 trimestres al descarte. Con
+`NetIncomeLossAvailableToCommonStockholdersBasic` como preferido: **EPS de
+JPM de 55 a 72 trimestres, discordancias de 36 a 2**.
+
+**Solo se restan acumulados ADYACENTES.** Lo encontro un test. Si falta un
+tramo intermedio (por ejemplo hay Q1 y FY pero no 9M), la diferencia abarca
+dos trimestres y quedaria imputada a uno solo -- un error que no se nota. Y
+el `k` de la formula sale de la DURACION del hecho, no de su posicion en la
+lista de tramos disponibles.
+
+**El indice de periodos lo definen solo los conceptos de duracion.** El
+`EntityCommonStockSharesOutstanding` de dei viene fechado en la PORTADA del
+filing, semanas despues del cierre; si definiera periodos generaria una fila
+por filing. Los instantaneos se enganchan al trimestre por cercania (45 dias,
+y los cierres estan a ~91 dias, asi que no puede agarrar el equivocado).
+
+**El calendario fiscal se deduce y se proyecta.** No se puede asumir por mes:
+AAPL cierra a fines de septiembre, WMT el 31 de enero, NVDA a fines de enero.
+Se deduce de los hechos anuales y se proyecta un anio hacia adelante, porque
+el ejercicio EN CURSO todavia no tiene hecho anual (sale con el 10-K) y sin
+eso los trimestres mas recientes -- los que interesan -- quedaban sin
+etiquetar. Resultado: **145 de 147 tickers con su ultimo periodo etiquetado
+FY/Q**.
+
+### Precision vs yahooquery (trimestres desde 2024)
+
+| concepto | comparables | exacto (<0.1%) | <1% | desvios >5% |
+|---|---|---|---|---|
+| gross_profit | 282 | 99% | 99% | 2 |
+| pretax_income | 709 | 99% | 99% | 5 |
+| net_income | 709 | 98% | 99% | 4 |
+| **cfo** | **713** | **96%** | **97%** | 18 |
+| eps_diluted | 667 | 89% | 94% | 24 |
+| revenue | 758 | 87% | 90% | 53 |
+| operating_income | 600 | 60% | 66% | 124 |
+
+`cfo` entra nuevo gracias a la desacumulacion, con 96% de exactitud sobre 713
+trimestres. `operating_income` sigue en 60% por la divergencia de definicion
+ya explicada (seccion 6): ahi el que se desvia es yahooquery.
+
+### Avisos que emite
+
+No son errores: son "esto merece que alguien lo mire".
+
+- `cambio_de_tag`: la serie de un concepto se armo con mas de un tag. Es la
+  red contra el error silencioso -- los tres casos que se colaron en la
+  investigacion se manifestaron todos asi.
+- `ponderado_discordante`: la resta de acumulados no coincide con
+  resultado/acciones. El trimestre se descarta.
+- `ponderado_implausible`: el numero de acciones derivado se fue de banda
+  respecto del acumulado (split o emision grande). Se descarta.
+
+### Pendiente de la Fase 1
+
+Conceptos con cobertura baja que habria que completar o decidir derivar:
+`gross_profit` (mediana 6 trimestres -- el margen bruto habria que calcularlo
+como revenue - cost_of_revenue), `net_income_common` (10), `inventory` (33),
+`operating_expense` (36), `rnd` y `net_interest_income` (0: los tags elegidos
+no son los que usan las empresas, hay que descubrirlos).
