@@ -262,6 +262,31 @@ def _etiquetar(period_end, ejercicios):
 
 
 # ------------------------------------------------------------ desacumulacion --
+def _primer_filed(hechos, end, tramo=None):
+    """
+    Fecha en que el periodo se publico POR PRIMERA VEZ.
+
+    No es lo mismo que el `filed` del hecho elegido: `_elegir` se queda con la
+    ultima reexpresion, asi que su fecha puede ser anios posterior. Para armar
+    una serie historica SIN MIRAR HACIA ADELANTE hace falta saber desde cuando
+    el dato era publico, y eso es el filed MAS VIEJO de ese periodo.
+
+    Un trimestre cerrado el 27/9 no estuvo disponible el 27/9: se publico con
+    el 10-Q, semanas despues. Usarlo antes seria lookahead.
+
+    INVARIANTE: un periodo no puede ser publico ANTES de terminar. Hay hechos
+    con fecha de cierre futura que aparecen en filings anteriores
+    (proyecciones, compromisos contractuales); tomarlos daria un lag negativo
+    -- hasta -309 dias en un caso real -- y eso es exactamente la direccion
+    que produce lookahead. Se descartan ANTES de tomar el minimo.
+    """
+    fechas = [h["filed"] for h in hechos
+              if h.get("end") == end and h.get("filed") and h["filed"] >= end
+              and (tramo is None or not h.get("start")
+                   or _tramo(h["start"], h["end"]) == tramo)]
+    return min(fechas) if fechas else None
+
+
 def _cadenas(hechos):
     """
     Agrupa los hechos de duracion por INICIO de ejercicio. Dentro de un mismo
@@ -305,7 +330,9 @@ def _serie_aditiva(hechos):
             directos[h["end"]] = h
 
     serie = {e: {"val": h["val"], "tag": h["tag"], "derivado": False,
-                 "filed": h["filed"]} for e, h in directos.items()}
+                 "filed": h["filed"],
+                 "filed_primero": _primer_filed(hechos, h["end"], "Q")}
+             for e, h in directos.items()}
 
     ORDEN = ["Q", "H", "9M", "FY"]
     for ini, tramos in _cadenas(hechos).items():
@@ -323,7 +350,8 @@ def _serie_aditiva(hechos):
                 continue          # ya hay un trimestre publicado: gana ese
             serie[fin] = {"val": actual["val"] - previo["val"],
                           "tag": actual["tag"], "derivado": True,
-                          "filed": actual["filed"]}
+                          "filed": actual["filed"],
+                          "filed_primero": _primer_filed(hechos, actual["end"])}
     return serie
 
 
@@ -376,7 +404,9 @@ def _serie_ponderada(hechos, concepto, serie_ni=None, serie_acciones=None):
             directos[h["end"]] = h
 
     serie = {e: {"val": h["val"], "tag": h["tag"], "derivado": False,
-                 "filed": h["filed"]} for e, h in directos.items()}
+                 "filed": h["filed"],
+                 "filed_primero": _primer_filed(hechos, h["end"], "Q")}
+             for e, h in directos.items()}
 
     ORDEN = ["Q", "H", "9M", "FY"]
     for ini, tramos in _cadenas(hechos).items():
@@ -420,7 +450,8 @@ def _serie_ponderada(hechos, concepto, serie_ni=None, serie_acciones=None):
                                        % (valor, alterno)})
                         continue
             serie[fin] = {"val": valor, "tag": actual["tag"],
-                          "derivado": True, "filed": actual["filed"]}
+                          "derivado": True, "filed": actual["filed"],
+                          "filed_primero": _primer_filed(hechos, actual["end"])}
     return serie, avisos
 
 
@@ -436,7 +467,8 @@ def _serie_instante(hechos):
         h = _elegir(cands)
         if h:
             salida[fecha] = {"val": h["val"], "tag": h["tag"],
-                             "derivado": False, "filed": h["filed"]}
+                             "derivado": False, "filed": h["filed"],
+                             "filed_primero": _primer_filed(hechos, fecha)}
     return salida
 
 
@@ -565,6 +597,7 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
             continue
         fy, fq = _etiquetar(f, ejercicios)
         fila = {"period_end": f, "fiscal_year": fy, "fiscal_quarter": fq}
+        primeros, ultimos = [], []
         for concepto in duracion:
             d = series[concepto].get(f)
             if d is None:
@@ -572,6 +605,14 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
             fila[concepto] = d["val"]
             fila[concepto + "__tag"] = d["tag"]
             fila[concepto + "__derivado"] = d["derivado"]
+            # El invariante se aplica al RECOLECTAR: un instantaneo se engancha
+            # por cercania (+-45 dias) y trae su propia fecha, que puede ser
+            # anterior a este cierre. Filtrar despues del min dejaria el
+            # periodo sin fecha en vez de con la correcta.
+            if d.get("filed_primero") and d["filed_primero"] >= f:
+                primeros.append(d["filed_primero"])
+            if d.get("filed"):
+                ultimos.append(d["filed"])
         for concepto in INSTANTE:
             d = _instante_cercano(series[concepto], f)
             if d is None:
@@ -579,6 +620,24 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
             fila[concepto] = d["val"]
             fila[concepto + "__tag"] = d["tag"]
             fila[concepto + "__derivado"] = False
+            # El invariante se aplica al RECOLECTAR: un instantaneo se engancha
+            # por cercania (+-45 dias) y trae su propia fecha, que puede ser
+            # anterior a este cierre. Filtrar despues del min dejaria el
+            # periodo sin fecha en vez de con la correcta.
+            if d.get("filed_primero") and d["filed_primero"] >= f:
+                primeros.append(d["filed_primero"])
+            if d.get("filed"):
+                ultimos.append(d["filed"])
+        # filed_primero = desde cuando el trimestre fue PUBLICO. Es la fecha que
+        # hay que usar para armar series historicas sin mirar hacia adelante: un
+        # trimestre cerrado el 27/9 no estuvo disponible el 27/9.
+        # filed_ultimo  = de que presentacion viene el valor guardado hoy
+        # (procedencia).
+        # El invariante "no puede ser publico antes de terminar" se aplica en
+        # _primer_filed, ANTES de tomar el minimo -- filtrarlo aca dejaria el
+        # periodo sin fecha en vez de con la correcta.
+        fila["filed_primero"] = min(primeros) if primeros else None
+        fila["filed_ultimo"] = max(ultimos) if ultimos else None
         periodos.append(fila)
 
     return {"entidad": companyfacts.get("entityName", ""),

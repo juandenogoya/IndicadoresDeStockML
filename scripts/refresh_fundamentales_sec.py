@@ -47,7 +47,7 @@ CACHE_DEFECTO = os.path.join(ROOT, "data", "sec_cache")
 
 CONCEPTOS_ORD = list(CONCEPTOS)
 COLS = (["ticker", "cik", "period_end", "fiscal_year", "fiscal_quarter"]
-        + CONCEPTOS_ORD + ["origen", "filed_max"])
+        + CONCEPTOS_ORD + ["origen", "filed_primero", "filed_ultimo"])
 PK = ["ticker", "period_end"]
 
 
@@ -129,7 +129,9 @@ def filas_de(ticker, cik, resultado):
         fila = {"ticker": ticker, "cik": cik, "period_end": p["period_end"],
                 "fiscal_year": p.get("fiscal_year"),
                 "fiscal_quarter": p.get("fiscal_quarter"),
-                "origen": json.dumps(origen), "filed_max": None}
+                "origen": json.dumps(origen),
+                "filed_primero": p.get("filed_primero"),
+                "filed_ultimo": p.get("filed_ultimo")}
         for c in CONCEPTOS_ORD:
             fila[c] = p.get(c)
         filas.append(fila)

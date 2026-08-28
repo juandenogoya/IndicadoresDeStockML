@@ -99,8 +99,14 @@ CREATE TABLE IF NOT EXISTS fundamentales_sec_q (
 
     -- Rastro de auditoria: {{concepto: {{tag, derivado}}}}
     origen                   JSONB,
-    -- 'filed' mas reciente que respalda la fila (procedencia / point-in-time)
-    filed_max                DATE,
+    -- filed_primero = desde cuando el trimestre fue PUBLICO. Es la fecha con
+    -- la que hay que armar series historicas: un Q cerrado el 27/9 no estuvo
+    -- disponible el 27/9 (AAPL publica a los 34 dias, JPM entre 31 y 44).
+    -- Usar period_end en su lugar adelantaria cada trimestre mas de un mes.
+    filed_primero            DATE,
+    -- de que presentacion viene el valor guardado hoy (procedencia). Si
+    -- difiere mucho del primero, ese trimestre fue reexpresado.
+    filed_ultimo             DATE,
     computed_at              TIMESTAMP       NOT NULL DEFAULT NOW(),
 
     -- UNIQUE FULL (sin WHERE): requisito de ON CONFLICT. Ver CLAUDE.md.
@@ -144,6 +150,13 @@ CREATE TABLE IF NOT EXISTS fundamentales_sec_ingesta (
 )
 """
 
+# Columnas agregadas despues de la creacion inicial (ALTER idempotente).
+ALTERS = [
+    "ALTER TABLE fundamentales_sec_q ADD COLUMN IF NOT EXISTS filed_primero DATE",
+    "ALTER TABLE fundamentales_sec_q ADD COLUMN IF NOT EXISTS filed_ultimo DATE",
+    "ALTER TABLE fundamentales_sec_q DROP COLUMN IF EXISTS filed_max",
+]
+
 INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_fund_sec_ticker_fecha "
     "ON fundamentales_sec_q (ticker, period_end)",
@@ -151,6 +164,9 @@ INDICES = [
     "ON fundamentales_sec_q (period_end)",
     "CREATE INDEX IF NOT EXISTS idx_fund_sec_fy "
     "ON fundamentales_sec_q (fiscal_year, fiscal_quarter)",
+    # La serie historica se arma con as-of sobre filed_primero, no period_end.
+    "CREATE INDEX IF NOT EXISTS idx_fund_sec_filed "
+    "ON fundamentales_sec_q (ticker, filed_primero)",
     "CREATE INDEX IF NOT EXISTS idx_fund_sec_avisos_tipo "
     "ON fundamentales_sec_avisos (tipo, concepto)",
     "CREATE INDEX IF NOT EXISTS idx_fund_sec_avisos_ticker "
@@ -179,10 +195,13 @@ def crear(engine, dry_run: bool):
             conn.execute(text(ddl().strip()))
             log(f"{tabla}: creada.")
         if not dry_run:
+            for stmt in ALTERS:
+                conn.execute(text(stmt))
             for stmt in INDICES:
                 conn.execute(text(stmt))
             conn.commit()
-            log(f"indices verificados ({len(INDICES)}).")
+            log(f"columnas + indices verificados ({len(ALTERS)} alters, "
+                f"{len(INDICES)} indices).")
 
 
 def main():

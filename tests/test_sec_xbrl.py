@@ -318,3 +318,35 @@ def test_no_rellena_conceptos_ausentes():
     p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
     assert "net_income" not in p
     assert "assets" not in p
+
+
+# ------------------------------------------ 8. fechas de publicacion --
+def test_expone_desde_cuando_el_periodo_fue_publico():
+    """
+    Un trimestre no esta disponible el dia que cierra: se publica con el 10-Q,
+    semanas despues (mediana medida 31-35 dias). Armar una serie historica con
+    period_end en vez de filed_primero adelantaria cada trimestre mas de un mes.
+    filed_primero es el filed MAS VIEJO, no el del hecho elegido -- que es la
+    ultima reexpresion y puede ser anios posterior.
+    """
+    facts = _facts(Revenues=[
+        _hecho(10, "2025-03-31", "2025-01-01", filed="2025-05-05"),
+        _hecho(11, "2025-03-31", "2025-01-01", filed="2026-05-05")])   # reexpresion
+    p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
+    assert p["revenue"] == 11              # el valor: la ultima presentacion
+    assert p["filed_primero"] == "2025-05-05"
+    assert p["filed_ultimo"] == "2026-05-05"
+
+
+def test_descarta_publicacion_anterior_al_cierre():
+    """
+    INVARIANTE: un periodo no puede ser publico antes de terminar. Hay hechos
+    con fecha de cierre futura en filings anteriores (proyecciones); tomarlos
+    daria lag negativo -- hasta -309 dias en un caso real -- y eso es
+    lookahead.
+    """
+    facts = _facts(Revenues=[
+        _hecho(10, "2025-03-31", "2025-01-01", filed="2024-02-01"),   # imposible
+        _hecho(10, "2025-03-31", "2025-01-01", filed="2025-05-05")])
+    p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
+    assert p["filed_primero"] == "2025-05-05"
