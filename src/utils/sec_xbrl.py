@@ -72,10 +72,19 @@ FLUJO_ADITIVO = {
     "tax_provision": ["IncomeTaxExpenseBenefit"],
     # OJO: ProfitLoss NO va aca (incluye minoritarios).
     "net_income": ["NetIncomeLoss"],
-    "net_income_common": ["NetIncomeLossAvailableToCommonStockholdersBasic"],
+    # Diluted primero: es la base del EPS diluido, que es contra lo que se
+    # cruza. Basic queda como respaldo -- difieren solo por el efecto dilutivo,
+    # y cualquiera de los dos es mucho mejor que el resultado total, que no
+    # descuenta los dividendos preferidos. Medido: Basic 66/147, Diluted 54/147.
+    "net_income_common": ["NetIncomeLossAvailableToCommonStockholdersDiluted",
+                          "NetIncomeLossAvailableToCommonStockholdersBasic"],
     "interest_expense": ["InterestExpense", "InterestExpenseNonoperating"],
-    "net_interest_income": ["InterestIncomeExpenseNet",
-                            "InterestIncomeExpenseAfterProvisionForLoanLoss"],
+    # net_interest_income (margen financiero de bancos) NO esta aca a
+    # proposito. El tag mas frecuente es InterestIncomeExpenseNonoperatingNet
+    # (34/147), pero eso es el neto de intereses de una empresa NO financiera
+    # -- caja e intereses de deuda -- y no el margen financiero de un banco.
+    # Mezclarlos seria exactamente el error de ProfitLoss: un numero plausible
+    # de otra cosa. El bloque bancario esta diferido (ver doc, seccion 10).
     "cfo": ["NetCashProvidedByUsedInOperatingActivities",
             "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment",

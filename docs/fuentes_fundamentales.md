@@ -4,9 +4,11 @@ Registro de la investigacion sobre de donde traer los estados contables
 trimestrales. NO es documentacion de codigo en produccion: es el conocimiento
 que costo trabajo obtener y que no se puede derivar leyendo el repo.
 
-ESTADO: la etapa de investigacion esta cerrada y la **Fase 1 (normalizador)
-esta implementada** en `src/utils/sec_xbrl.py` -- ver la seccion final. Falta
-decidir la fuente (seccion 10) y construir la ingesta y la capa derivada.
+ESTADO: investigacion cerrada. **Fase 1 (normalizador) y Fase 2 (ingesta y
+persistencia) implementadas** -- ver secciones 11 y 12. La fuente SEC esta
+ingestada y andando en PARALELO a yahooquery, sin ningun consumidor todavia.
+Pendiente: la capa derivada (multiplos historicos, "caro vs si misma") y
+decidir cual fuente sigue y cual se deprecia (seccion 10).
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -516,3 +518,127 @@ Conceptos con cobertura baja que habria que completar o decidir derivar:
 como revenue - cost_of_revenue), `net_income_common` (10), `inventory` (33),
 `operating_expense` (36), `rnd` y `net_interest_income` (0: los tags elegidos
 no son los que usan las empresas, hay que descubrirlos).
+
+---
+
+## 12. Fase 2 -- ingesta y persistencia (28/8/2026)
+
+Fuente PARALELA. Las dos conviven; ningun consumidor actual lee las tablas
+`fundamentales_sec_*` y `fundamentales_income_q` y companiaa siguen intactas.
+Decidir cual sigue y cual se deprecia es un paso posterior.
+
+### Disciplina de separacion (sin repo separado)
+
+Se evaluo convertir la fuente en un proyecto independiente y se decidio que
+no, por tres razones: el modulo ya esta desacoplado (importa `collections` y
+`datetime`, nada mas), el dato tiene que aterrizar en el MISMO PostgreSQL para
+cruzarse con precios y sectores -- asi que un repo aparte seria otro codigo
+escribiendo en un esquema compartido, peor acoplamiento que tenerlo junto --
+y no existe todavia un segundo consumidor.
+
+En su lugar, la costura queda cortada de antemano:
+
+- `src/utils/sec_xbrl.py` -- normalizador PURO (stdlib).
+- `src/data/sec/` -- ingesta. **Regla de una sola direccion: nada de este
+  paquete importa del lado de trading** (scoring, bots, scanner, strategies,
+  pipeline). Si algun dia hiciera falta, es senal de que algo esta mal ubicado.
+- `scripts/refresh_fundamentales_sec.py` -- el UNICO lugar de la fuente que
+  toca la DB y el universo.
+
+El dia que aparezca un segundo consumidor, `git subtree split` sobre esas
+rutas la separa sin desenredar nada.
+
+### Las 3 tablas
+
+| tabla | contenido |
+|---|---|
+| `fundamentales_sec_q` | la serie. PK (ticker, period_end). 31 columnas de concepto + fiscal_year/fiscal_quarter + `origen` JSONB + `filed_max` |
+| `fundamentales_sec_avisos` | avisos del normalizador, consultables |
+| `fundamentales_sec_ingesta` | control de descarga por ticker (habilita el incremental) |
+
+**Una tabla de serie y no cuatro.** yahooquery usa 4 (income/balance/cashflow/
+valuation) porque asi viene su API. SEC NO organiza por estado contable:
+publica hechos sueltos y el normalizador produce una fila por (ticker,
+periodo) con los 31 conceptos juntos. Volver a partirla seria re-imponerle a
+SEC la forma de otra fuente, y esa particion es justo donde aparece la
+ambiguedad de "a que estado pertenece este concepto".
+
+**Las columnas de concepto se generan desde `src/utils/sec_xbrl.py`** en el
+DDL, para que el esquema no pueda desincronizarse del normalizador.
+
+**`origen` JSONB en vez de 62 columnas.** Guarda `{concepto: {tag, derivado}}`:
+que tag produjo cada numero y si se derivo por desacumulacion. Es lo que se
+mira cuando un valor no cuadra.
+
+**El point-in-time NO se almacena como filas multiples.** La tabla guarda la
+vista vigente (ultimo `filed`); el point-in-time se RE-DERIVA corriendo
+`normalizar(hasta_filed=...)` sobre el cache en disco. Guardar cada version
+duplicaria las filas por una capacidad que todavia no se consume.
+
+### El incremental
+
+`submissions` pesa **164 KB contra 3.8 MB** de companyfacts (23x) y trae el
+accession del ultimo 10-Q/10-K. Ese es el disparador: si el accession coincide
+con el ya ingestado, no se baja el archivo pesado.
+
+Verificado corriendo dos veces seguidas sobre AAPL/JPM/KO:
+
+```
+pasada 1  {'actualizado': 3}   descargado: 16.7 MB
+pasada 2  {'sin_cambios': 3}   descargado:  0.0 MB
+```
+
+Sobre los 147 sin balances nuevos: ~24 MB en vez de ~522 MB.
+
+### SEC exige User-Agent identificable
+
+Devuelve **403 en todos los endpoints** si el User-Agent no lleva un mail de
+contacto. Se configura en el `.env`:
+
+```
+SEC_USER_AGENT=tu-mail@dominio.com IndicadoresDeStockML
+```
+
+El cliente NO reintenta ante un 403 (no es transitorio, y reintentarlo esconde
+la causa detras de un "no disponible"), y el script falla temprano con la
+instruccion en vez de reventar a mitad de una corrida.
+
+### Resultado de la ingesta completa
+
+| | |
+|---|---|
+| tickers | 147 |
+| filas | 9.062 |
+| cobertura temporal | 2007-09-30 a 2026-08-02 (19 anios) |
+| avisos | 1.796 |
+| tiempo (desde cache) | 48 s |
+
+Avisos por tipo: `cambio_de_tag` 1.131 (145 tickers), `ponderado_discordante`
+579 (102), `ponderado_implausible` 86 (26). Los conceptos con mas cambios de
+tag -- donde mirar primero si algo no cuadra -- son `cash` (119 tickers),
+`revenue` (114), `d_and_a` (106), `shares_out` (100).
+
+Validacion **leyendo de la tabla** (no del modulo), contra yahooquery, para
+probar que el viaje a la DB no pierde nada:
+
+| concepto | n | exacto | <1% |
+|---|---|---|---|
+| net_income | 709 | 98% | 99% |
+| cfo | 713 | 96% | 97% |
+| eps_diluted | 668 | 89% | 94% |
+| revenue | 758 | 87% | 90% |
+
+Identicos a la validacion a nivel modulo.
+
+### Definicion de terminado (acordada antes de empezar)
+
+Para que la fuente no se desborde, "lista" significa exactamente estas tres
+cosas, y las tres estan:
+
+1. los 31 conceptos ingestados para los 147 USA
+2. refresh incremental andando (sin re-bajar 522 MB)
+3. validado contra yahooquery con los numeros medidos
+
+Todo lo demas -- bloque bancario, paridad total de ratios con yahooquery,
+point-in-time consumible, capa derivada -- es una decision aparte, tomada
+despues, con un consumidor concreto que lo pida.

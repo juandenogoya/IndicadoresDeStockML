@@ -365,6 +365,9 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min. Encadena 5 pasos derivados: ratios -> ticker_pais -> vs_sector -> **multiplos_px -> vs_sector --valuacion-px** (los 2 ultimos agregados 27/8/2026: sin ellos el trimestre nuevo queda sin `*_px` y el dashboard muestra la valuacion vacia). `set REFRESH_NO_PAUSE=1` para correrlo desatendido |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
+| `scripts/manual/refresh_fundamentales_sec.bat` (+ `scripts/refresh_fundamentales_sec.py`) | Refresh de la fuente SEC XBRL (PARALELA a yahooquery, LOCAL-only, ~147 tickers USA). INCREMENTAL: consulta `submissions` (~164 KB) y solo baja `companyfacts` (~4 MB) si cambio el accession del ultimo 10-Q/10-K -> sin balances nuevos mueve ~24 MB en vez de ~522 MB. REQUIERE `SEC_USER_AGENT` en el .env (SEC devuelve 403 sin User-Agent con mail de contacto). `--solo-normalizar` / `--forzar` / `--tickers` / `--dry-run`. Ver docs/fuentes_fundamentales.md |
+| `src/utils/sec_xbrl.py` | Normalizador PURO de SEC XBRL -> serie trimestral (stdlib, sin DB/red). Resuelve sinonimos por concepto, tags que cambian dentro de la misma empresa, desacumulacion YTD (Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M) y restatements. Etiqueta fiscal_year/fiscal_quarter reales. `hasta_filed` = point-in-time. Emite avisos como red contra el error silencioso |
+| `src/data/sec/client.py` | Descarga de data.sec.gov con cache en disco (`data/sec_cache/`, gitignoreado). REGLA: nada en `src/data/sec/` importa del lado de trading. OJO: SEC corta los loops de `curl` (conexion nueva por pedido) -> usar `requests.Session` con keep-alive |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
 | `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental Y al final de refresh_fundamentales.bat. Ver docs/fundamentales_calculo.md |
 | `src/utils/multiplos_px.py` | Logica pura del recalculo de multiplos al cierre (sin DB) |
@@ -429,6 +432,17 @@ Las criticas:
   scripts/manual/refresh_fundamentales.bat (~3.5 min full universo).
   Multi-moneda: reporting_currency por fila (170 USD + 29 monedas locales en
   ADRs); filtrar por USD o normalizar via FX para analisis cross-ticker.
+- `fundamentales_sec_q` | `fundamentales_sec_avisos` | `fundamentales_sec_ingesta`
+  (LOCAL) -- fuente SEC XBRL, **PARALELA a yahooquery** (28/8/2026). Las dos
+  conviven; ningun consumidor las lee todavia y las `fundamentales_*_q` de
+  yahooquery siguen intactas. `fundamentales_sec_q`: 1 fila por (ticker,
+  period_end), 31 columnas de concepto + fiscal_year/fiscal_quarter + `origen`
+  JSONB (rastro de auditoria: que tag produjo cada numero y si se derivo por
+  desacumulacion). 147 tickers USA, 9.062 filas, 2007-2026. UNA tabla y no
+  cuatro porque SEC no organiza por estado contable: publica hechos sueltos.
+  Las columnas se generan DESDE src/utils/sec_xbrl.py para que el esquema no
+  se desincronice. El point-in-time NO se almacena: se re-deriva con
+  `normalizar(hasta_filed=...)` sobre el cache. Ver docs/fuentes_fundamentales.md
 - `fundamentales_ratios_q` -- capa DERIVADA (funcion pura de las 4 raw,
   recomputable sin re-fetch). 1 fila por (ticker, fiscal_period_end). Vista
   PARALELA/DESCRIPTIVA del fundamental: NO se mezcla con el score tecnico ni
