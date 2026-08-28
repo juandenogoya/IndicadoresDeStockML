@@ -239,7 +239,25 @@ def main():
     parser.add_argument("--regions", default=None,
                         help="CSV de regiones para peer-set (curaduria). Ej: USA,Europa")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--valuacion-px", action="store_true",
+                        help="Solo pisa las 4 metricas de valuacion con los *_px "
+                             "(cierre del dia). Correr DESPUES de compute_multiplos_px.")
     args = parser.parse_args()
+
+    # Modo acotado: recalcular SOLO las 4 metricas de valuacion con los *_px.
+    # Es el paso que cierra la cadena del refresh (y el que corre a diario dentro
+    # de recovery_incremental). Sin esto, vs_sector queda con los multiplos
+    # FISCALES (precio congelado en la fecha del balance).
+    if args.valuacion_px:
+        eng = get_local_engine()
+        log("Pisando metricas de valuacion con los *_px (cierre del dia)...")
+        n = compute_sector_valuacion_px(eng)
+        print()
+        print(SEP)
+        print(f"  OK  |  valuacion *_px  |  filas: {n}")
+        print(SEP)
+        print()
+        return
 
     regions_filter = None
     if args.regions:

@@ -81,6 +81,18 @@ Documentacion que existe hoy en docs/:
                             override curado), formulas por perfil. PREVIO a
                             codificar. Validado contra balances oficiales
                             MU/XP/JPM (crudos exactos al millon).
+- docs/fuentes_fundamentales.md : evaluacion de DE DONDE traer los balances
+                            trimestrales (27/8/2026). Auditoria que encontro
+                            97 de 200 tickers sin su ultimo balance + metodo
+                            de deteccion por cadencia propia; los 3 modos de
+                            falla del estado actual (datos viejos, filas stub
+                            parciales, contaminacion silenciosa de medianas);
+                            comparativa yahooquery / Alpha Vantage / SEC XBRL
+                            con pros, contras y costos; prototipo de
+                            normalizacion SEC validado (147 tickers, ~70 Q c/u)
+                            y los 3 errores SILENCIOSOS que encontro el cruce.
+                            NINGUNA decision de fuente tomada. Prototipo en
+                            scripts/oneshot/sec_xbrl_prototipo.py
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
@@ -351,10 +363,10 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/refresh_earnings_historico.py` | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` (llena faltantes+desactualizados, <=20/corrida), sin flags = incremental, `--ticker X` (alta), `--status`, `--target local\|railway`. Backfill inicial corre en Oracle->Railway (cron temporal); incremental en Windows (target local). Ver docs/earnings_reaccion.md |
 | `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market |
-| `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min |
+| `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min. Encadena 5 pasos derivados: ratios -> ticker_pais -> vs_sector -> **multiplos_px -> vs_sector --valuacion-px** (los 2 ultimos agregados 27/8/2026: sin ellos el trimestre nuevo queda sin `*_px` y el dashboard muestra la valuacion vacia). `set REFRESH_NO_PAUSE=1` para correrlo desatendido |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
-| `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental. Ver docs/fundamentales_calculo.md |
+| `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental Y al final de refresh_fundamentales.bat. Ver docs/fundamentales_calculo.md |
 | `src/utils/multiplos_px.py` | Logica pura del recalculo de multiplos al cierre (sin DB) |
 | `scripts/refresh_ticker_pais.py` | Trae country/region por ticker (yahooquery assetProfile) -> tabla ticker_pais. Encadenado al refresh .bat |
 | `scripts/manual/refresh_industria.py` | Rellena activos.industry desde yahooquery assetProfile (antes 62% NULL desde yfinance; ahora 200/200). Dual-write local+Railway, `--status`/`--dry-run`, avisa si un sector difiere pero NO lo toca. Usa yfinance_lock |
