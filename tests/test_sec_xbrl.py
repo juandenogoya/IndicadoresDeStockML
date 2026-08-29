@@ -137,15 +137,111 @@ def test_avisa_cuando_la_serie_cambia_de_tag():
     assert len(avisos[0]["tags"]) == 2
 
 
-def test_profit_loss_no_se_usa_como_net_income():
+def test_profit_loss_no_se_usa_como_sinonimo_de_net_income():
     """
     ProfitLoss incluye minoritarios: NO es sinonimo de NetIncomeLoss.
-    Usarlo daba FCX +41% y CARR +11% contra la fuente de contraste.
+    Usarlo como tal daba FCX +41% y CARR +11% contra la fuente de contraste.
+    Puede entrar SOLO por la identidad ProfitLoss - minoritarios (abajo).
     """
     assert "ProfitLoss" not in sec_xbrl.FLUJO_ADITIVO["net_income"]
+    facts = _facts(
+        ProfitLoss=[_hecho(999, "2025-03-31", "2025-01-01")],
+        NetIncomeLossAttributableToNoncontrollingInterest=[
+            _hecho(99, "2025-03-31", "2025-01-01")])
+    p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
+    assert p["net_income"] == 900          # 999 - 99, NO 999
+
+
+def test_net_income_real_le_gana_a_la_identidad():
+    """La derivacion solo rellena huecos; donde hay NetIncomeLoss, gana."""
+    facts = _facts(
+        NetIncomeLoss=[_hecho(800, "2025-03-31", "2025-01-01")],
+        ProfitLoss=[_hecho(999, "2025-03-31", "2025-01-01")],
+        NetIncomeLossAttributableToNoncontrollingInterest=[
+            _hecho(99, "2025-03-31", "2025-01-01")])
+    p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
+    assert p["net_income"] == 800
+    assert p["net_income__tag"] == "NetIncomeLoss"
+    assert p["net_income__derivado"] is False
+
+
+def test_sin_tag_de_minoritarios_el_total_es_el_resultado():
+    """
+    Filer sin participaciones no controlantes: ProfitLoss ES el resultado.
+    Medido sobre el cache: 0 tickers usan una variante del tag de minoritarios
+    sin tener tambien el estandar, asi que su ausencia total significa que no
+    hay minoritarios, no que estan escondidos con otro nombre.
+    """
     facts = _facts(ProfitLoss=[_hecho(999, "2025-03-31", "2025-01-01")])
+    p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
+    assert p["net_income"] == 999
+    assert p["net_income__derivado"] is True
+
+
+def test_minoritarios_ausentes_en_el_periodo_no_se_asumen_cero():
+    """
+    EL caso AVGO: tiene el tag de minoritarios pero no lo declara en casi
+    ningun trimestre. Asumir cero ahi daba 11% de error contra el control.
+    Un hueco se ve; un resultado inflado 11% se propaga al PER.
+    """
+    facts = _facts(
+        ProfitLoss=[_hecho(999, "2025-03-31", "2025-01-01"),
+                    _hecho(1000, "2025-06-30", "2025-04-01")],
+        NetIncomeLossAttributableToNoncontrollingInterest=[
+            _hecho(99, "2025-03-31", "2025-01-01")])
     r = sec_xbrl.normalizar(facts)
-    assert all("net_income" not in p for p in r["periodos"])
+    assert _periodo(r, "2025-03-31")["net_income"] == 900
+    # El Q2 no queda con un numero inventado. Ni siquiera llega a existir como
+    # periodo: era el unico concepto de duracion que lo habria creado.
+    assert all(p.get("net_income") is None
+               for p in r["periodos"] if p["period_end"] == "2025-06-30")
+    assert any(a["tipo"] == "net_income_sin_minoritarios" for a in r["avisos"])
+
+
+def test_la_identidad_se_cruza_contra_el_resultado_para_comunes():
+    """
+    Control cruzado: ...AvailableToCommonStockholders mide el mismo renglon
+    por otro camino. Si la identidad no da, no se emite y queda el aviso.
+    """
+    facts = _facts(
+        ProfitLoss=[_hecho(999, "2025-03-31", "2025-01-01")],
+        NetIncomeLossAttributableToNoncontrollingInterest=[
+            _hecho(99, "2025-03-31", "2025-01-01")],
+        NetIncomeLossAvailableToCommonStockholdersBasic=[
+            _hecho(500, "2025-03-31", "2025-01-01")])     # 900 vs 500: no da
+    r = sec_xbrl.normalizar(facts)
+    assert "net_income" not in _periodo(r, "2025-03-31")
+    assert any(a["tipo"] == "net_income_derivado_sin_control"
+               for a in r["avisos"])
+
+
+def test_la_identidad_tolera_los_dividendos_preferidos():
+    """
+    El control no mide EXACTAMENTE lo mismo: descuenta los preferidos. Una
+    diferencia chica es esperable y no invalida la derivacion.
+    """
+    facts = _facts(
+        ProfitLoss=[_hecho(1000, "2025-03-31", "2025-01-01")],
+        NetIncomeLossAttributableToNoncontrollingInterest=[
+            _hecho(0, "2025-03-31", "2025-01-01")],
+        NetIncomeLossAvailableToCommonStockholdersBasic=[
+            _hecho(980, "2025-03-31", "2025-01-01")])     # -2% de preferidos
+    p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
+    assert p["net_income"] == 1000
+
+
+def test_la_identidad_desacumula_como_cualquier_flujo():
+    """
+    ProfitLoss y los minoritarios se informan ACUMULADOS igual que el resto.
+    Si no se desacumularan, el Q4 saldria con el valor del ejercicio entero.
+    """
+    facts = _facts(
+        ProfitLoss=_anio("pl", q1=100, h1=250, m9=420, fy=600),
+        NetIncomeLossAttributableToNoncontrollingInterest=_anio(
+            "nci", q1=10, h1=25, m9=42, fy=60))
+    r = sec_xbrl.normalizar(facts)
+    assert _periodo(r, "2025-03-31")["net_income"] == 90     # 100 - 10
+    assert _periodo(r, "2025-12-31")["net_income"] == 162    # (600-420)-(60-42)
 
 
 def test_pretax_no_toma_el_segmento_domestico():
@@ -176,9 +272,35 @@ def test_eps_se_deriva_por_resta_no_por_promedio():
     """
     facts = _facts(
         EarningsPerShareDiluted=[_hecho(5.62, "2025-09-30", "2025-01-01"),
-                                 _hecho(7.46, "2025-12-31", "2025-01-01")])
+                                 _hecho(7.46, "2025-12-31", "2025-01-01")],
+        # Insumos del control cruzado: Q4 -> 184/100 = 1.84, concuerda con la
+        # resta. Sin ellos el valor derivado no se emite (ver el test de
+        # ponderado_sin_control).
+        NetIncomeLoss=_anio("ni", 100, 250, 562, 746),
+        WeightedAverageNumberOfDilutedSharesOutstanding=_anio(
+            "sh", 100, 100, 100, 100))
     r = sec_xbrl.normalizar(facts)
     assert _periodo(r, "2025-12-31")["eps_diluted"] == pytest.approx(1.84, abs=1e-9)
+
+
+def test_eps_derivado_sin_con_que_cruzarlo_no_se_emite():
+    """
+    La resta de acumulados es fragil: los dos tramos vienen de filings
+    distintos y pueden estar en BASES DE SPLIT distintas (el mas nuevo se
+    re-expresa, el viejo no). Caso real KLAC FY2025Q4: FY post-split 3.18 menos
+    9M pre-split 21.4 dio eps=-18.28 en un trimestre que gano ~9 por accion.
+    Ese valor paso porque las acciones se habian descartado por implausibles y
+    el control se degradaba en silencio a "no control".
+    """
+    facts = _facts(
+        EarningsPerShareDiluted=[_hecho(21.4, "2025-09-30", "2025-01-01"),
+                                 _hecho(3.18, "2025-12-31", "2025-01-01")])
+    r = sec_xbrl.normalizar(facts)
+    # Descartado el unico concepto de duracion, no queda ni el periodo: el
+    # indice lo definen los conceptos de duracion, no los avisos.
+    assert all("eps_diluted" not in p for p in r["periodos"])
+    assert any(a["tipo"] == "ponderado_sin_control" and
+               a["concepto"] == "eps_diluted" for a in r["avisos"])
 
 
 def test_eps_se_descarta_si_no_concuerda_con_resultado_sobre_acciones():

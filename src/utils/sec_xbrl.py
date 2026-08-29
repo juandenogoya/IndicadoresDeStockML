@@ -133,6 +133,43 @@ CONCEPTOS.update({k: "instante" for k in INSTANTE})
 # Por debajo de esto los dos metodos se consideran de acuerdo.
 TOL_PONDERADO = 0.02
 
+# ---------------------------------------------------------------------------
+# Reconstruccion de net_income cuando la empresa dejo de tagear NetIncomeLoss
+# ---------------------------------------------------------------------------
+# Ocho tickers del universo (MA, CAT, SCCO, AVAV, AVGO, F, FCX, AMT) declaran
+# el resultado bajo ProfitLoss y no bajo NetIncomeLoss. MA y CAT no tagean
+# NetIncomeLoss desde 2014 y 2011. Como ProfitLoss incluye a los minoritarios,
+# esta prohibido usarlo como sinonimo (ver la nota del encabezado), y el
+# resultado era que esos ocho quedaban SIN resultado neto -- y por lo tanto sin
+# PER -- sin que nada avisara. Ese es el modo de falla silencioso que este
+# modulo existe para evitar.
+#
+# La salida no es un sinonimo nuevo sino una IDENTIDAD contable:
+#
+#     NetIncomeLoss = ProfitLoss - NetIncomeLossAttributableToNoncontrolling...
+#
+# Condiciones, ninguna relajable:
+#   1. Solo rellena HUECOS. Donde NetIncomeLoss existe, gana NetIncomeLoss.
+#   2. El hecho de minoritarios tiene que existir PARA ESE PERIODO. No se
+#      asume cero: si la empresa tiene el tag pero no lo declaro en el
+#      trimestre, no se sabe cuanto es. Medido en AVGO, asumir cero da 11% de
+#      error. Solo se toma NCI=0 cuando la empresa NO tiene el tag en ningun
+#      lado (filer sin participaciones no controlantes).
+#   3. Control cruzado contra NetIncomeLossAvailableToCommonStockholders*,
+#      que es una medicion INDEPENDIENTE del mismo renglon. Si difieren mas de
+#      la tolerancia, no se emite y queda un aviso.
+#
+# Medido sobre los 8 tickers desde 2020: 193 periodos coinciden dentro de
+# 0,5%; 3 no (AVGO por la condicion 2, FCX en 2 trimestres).
+TAG_RESULTADO_TOTAL = "ProfitLoss"
+TAG_MINORITARIOS = "NetIncomeLossAttributableToNoncontrollingInterest"
+
+# Mas laxa que TOL_PONDERADO porque el control no mide exactamente lo mismo:
+# ...AvailableToCommonStockholders descuenta ademas los dividendos preferidos.
+# Una diferencia chica es esperable; una grande significa que la identidad no
+# se cumple y ahi hay que abstenerse.
+TOL_NET_INCOME = 0.05
+
 # Limites de dias para clasificar la duracion de un hecho. Los trimestres
 # fiscales reales van de 84 a 98 dias; los ejercicios, de 358 a 371.
 _LIM = ((100, "Q"), (196, "H"), (290, "9M"), (380, "FY"))
@@ -355,6 +392,55 @@ def _serie_aditiva(hechos):
     return serie
 
 
+def _completar_net_income(serie_ni, serie_total, serie_minoritarios,
+                          serie_control, tiene_tag_minoritarios):
+    """
+    Rellena los huecos de `net_income` con ProfitLoss - minoritarios.
+
+    Ver la nota de TAG_RESULTADO_TOTAL para el por que y las condiciones.
+    Devuelve (serie_completada, avisos). No muta la serie recibida.
+
+    El valor derivado queda con tag "ProfitLoss-NCI" y derivado=True, asi que
+    _avisos_cambio_tag lo va a reportar como cambio de tag en las empresas que
+    usaron los dos: es correcto que lo haga, ahi hay algo para mirar.
+    """
+    avisos = []
+    salida = dict(serie_ni or {})
+    for fin, tot in (serie_total or {}).items():
+        if fin in salida:
+            continue                       # NetIncomeLoss real: gana siempre
+        nci = (serie_minoritarios or {}).get(fin)
+        if nci is None:
+            if tiene_tag_minoritarios:
+                # La empresa tiene minoritarios pero no los declaro en este
+                # periodo. Asumir cero seria inventar el numero.
+                avisos.append({
+                    "tipo": "net_income_sin_minoritarios", "concepto": "net_income",
+                    "period_end": fin,
+                    "detalle": "hay %s pero falta %s en el periodo; no se deriva"
+                               % (TAG_RESULTADO_TOTAL, TAG_MINORITARIOS)})
+                continue
+            valor = tot["val"]             # filer sin participaciones: NCI = 0
+        else:
+            valor = tot["val"] - nci["val"]
+
+        ctrl = (serie_control or {}).get(fin)
+        if ctrl is not None:
+            base = max(abs(ctrl["val"]), 1.0)
+            if abs(valor - ctrl["val"]) / base > TOL_NET_INCOME:
+                avisos.append({
+                    "tipo": "net_income_derivado_sin_control", "concepto": "net_income",
+                    "period_end": fin,
+                    "detalle": "%s-%s da %.0f pero el control da %.0f"
+                               % (TAG_RESULTADO_TOTAL, "NCI", valor, ctrl["val"])})
+                continue
+
+        salida[fin] = {"val": valor, "tag": "%s-NCI" % TAG_RESULTADO_TOTAL,
+                       "derivado": True, "filed": tot["filed"],
+                       "filed_primero": tot.get("filed_primero")}
+    return salida, avisos
+
+
 def _serie_ponderada(hechos, concepto, serie_ni=None, serie_acciones=None):
     """
     Serie trimestral de un concepto PONDERADO (por accion o promedio ponderado).
@@ -438,17 +524,33 @@ def _serie_ponderada(hechos, concepto, serie_ni=None, serie_acciones=None):
             else:
                 ni = (serie_ni or {}).get(fin)
                 ac = (serie_acciones or {}).get(fin)
-                if ni and ac and ac["val"]:
-                    alterno = ni["val"] / ac["val"]
-                    base = max(abs(valor), abs(alterno))
-                    if base > 0 and abs(valor - alterno) / base > TOL_PONDERADO:
-                        avisos.append({
-                            "tipo": "ponderado_discordante", "concepto": concepto,
-                            "period_end": fin,
-                            "detalle": "resta de acumulados %.6g vs resultado/acciones "
-                                       "%.6g: no concuerdan, se descarta"
-                                       % (valor, alterno)})
-                        continue
+                if not (ni and ac and ac["val"]):
+                    # SIN CONTROL NO SE EMITE. La resta de acumulados es fragil:
+                    # los dos tramos vienen de filings distintos y pueden estar
+                    # en BASES DE SPLIT distintas, porque el mas nuevo se re-
+                    # expresa y el viejo no. KLAC FY2025Q4 dio eps=-18.28
+                    # (FY post-split 3.18 menos 9M pre-split 21.4) en un
+                    # trimestre que gano ~9 por accion. Ese valor paso porque
+                    # las acciones del trimestre se habian descartado por
+                    # implausibles, y sin denominador el control se degradaba en
+                    # silencio a "no control". Un hueco se ve; un EPS al reves
+                    # se propaga al PER.
+                    avisos.append({
+                        "tipo": "ponderado_sin_control", "concepto": concepto,
+                        "period_end": fin,
+                        "detalle": "resta de acumulados %.6g sin resultado/acciones "
+                                   "con que cruzarla, se descarta" % (valor,)})
+                    continue
+                alterno = ni["val"] / ac["val"]
+                base = max(abs(valor), abs(alterno))
+                if base > 0 and abs(valor - alterno) / base > TOL_PONDERADO:
+                    avisos.append({
+                        "tipo": "ponderado_discordante", "concepto": concepto,
+                        "period_end": fin,
+                        "detalle": "resta de acumulados %.6g vs resultado/acciones "
+                                   "%.6g: no concuerdan, se descarta"
+                                   % (valor, alterno)})
+                    continue
             serie[fin] = {"val": valor, "tag": actual["tag"],
                           "derivado": True, "filed": actual["filed"],
                           "filed_primero": _primer_filed(hechos, actual["end"])}
@@ -544,6 +646,18 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
 
     for concepto, tags in FLUJO_ADITIVO.items():
         series[concepto] = _serie_aditiva(_traer(tags))
+
+    # ORDEN IMPORTANTE: net_income se completa ANTES del EPS, porque el control
+    # cruzado del EPS lo usa como respaldo de net_income_common.
+    hechos_total = _traer([TAG_RESULTADO_TOTAL])
+    if hechos_total:
+        series["net_income"], av = _completar_net_income(
+            series["net_income"],
+            _serie_aditiva(hechos_total),
+            _serie_aditiva(_traer([TAG_MINORITARIOS])),
+            series.get("net_income_common"),
+            TAG_MINORITARIOS in facts.get("us-gaap", {}))
+        avisos.extend(av)
 
     # ORDEN IMPORTANTE: las acciones se calculan ANTES que el EPS, porque el
     # control cruzado del EPS necesita resultado/acciones del mismo trimestre.
