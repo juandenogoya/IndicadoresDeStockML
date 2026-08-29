@@ -78,3 +78,9 @@ dashboard/output/
 # Artefactos generados en examples/ (solo se versiona el YAML de input)
 scripts/reports/examples/*.pdf
 scripts/reports/examples/*.png
+
+# Salidas de los motores generadas en la RAIZ con -o (ficha_empresa,
+# earnings_reaccion). El default de esos motores es scripts/reports/output/
+# y dashboard/output/; estas quedan sueltas cuando se pasa -o a mano.
+/ficha_*.png
+/reaccion_*.html
