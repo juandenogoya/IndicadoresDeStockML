@@ -472,3 +472,178 @@ def test_descarta_publicacion_anterior_al_cierre():
         _hecho(10, "2025-03-31", "2025-01-01", filed="2025-05-05")])
     p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
     assert p["filed_primero"] == "2025-05-05"
+
+
+# ------------------------------------- 9. tags curados y mezcla de tags --
+def _mezclado():
+    """
+    Un ejercicio armado con dos tags: los tres 10-Q publican el trimestre bajo
+    RevenueFromContractWithCustomer* y el Q4 sale del 10-K, que solo trae la
+    cadena de Revenues. Es la forma exacta en que se manifiesta el defecto en
+    los datos reales.
+    """
+    return _facts(
+        RevenueFromContractWithCustomerExcludingAssessedTax=[
+            _hecho(10, "2025-03-31", "2025-01-01"),
+            _hecho(20, "2025-06-30", "2025-04-01"),
+            _hecho(30, "2025-09-30", "2025-07-01")],
+        Revenues=_anio("rev", 100, 200, 300, 400))
+
+
+def test_sin_curar_gana_la_prioridad_del_sinonimo():
+    """Punto de partida: el tag moderno va primero en FLUJO_ADITIVO y gana."""
+    r = sec_xbrl.normalizar(_mezclado())
+    assert _periodo(r, "2025-03-31")["revenue"] == 10
+    assert _periodo(r, "2025-12-31")["revenue"] == 100      # 400 - 300, otro tag
+
+
+def test_tag_curado_reemplaza_la_lista_de_sinonimos():
+    """
+    Con dos tags presentes gana el CURADO aunque el otro tenga mas prioridad.
+    Es el caso de AMT: Revenues son las ventas totales (10.645 MM en 2025) y
+    RevenueFromContractWithCustomerExcludingAssessedTax es un renglon chico
+    (936 MM), pero este ultimo va primero por ser el tag moderno.
+    """
+    r = sec_xbrl.normalizar(_mezclado(), tags_curados={"revenue": "Revenues"})
+    assert _periodo(r, "2025-03-31")["revenue"] == 100
+    assert _periodo(r, "2025-03-31")["revenue__tag"] == "Revenues"
+
+
+def _avisos_de(res, *tipos):
+    return [a for a in res["avisos"] if a["tipo"] in tipos]
+
+
+def test_curar_silencia_el_aviso_de_mezcla():
+    """
+    El aviso desaparece porque desaparece la CAUSA, no porque se suprima: con
+    el tag curado los 4 trimestres salen del mismo concepto.
+
+    En este armado solo Revenues publica anual, asi que la mezcla no se puede
+    comprobar y cae en el aviso debil. Ver los tests de abajo para los tres
+    casos de la clasificacion.
+    """
+    sin_curar = sec_xbrl.normalizar(_mezclado())
+    debiles = _avisos_de(sin_curar, "mezcla_no_verificable")
+    assert len(debiles) == 1
+    assert debiles[0]["concepto"] == "revenue"
+    assert debiles[0]["fiscal_year"] == 2025
+
+    curado = sec_xbrl.normalizar(_mezclado(), tags_curados={"revenue": "Revenues"})
+    assert _avisos_de(curado, "mezcla_en_ejercicio", "mezcla_no_verificable") == []
+
+
+# Los tres casos de la clasificacion se prueban sobre la funcion directamente:
+# armar por el pipeline entero un ejercicio donde DOS tags publiquen anual y
+# ademas se mezclen en los trimestres exige una combinacion de cadenas que
+# oscurece lo que se esta probando, que es la comparacion de los anuales.
+def _entrada(*anuales):
+    """(periodos, anuales) de un ejercicio 2025 mezclado entre dos tags."""
+    periodos = [
+        {"period_end": "2025-03-31", "fiscal_year": 2025, "revenue__tag": "Revenues"},
+        {"period_end": "2025-12-31", "fiscal_year": 2025,
+         "revenue__tag": "RevenueFromContractWithCustomerExcludingAssessedTax"},
+    ]
+    tags = ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax")
+    hechos = {t: {"val": v, "filed": "2026-02-01"}
+              for t, v in zip(tags, anuales) if v is not None}
+    return periodos, {"revenue": {"2025-12-31": hechos}}
+
+
+def test_la_mezcla_avisa_cuando_los_anuales_difieren():
+    """
+    El defecto real: los dos tags miden cosas distintas, asi que los 4
+    trimestres ya no son sumables. Es el caso de AMT (10.645 vs 936 MM).
+    """
+    periodos, anuales = _entrada(10645.0, 936.0)
+    avisos = sec_xbrl._avisos_mezcla_en_ejercicio(periodos, ["revenue"], anuales)
+    assert [a["tipo"] for a in avisos] == ["mezcla_en_ejercicio"]
+    assert avisos[0]["fiscal_year"] == 2025
+
+
+def test_la_mezcla_entre_sinonimos_redundantes_no_avisa():
+    """
+    Si los dos tags publican el mismo anual son sinonimos y la suma no cambia.
+    Medido: 109 de 126 ejercicios que mezclan tags caen aca (JPM, GOOG, COST).
+    Avisar de todos condenaria el aviso a que nadie lo lea, que es justamente
+    lo que le paso a `cambio_de_tag`.
+    """
+    periodos, anuales = _entrada(10645.0, 10645.0)
+    assert sec_xbrl._avisos_mezcla_en_ejercicio(periodos, ["revenue"], anuales) == []
+
+
+def test_la_mezcla_sin_dos_anuales_avisa_mas_debil():
+    """
+    Un solo tag publica anual: no hay con que comparar. No se calla (podria
+    ser el defecto real) pero tampoco se declara error.
+    """
+    periodos, anuales = _entrada(10645.0, None)
+    avisos = sec_xbrl._avisos_mezcla_en_ejercicio(periodos, ["revenue"], anuales)
+    assert [a["tipo"] for a in avisos] == ["mezcla_no_verificable"]
+
+
+def test_el_tag_curado_deja_hueco_donde_falta_en_vez_de_mezclar():
+    """
+    El curado REEMPLAZA la lista, no se antepone. Si el tag elegido no cubre
+    un trimestre, ese trimestre queda vacio. Anteponerlo dejaria a los otros
+    de respaldo y volveria a mezclar justo donde el elegido falta -- que es el
+    caso que la curacion viene a resolver. El hueco se ve; el numero mezclado
+    no.
+    """
+    facts = _facts(
+        Revenues=[_hecho(100, "2025-03-31", "2025-01-01")],
+        RevenueFromContractWithCustomerExcludingAssessedTax=[
+            _hecho(7, "2025-06-30", "2025-04-01")])
+    r = sec_xbrl.normalizar(facts, tags_curados={"revenue": "Revenues"})
+    assert _periodo(r, "2025-03-31")["revenue"] == 100
+    assert all(p.get("revenue") is None for p in r["periodos"]
+               if p["period_end"] == "2025-06-30")
+
+
+def test_el_curado_acepta_una_lista_para_migraciones_legitimas():
+    """
+    Con ASC 606 (2019) medio universo migro de SalesRevenueNet al tag nuevo:
+    ningun tag solo cubre toda la ventana y la lista es la salida correcta.
+    El orden de la lista sigue mandando -- Revenues no entra por no estar.
+    """
+    facts = _facts(
+        SalesRevenueNet=[_hecho(50, "2018-03-31", "2018-01-01")],
+        Revenues=[_hecho(999, "2018-03-31", "2018-01-01")],
+        RevenueFromContractWithCustomerExcludingAssessedTax=[
+            _hecho(60, "2019-03-31", "2019-01-01")])
+    r = sec_xbrl.normalizar(facts, tags_curados={"revenue": [
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "SalesRevenueNet"]})
+    assert _periodo(r, "2018-03-31")["revenue"] == 50       # no 999
+    assert _periodo(r, "2019-03-31")["revenue"] == 60
+
+
+def test_el_cambio_de_tag_entre_ejercicios_no_es_mezcla():
+    """
+    Migrar de taxonomia es legitimo: cada ejercicio queda armado con UN tag y
+    sus 4 trimestres siguen siendo sumables. Se emite cambio_de_tag, que es
+    informativo, pero NO mezcla_en_ejercicio, que senala un error. Distinguir
+    los dos casos es el punto entero del aviso nuevo.
+    """
+    facts = _facts(
+        SalesRevenueNet=_anio("rev", 10, 20, 30, 40, ini="2018-01-01",
+                              fines=("2018-03-31", "2018-06-30",
+                                     "2018-09-30", "2018-12-31")),
+        Revenues=_anio("rev", 100, 200, 300, 400))
+    r = sec_xbrl.normalizar(facts)
+    tipos = {a["tipo"] for a in r["avisos"] if a.get("concepto") == "revenue"}
+    assert "cambio_de_tag" in tipos
+    assert "mezcla_en_ejercicio" not in tipos
+
+
+def test_la_mezcla_no_se_mira_en_los_conceptos_instantaneos():
+    """
+    Un instantaneo (balance) no se suma entre trimestres, asi que dos tags
+    distintos ahi no producen el error que este aviso persigue: no hay
+    ninguna suma que quede armada con dos magnitudes.
+    """
+    facts = _facts(
+        Assets=[_hecho(1000, "2025-03-31"), _hecho(1100, "2025-06-30")],
+        Revenues=_anio("rev", 100, 200, 300, 400))
+    r = sec_xbrl.normalizar(facts)
+    assert not [a for a in r["avisos"]
+                if a["tipo"] == "mezcla_en_ejercicio" and a["concepto"] == "assets"]

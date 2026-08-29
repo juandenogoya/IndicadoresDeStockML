@@ -170,6 +170,11 @@ TAG_MINORITARIOS = "NetIncomeLossAttributableToNoncontrollingInterest"
 # se cumple y ahi hay que abstenerse.
 TOL_NET_INCOME = 0.05
 
+# Dos tags que publican el mismo anual por debajo de esto son sinonimos
+# redundantes y su mezcla no cambia ninguna suma. Ver
+# _avisos_mezcla_en_ejercicio.
+TOL_MEZCLA = 0.01
+
 # Limites de dias para clasificar la duracion de un hecho. Los trimestres
 # fiscales reales van de 84 a 98 dias; los ejercicios, de 358 a 371.
 _LIM = ((100, "Q"), (196, "H"), (290, "9M"), (380, "FY"))
@@ -615,13 +620,129 @@ def _avisos_cambio_tag(concepto, serie, desde=None):
              "tags": tags}]
 
 
+def _anuales_por_tag(hechos):
+    """
+    {fin_de_ejercicio: {tag: hecho}} con los hechos de duracion ANUAL,
+    quedandose con la ultima reexpresion de cada tag. Es la evidencia que
+    permite decidir si una mezcla de tags importa o no.
+    """
+    out = defaultdict(dict)
+    for h in hechos:
+        if not h["start"] or not h["end"]:
+            continue
+        if _tramo(h["start"], h["end"]) != "FY":
+            continue
+        prev = out[h["end"]].get(h["tag"])
+        if prev is None or h["filed"] > prev["filed"]:
+            out[h["end"]][h["tag"]] = h
+    return out
+
+
+def _avisos_mezcla_en_ejercicio(periodos, conceptos, anuales):
+    """
+    Detecta que los trimestres de un MISMO ejercicio se armaron con tags
+    distintos Y que eso CAMBIA EL NUMERO.
+
+    Hay que leerlo distinto que `cambio_de_tag`. Un cambio a lo largo de la
+    serie suele ser legitimo: la empresa migro de taxonomia (medio universo
+    paso de SalesRevenueNet a RevenueFromContractWithCustomer* con ASC 606) y
+    de ahi en mas usa el nuevo. Una mezcla DENTRO de un ejercicio es otra
+    cosa: los 4 trimestres tienen que medir la misma magnitud para poder
+    sumarse, y si no la miden, el TTM y el anual reconstruido son la suma de
+    dos renglones distintos. Es el modo de falla que dejo revenue en 87,8% de
+    reconciliacion mientras net_income daba 99,6%.
+
+    PERO la mezcla sola no alcanza como senal. Medido sobre los 147 tickers:
+    de 126 ejercicios que mezclan tags, 109 son INOCUOS -- los dos tags son
+    sinonimos y publican el mismo anual, asi que la suma no cambia. Avisar de
+    los 126 seria condenar el aviso a que nadie lo lea, que es exactamente el
+    problema que este aviso viene a resolver.
+
+    Por eso se cruza contra el anual de cada tag y se separan tres casos:
+      - los anuales DIFIEREN  -> "mezcla_en_ejercicio", el defecto real.
+      - los anuales COINCIDEN -> sinonimos redundantes, silencio.
+      - un solo tag publica anual -> no se puede verificar, y se emite
+        "mezcla_no_verificable", que es mas debil y no exige accion.
+
+    La cura del primer caso es el mapeo curado ticker -> tag (ver
+    src/data/sec/tags_curados.py). Este aviso existe para que esa curacion no
+    quede vieja EN SILENCIO cuando entre un ticker nuevo al universo o una
+    empresa cambie de taxonomia.
+    """
+    # Ultimo cierre de cada ejercicio: es la fecha con la que estan indexados
+    # los hechos anuales.
+    cierre = {}
+    por_concepto = defaultdict(lambda: defaultdict(set))
+    for p in periodos:
+        fy = p.get("fiscal_year")
+        if fy is None:
+            continue
+        cierre[fy] = max(cierre.get(fy, ""), p["period_end"])
+        for concepto in conceptos:
+            tag = p.get(concepto + "__tag")
+            if tag:
+                por_concepto[concepto][fy].add(tag)
+
+    avisos = []
+    for concepto in sorted(por_concepto):
+        for fy in sorted(por_concepto[concepto]):
+            tags = sorted(por_concepto[concepto][fy])
+            if len(tags) <= 1:
+                continue
+            candidatos = (anuales.get(concepto) or {}).get(cierre.get(fy), {})
+            vals = [h["val"] for h in candidatos.values() if h["val"]]
+            comun = "el ejercicio %s mezcla %d tags: %s" % (fy, len(tags),
+                                                            ", ".join(tags))
+            if len(vals) < 2:
+                avisos.append({
+                    "tipo": "mezcla_no_verificable", "concepto": concepto,
+                    "detalle": comun + " -- un solo tag publica anual, no se "
+                                       "puede comprobar si cambia el numero",
+                    "fiscal_year": fy, "tags": tags})
+                continue
+            lo, hi = min(vals), max(vals)
+            if abs(hi - lo) / max(abs(hi), 1.0) > TOL_MEZCLA:
+                avisos.append({
+                    "tipo": "mezcla_en_ejercicio", "concepto": concepto,
+                    "detalle": comun + " -- y sus anuales difieren (%.4g vs "
+                                       "%.4g)" % (hi, lo),
+                    "fiscal_year": fy, "tags": tags})
+    return avisos
+
+
+def _tags_de(concepto, tags, curados):
+    """
+    Lista de tags candidatos para un concepto, con la curacion aplicada.
+
+    Un tag curado REEMPLAZA la lista de sinonimos, no se antepone. Anteponerlo
+    dejaria a los demas como respaldo, y entonces volveria a mezclar
+    exactamente en los trimestres donde el tag elegido falta -- que es el caso
+    que la curacion viene a resolver. Es preferible el hueco VISIBLE al numero
+    mezclado invisible.
+
+    Se acepta una LISTA cuando la empresa migro de taxonomia de verdad y
+    ningun tag solo cubre toda la ventana. En ese caso sigue siendo posible
+    mezclar dentro de un ejercicio, y `mezcla_en_ejercicio` lo avisa.
+    """
+    if not curados or concepto not in curados:
+        return tags
+    elegido = curados[concepto]
+    return [elegido] if isinstance(elegido, str) else list(elegido)
+
+
 # ------------------------------------------------------------------- API --
-def normalizar(companyfacts, hasta_filed=None, desde=None):
+def normalizar(companyfacts, hasta_filed=None, desde=None, tags_curados=None):
     """
     companyfacts : dict crudo de data.sec.gov/api/xbrl/companyfacts/CIK...json
     hasta_filed  : 'YYYY-MM-DD'. Point-in-time: ignora lo presentado despues,
                    devolviendo lo que se sabia en esa fecha. None = todo.
     desde        : 'YYYY-MM-DD'. Recorta la salida a periodos posteriores.
+    tags_curados : {concepto: tag} o {concepto: [tags]} para ESTE ticker. El
+                   tag curado reemplaza la lista de sinonimos del concepto.
+                   Existe porque "revenue" no es un renglon en XBRL y en 23 de
+                   147 tickers hay dos tags que valen cosas distintas: elegir
+                   entre ellos es una decision contable, no algoritmica. El
+                   mapeo vive en src/data/sec/tags_curados.py.
 
     Devuelve:
       {
@@ -644,8 +765,13 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
             h = [x for x in h if x["filed"] and x["filed"] <= hasta_filed]
         return h
 
+    anuales = {}
     for concepto, tags in FLUJO_ADITIVO.items():
-        series[concepto] = _serie_aditiva(_traer(tags))
+        hechos = _traer(_tags_de(concepto, tags, tags_curados))
+        series[concepto] = _serie_aditiva(hechos)
+        # Se guardan para el control de mezcla de tags, que necesita saber si
+        # dos tags publican el mismo anual o dos numeros distintos.
+        anuales[concepto] = _anuales_por_tag(hechos)
 
     # ORDEN IMPORTANTE: net_income se completa ANTES del EPS, porque el control
     # cruzado del EPS lo usa como respaldo de net_income_common.
@@ -662,7 +788,9 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
     # ORDEN IMPORTANTE: las acciones se calculan ANTES que el EPS, porque el
     # control cruzado del EPS necesita resultado/acciones del mismo trimestre.
     for concepto in ("shares_diluted", "shares_basic"):
-        s, av = _serie_ponderada(_traer(FLUJO_PONDERADO[concepto]), concepto)
+        s, av = _serie_ponderada(
+            _traer(_tags_de(concepto, FLUJO_PONDERADO[concepto], tags_curados)),
+            concepto)
         series[concepto] = s
         avisos.extend(av)
     # El EPS se calcula sobre el resultado atribuible a los accionistas
@@ -675,14 +803,16 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
     ni_para_eps.update(series.get("net_income_common") or {})
     for concepto, acciones in (("eps_diluted", "shares_diluted"),
                                ("eps_basic", "shares_basic")):
-        s, av = _serie_ponderada(_traer(FLUJO_PONDERADO[concepto]), concepto,
-                                 serie_ni=ni_para_eps,
-                                 serie_acciones=series.get(acciones))
+        s, av = _serie_ponderada(
+            _traer(_tags_de(concepto, FLUJO_PONDERADO[concepto], tags_curados)),
+            concepto, serie_ni=ni_para_eps,
+            serie_acciones=series.get(acciones))
         series[concepto] = s
         avisos.extend(av)
 
     for concepto, tags in INSTANTE.items():
-        series[concepto] = _serie_instante(_traer(tags))
+        series[concepto] = _serie_instante(
+            _traer(_tags_de(concepto, tags, tags_curados)))
 
     for concepto, serie in series.items():
         avisos.extend(_avisos_cambio_tag(concepto, serie, desde))
@@ -753,6 +883,14 @@ def normalizar(companyfacts, hasta_filed=None, desde=None):
         fila["filed_primero"] = min(primeros) if primeros else None
         fila["filed_ultimo"] = max(ultimos) if ultimos else None
         periodos.append(fila)
+
+    # Va DESPUES de armar los periodos porque necesita el fiscal_year, que se
+    # etiqueta recien aca. Mira solo los conceptos ADITIVOS: son los unicos
+    # que se suman entre trimestres, que es de donde sale el dano. Un
+    # instantaneo (balance) no se suma nunca, y los ponderados (EPS, acciones)
+    # tienen su propio control cruzado en _serie_ponderada.
+    avisos.extend(_avisos_mezcla_en_ejercicio(periodos, list(FLUJO_ADITIVO),
+                                              anuales))
 
     return {"entidad": companyfacts.get("entityName", ""),
             "cik": companyfacts.get("cik"),

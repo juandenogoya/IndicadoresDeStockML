@@ -40,6 +40,7 @@ import psycopg2.extras
 
 from scripts.oneshot.create_fundamentales_tables import _parse_env_file
 from src.data.sec import client
+from src.data.sec import tags_curados
 from src.utils.sec_acciones import serie_acciones
 from src.utils.sec_xbrl import CONCEPTOS, normalizar
 
@@ -322,7 +323,11 @@ def main():
         if datos is None:
             n_sin += 1
             continue
-        r = normalizar(datos, desde=args.desde)
+        # El mapeo curado resuelve la ambiguedad de revenue en los 23 tickers
+        # donde dos tags XBRL valen cosas distintas. Para los otros 124
+        # devuelve {} y el normalizador se comporta igual que antes.
+        r = normalizar(datos, desde=args.desde,
+                       tags_curados=tags_curados.para(ticker))
         filas = filas_de(ticker, cik, r)
         avisos = filas_avisos(ticker, r)
         acciones = filas_acciones(ticker, serie_acciones(datos, desde=args.desde))
