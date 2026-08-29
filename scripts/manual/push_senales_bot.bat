@@ -27,8 +27,14 @@ SET "LOGDIR=%ROOT%logs"
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul') do set DT=%%I
-SET "LOGFILE=%LOGDIR%\push_senales_%DT:~0,8%_%DT:~8,4%.log"
+REM Timestamp del log. Antes salia de `wmic`, que Windows 11 ya no incluye:
+REM el for /f no devuelve nada, DT queda SIN DEFINIR y el nombre del log sale
+REM literal, con la sintaxis de substring adentro. PowerShell siempre esta; y
+REM si aun asi fallara, el fallback garantiza un nombre valido -- perder el
+REM log por no poder fecharlo seria el peor de los dos males.
+for /f "delims=" %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set "DT=%%I"
+if not defined DT set "DT=sin-fecha"
+SET "LOGFILE=%LOGDIR%\push_senales_%DT%.log"
 
 echo.
 echo ============================================================

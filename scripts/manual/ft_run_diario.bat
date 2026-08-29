@@ -21,8 +21,14 @@ REM Crear carpeta de logs si no existe
 IF NOT EXIST "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 REM Timestamp YYYYMMDD_HHMM via WMIC (evita el nombre del dia del locale)
-FOR /F "tokens=2 delims==" %%A IN ('wmic os get LocalDateTime /value ^| find "="') DO SET _DT=%%A
-SET TIMESTAMP=%_DT:~0,8%_%_DT:~8,4%
+REM Timestamp del log. Antes salia de `wmic`, que Windows 11 ya no incluye:
+REM el for /f no devuelve nada, _DT queda SIN DEFINIR y el nombre del log sale
+REM literal, con la sintaxis de substring adentro. PowerShell siempre esta; y
+REM si aun asi fallara, el fallback garantiza un nombre valido -- perder el
+REM log por no poder fecharlo seria el peor de los dos males.
+for /f "delims=" %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set "_DT=%%I"
+if not defined _DT set "_DT=sin-fecha"
+SET TIMESTAMP=%_DT%
 SET LOGFILE=%LOG_DIR%\ft_%TIMESTAMP%.log
 
 SET ERRORS=0
