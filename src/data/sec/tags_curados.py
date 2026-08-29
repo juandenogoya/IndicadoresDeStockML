@@ -128,10 +128,52 @@ REVENUE = {
 }
 
 
-# Un solo diccionario por ahora. La estructura admite mas conceptos sin tocar
-# a los consumidores: si aparece ambiguedad en operating_income o en cfo, se
-# agrega su propio dict y se suma aca.
-POR_CONCEPTO = {"revenue": REVENUE}
+# ---------------------------------------------------------------------------
+# d_and_a -- los 13 que quedan despues de podar 'Depreciation'
+# ---------------------------------------------------------------------------
+# El grueso del problema de d_and_a NO se cura aca sino en FLUJO_ADITIVO:
+# 'Depreciation' a secas no es un sinonimo de D&A (mediana 73% de la D&A
+# completa) y salio de la lista, lo que elimino 429 de las 476 mezclas. Ver la
+# nota en src/utils/sec_xbrl.py.
+#
+# Lo que queda son 13 empresas que publican DOS tags de D&A completos y les dan
+# valores distintos: uno es el TOTAL y el otro un componente suelto. Cual es
+# cual cambia por empresa -- en AMGN el total es DDA, en MCD es
+# DepreciationAndAmortization, en VLO y WFC es ...AndAccretionNet.
+#
+# El criterio, y por que aca SI se puede usar la magnitud: dos senales
+# independientes coinciden en los 13.
+#   (a) COBERTURA. El D&A total aparece en el estado de flujo TODOS los
+#       trimestres; un renglon suplementario aparece salteado. Discrimina
+#       limpio en AMGN (22Q vs 10Q), BLK (11 vs 0), JOBY (22 vs 9), UPS
+#       (22 vs 4), WFC (22 vs 0).
+#   (b) MAGNITUD. El total es la suma de sus componentes, asi que es el mayor.
+#       OJO: en revenue este criterio FALLA (elige el bruto en bancos, ver
+#       seccion 15 del doc). Aca no falla porque D&A no tiene semantica de
+#       neteo: no existe un "D&A bruto" que exceda al titular.
+# MCD ademas tiene confirmacion externa: yahooquery da 2.199 MM, que es
+# exactamente DepreciationAndAmortization y NO el DDA de 457 MM. Es el caso
+# que muestra que no alcanza con quedarse siempre con el mismo tag.
+D_AND_A = {
+    "AMGN": "DepreciationDepletionAndAmortization",           # 5.592 vs 887
+    "BLK":  "DepreciationAmortizationAndAccretionNet",        # 1.126 vs 297
+    "EFX":  "DepreciationDepletionAndAmortization",           # 727 vs 720
+    "HD":   "DepreciationDepletionAndAmortization",           # 3.514 vs 3.273
+    "JOBY": "DepreciationDepletionAndAmortization",           # 40 vs 34
+    "LOW":  "DepreciationDepletionAndAmortization",           # 2.194 vs 1.941
+    "MCD":  "DepreciationAndAmortization",                    # 2.199 vs 457
+    "PEP":  "DepreciationDepletionAndAmortization",           # los dos 3.451
+    "TGT":  "DepreciationDepletionAndAmortization",           # 3.134 vs 2.617
+    "UPS":  "DepreciationAndAmortization",                    # 3.746 vs 3.000
+    "VLO":  "DepreciationAmortizationAndAccretionNet",        # 3.158 vs 63
+    "VST":  "DepreciationAmortizationAndAccretionNet",        # 2.950 vs 1.986
+    "WFC":  "DepreciationAmortizationAndAccretionNet",        # 8.736 vs 1.700
+}
+
+
+# La estructura admite mas conceptos sin tocar a los consumidores: si aparece
+# ambiguedad en otro, se agrega su dict y se suma aca.
+POR_CONCEPTO = {"revenue": REVENUE, "d_and_a": D_AND_A}
 
 
 def para(ticker):

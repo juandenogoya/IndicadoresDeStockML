@@ -178,8 +178,47 @@ def test_net_debt_none_si_no_hay_ninguna_deuda_tageada():
 
 
 def test_net_debt_con_una_sola_deuda_cuenta_la_otra_como_cero():
+    """Sin contexto de la serie, la deuda ausente vale cero."""
     d = ttm.derivados({"debt_long": 1000.0, "cash": 300.0})
     assert d["net_debt"] == 700.0
+
+
+def test_no_se_asume_cero_la_deuda_que_la_empresa_si_tagea():
+    """
+    "No esta en este trimestre" y "esta empresa no tiene esa deuda" se ven
+    iguales en una fila sola, y no son lo mismo. La API de companyfacts
+    descarta los hechos dimensionados, y varias empresas grandes pasaron a
+    declarar su deuda de largo plazo solo con dimensiones: Verizon tiene 8
+    hechos de LongTermDebt y ninguno desde 2025. Con la regla vieja el
+    net_debt de AT&T salia NEGATIVO, como si tuviera caja neta, y eso se
+    propagaba al EV sin que nada avisara.
+    """
+    d = ttm.derivados({"debt_short": 200.0, "cash": 300.0},
+                      deudas_conocidas={"debt_short", "debt_long"})
+    assert d["net_debt"] is None
+
+
+def test_la_empresa_sin_deuda_larga_conserva_su_net_debt():
+    """
+    Si NUNCA tagea el concepto, la ausencia si significa cero y el EV se
+    calcula igual. Sin esta mitad de la regla, cualquier empresa sin deuda de
+    largo plazo perderia su EV.
+    """
+    d = ttm.derivados({"debt_short": 200.0, "cash": 300.0},
+                      deudas_conocidas={"debt_short"})
+    assert d["net_debt"] == -100.0
+
+
+def test_enriquecer_deduce_las_deudas_conocidas_de_la_serie_entera():
+    """
+    La deteccion mira TODA la serie: el trimestre viejo que si tagea la deuda
+    larga es lo que delata que el nuevo la tiene y no la declaro.
+    """
+    filas = [_q("2025-03-31", debt_short=200.0, debt_long=5000.0, cash=300.0),
+             _q("2025-06-30", debt_short=200.0, cash=300.0)]
+    out = ttm.enriquecer(filas)
+    assert out[0]["net_debt"] == 4900.0
+    assert out[1]["net_debt"] is None
 
 
 def test_net_debt_none_sin_cash():

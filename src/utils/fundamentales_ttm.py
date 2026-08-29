@@ -187,7 +187,7 @@ def _sumar(ventana, concepto):
 # Magnitudes derivadas
 # ---------------------------------------------------------------------------
 
-def derivados(fila):
+def derivados(fila, deudas_conocidas=None):
     """
     Magnitudes que no vienen tageadas y hay que armar. Sobre una fila de
     serie_ttm(). Devuelve un dict; cada clave None si le falta un insumo.
@@ -203,8 +203,9 @@ def derivados(fila):
                     Si NINGUNA de las dos deudas esta tageada -> None, no 0.
                     Ausencia en XBRL no es prueba de que no haya deuda; darla
                     por cero convierte "no se" en "cero" y lo propaga al EV.
-                    Si esta UNA sola, la otra cuenta como 0 (la empresa tagea
-                    la que tiene).
+                    Si falta UNA sola, depende de `deudas_conocidas`: cuenta
+                    como 0 solo si la empresa NO la tagea en NINGUN periodo de
+                    su serie. Ver la nota de enriquecer().
       shares      = shares_out, y si falta, shares_diluted.
                     shares_out sale de la PORTADA del filing (acciones en
                     circulacion a esa fecha) -- es lo correcto para market cap.
@@ -222,8 +223,11 @@ def derivados(fila):
     fcf = cfo - capex if (cfo is not None and capex is not None) else None
 
     ds, dl, cash = _f(fila.get("debt_short")), _f(fila.get("debt_long")), _f(fila.get("cash"))
+    conocidas = deudas_conocidas or ()
+    falta_esperada = ((ds is None and "debt_short" in conocidas) or
+                      (dl is None and "debt_long" in conocidas))
     net_debt = None
-    if cash is not None and (ds is not None or dl is not None):
+    if cash is not None and (ds is not None or dl is not None) and not falta_esperada:
         net_debt = (ds or 0.0) + (dl or 0.0) - cash
 
     shares = _f(fila.get("shares_out"))
@@ -251,11 +255,35 @@ def derivados(fila):
 
 
 def enriquecer(filas):
-    """serie_ttm() + derivados() en una pasada. Devuelve filas nuevas."""
+    """
+    serie_ttm() + derivados() en una pasada. Devuelve filas nuevas.
+
+    Antes de derivar mira la serie ENTERA para saber que deudas tagea la
+    empresa. Hace falta porque "no esta en este trimestre" y "esta empresa no
+    tiene esa deuda" son cosas distintas y se ven iguales en una fila sola.
+
+    El caso real: la API de companyfacts DESCARTA los hechos dimensionados, y
+    varias empresas grandes pasaron a declarar su deuda de largo plazo solo con
+    dimensiones. Verizon tiene 8 hechos de LongTermDebt y ninguno desde 2025;
+    AT&T igual. Con la regla vieja -- "si falta una, cuenta 0" -- el net_debt
+    de VZ salia 19.479 MM en vez de ~150.000 MM, y el de T salia NEGATIVO, como
+    si AT&T tuviera caja neta. Eso se propagaba al EV y al EV/EBITDA sin que
+    nada avisara: 52 de 147 tickers y 41.820 filas con deuda neta negativa.
+
+    Ahora, si la empresa tagea esa deuda en ALGUN periodo pero no en este, no
+    se asume cero: net_debt queda en None y el EV desaparece. Es la misma regla
+    que usa sec_xbrl para los minoritarios del resultado neto. Se pierde
+    cobertura de EV/EBITDA a cambio de que lo que quede sea cierto.
+
+    Una empresa realmente sin deuda de largo plazo nunca tagea el concepto, asi
+    que sigue contando como cero y conserva su EV.
+    """
+    conocidas = {c for c in ("debt_short", "debt_long")
+                 if any(f.get(c) is not None for f in filas)}
     out = []
     for f in filas:
         nueva = dict(f)
-        nueva.update(derivados(f))
+        nueva.update(derivados(f, conocidas))
         out.append(nueva)
     return out
 

@@ -89,9 +89,21 @@ FLUJO_ADITIVO = {
             "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment",
               "PaymentsToAcquireProductiveAssets"],
+    # OJO: 'Depreciation' a secas NO va aca. Es la amortizacion de bienes de
+    # uso SOLA, sin la de intangibles, y por lo tanto no es un sinonimo de D&A
+    # sino un subconjunto -- el mismo error de categoria que ProfitLoss para
+    # net_income. Medido sobre 337 ejercicios de las 60 empresas que publican
+    # los dos tags, Depreciation es la MEDIANA del 73% de la D&A completa, y en
+    # 28 de esas 60 esta por debajo del 70% (SPGI 10%, AMGN 17%, WBD 17%,
+    # HL 0%). Como fallback entraba en 429 de las 476 mezclas de tags del
+    # concepto, subestimaba la D&A, y por lo tanto el EBITDA, y por lo tanto
+    # SOBREESTIMABA el EV/EBITDA en silencio.
+    # Sacarlo cuesta que 17 tickers se queden sin d_and_a y sin EV/EBITDA. Es
+    # la decision correcta segun la regla del modulo: un hueco visible vale
+    # mas que un numero plausible de otra cosa.
     "d_and_a": ["DepreciationDepletionAndAmortization",
                 "DepreciationAmortizationAndAccretionNet",
-                "DepreciationAndAmortization", "Depreciation"],
+                "DepreciationAndAmortization"],
 }
 
 # PONDERADO: promedios ponderados y magnitudes por accion. NO se suman ni se
