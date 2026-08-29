@@ -40,6 +40,7 @@ import psycopg2.extras
 
 from scripts.oneshot.create_fundamentales_tables import _parse_env_file
 from src.data.sec import client
+from src.utils.sec_acciones import serie_acciones
 from src.utils.sec_xbrl import CONCEPTOS, normalizar
 
 SEP = "=" * 64
@@ -151,6 +152,18 @@ def filas_de(ticker, cik, resultado):
     return filas
 
 
+def filas_acciones(ticker, serie):
+    """
+    Serie de acciones de PORTADA -> filas. Grano distinto al de la serie
+    trimestral: una fila por FILING, no por trimestre. Ver
+    src/utils/sec_acciones.py para por que no puede vivir en la misma tabla.
+    """
+    return [{"ticker": ticker, "fecha": p["fecha"], "shares": p["shares"],
+             "accn": p.get("accn"), "filed": p.get("filed"),
+             "form": p.get("form"), "fuente": p.get("fuente")}
+            for p in serie]
+
+
 def filas_avisos(ticker, resultado):
     return [{"ticker": ticker, "tipo": a["tipo"], "concepto": a.get("concepto", ""),
              "period_end": a.get("period_end"), "detalle": a.get("detalle", ""),
@@ -170,6 +183,28 @@ def upsert_serie(env, filas):
     with _conn(env) as cx:
         with cx.cursor() as cur:
             psycopg2.extras.execute_batch(cur, sql, filas, page_size=500)
+        cx.commit()
+    return len(filas)
+
+
+def reemplazar_acciones(env, ticker, filas):
+    """
+    La serie se REGENERA entera por ticker. Es una proyeccion pura del cache,
+    no un historico acumulado: si un punto deja de calificar (una portada
+    fechada despues de su propio filing, un valor con error de unidad), tiene
+    que DESAPARECER. Con UPSERT sobreviviria para siempre -- fue exactamente lo
+    que paso con la portada 2027-07-17 de AAL en la primera corrida.
+    """
+    cols = ["ticker", "fecha", "shares", "accn", "filed", "form", "fuente"]
+    ph = ", ".join(f"%({c})s" for c in cols)
+    with _conn(env) as cx:
+        with cx.cursor() as cur:
+            cur.execute("DELETE FROM fundamentales_sec_acciones WHERE ticker=%s",
+                        (ticker,))
+            if filas:
+                psycopg2.extras.execute_batch(cur, (
+                    f"INSERT INTO fundamentales_sec_acciones "
+                    f"({', '.join(cols)}) VALUES ({ph})"), filas, page_size=500)
         cx.commit()
     return len(filas)
 
@@ -210,6 +245,10 @@ def purgar_fuera_de_ventana(env, tickers, desde):
                         "WHERE ticker = ANY(%s) AND period_end < %s",
                         (list(tickers), desde))
             n = cur.rowcount
+            cur.execute("DELETE FROM fundamentales_sec_acciones "
+                        "WHERE ticker = ANY(%s) AND fecha < %s",
+                        (list(tickers), desde))
+            n += cur.rowcount
         cx.commit()
     return n
 
@@ -276,7 +315,7 @@ def main():
         log(f"  {resumen}  |  descargado: {mb:.1f} MB")
 
     log(f"ventana de retencion: periodos >= {args.desde}")
-    n_filas = n_avisos = n_ok = n_sin = 0
+    n_filas = n_avisos = n_ok = n_sin = n_acciones = 0
     procesados = []
     for ticker, cik in pares:
         datos = client.leer_cache(args.cache, ticker)
@@ -286,9 +325,11 @@ def main():
         r = normalizar(datos, desde=args.desde)
         filas = filas_de(ticker, cik, r)
         avisos = filas_avisos(ticker, r)
+        acciones = filas_acciones(ticker, serie_acciones(datos, desde=args.desde))
         est = estados.get(ticker, {})
         if not args.dry_run:
             n_filas += upsert_serie(env, filas)
+            n_acciones += reemplazar_acciones(env, ticker, acciones)
             n_avisos += reemplazar_avisos(env, ticker, avisos)
             upsert_ingesta(env, {
                 "ticker": ticker, "cik": cik,
@@ -302,6 +343,7 @@ def main():
             })
         else:
             n_filas += len(filas)
+            n_acciones += len(acciones)
             n_avisos += len(avisos)
         procesados.append(ticker)
         n_ok += 1
@@ -314,7 +356,8 @@ def main():
 
     print()
     print(SEP)
-    print(f"  OK  |  tickers: {n_ok}  |  filas: {n_filas}  |  avisos: {n_avisos}"
+    print(f"  OK  |  tickers: {n_ok}  |  filas: {n_filas}"
+          f"  |  acciones: {n_acciones}  |  avisos: {n_avisos}"
           f"{'  |  purgados: ' + str(n_purga) if n_purga else ''}"
           f"{'  |  sin cache: ' + str(n_sin) if n_sin else ''}")
     print(SEP)
