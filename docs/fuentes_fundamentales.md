@@ -7,8 +7,9 @@ que costo trabajo obtener y que no se puede derivar leyendo el repo.
 ESTADO (29/8/2026): **Fases 1, 2, 3 implementadas + curacion de revenue y
 operacion** -- normalizador (sec. 11), ingesta (sec. 12), capa derivada de
 multiplos diarios (sec. 13), mapeo curado y detector de mezcla de tags
-(sec. 16). La fuente SEC corre en PARALELO a yahooquery, sin ningun consumidor
-todavia.
+(sec. 16) y la CALCULADORA de escenarios (sec. 17), que es el primer y unico
+consumidor. La fuente SEC corre en PARALELO a yahooquery: ninguna tabla de
+`fundamentales_*_q` se toco y ningun flujo de trading la lee.
 
 Reparto de roles decidido: SEC = eje TEMPORAL (historia larga, point-in-time,
 multiplos diarios y "caro vs si misma", 147 tickers USA). yahooquery = eje
@@ -44,6 +45,10 @@ Pendiente y ABIERTO:
 | por que se podo `Depreciation` de los sinonimos | 16.5 |
 | por que el EV de VZ y T estaba mal | 16.6 |
 | se puede comparar el EV/EBITDA de SEC con el de yahooquery | 16.7 (no) |
+| para que sirve todo esto, en una sola pantalla | 17 |
+| el backtest dio que no predice: sirve igual? | 17.3 (mide otra pregunta) |
+| donde estan ROIC y ROTCE | 17.5 (afuera, y por que) |
+| por que el crecimiento se mide por trimestre y no por rueda | 17.4, regla 4 |
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -1258,3 +1263,138 @@ informativo. Un tipo de aviso nuevo cae en "info" hasta que alguien lo
 clasifique, para que no se haga pasar por defecto solo. `--alertar` manda a
 Telegram unicamente los DEFECTOS: un canal que se usa para lo informativo deja
 de leerse.
+
+---
+
+## 17. La calculadora de escenarios (29/8/2026)
+
+Es el consumidor para el que se construyo toda la fuente, y conviene decir
+primero lo que **no** es: no predice retornos, no dice si algo va a subir y no
+emite una recomendacion. Toma una tesis de precio que ya trae el usuario y la
+traduce a lo unico que se puede contestar con datos -- que implica ese precio,
+y que tendria que pasar en el negocio para sostenerlo.
+
+Motor puro en `src/utils/valuacion_implicita.py`; CLI de solo lectura en
+`scripts/manual/valuacion_implicita.py`.
+
+### 17.1 Las dos direcciones
+
+**DIRECTA** -- se mueve el precio, el negocio queda quieto:
+
+> "Si AAPL valiera 377,50 (+20%), su PER seria 43,00 -- percentil 100 de su
+> propia historia: nunca estuvo ahi."
+
+**INVERSA sobre el precio** -- se fija el multiplo, se despeja el precio:
+
+> "Para que su PER vuelva a la mediana de su historia, el precio tendria que
+> ser 265."
+
+**INVERSA sobre el negocio** -- se fija el precio Y el multiplo, se despeja el
+fundamental. Es la que convierte un numero en un juicio:
+
+> "Para que 377,50 sea un P/S normal para AAPL, las ventas tienen que crecer
+> +59,4%. Su mejor anio fue +28,6%."
+
+### 17.2 Por que hace falta la tercera
+
+Un +20% de precio mueve **todos** los multiplos de precio exactamente +20%.
+Eso es aritmetica, no informacion: listar cuatro multiplos implicitos es
+listar cuatro veces la misma variacion. Lo que informa es contra que se los
+compara.
+
+De ahi salen las dos anclas, y ninguna es una prediccion:
+
+1. **El percentil** ubica el multiplo implicito dentro del rango que esa
+   empresa efectivamente tuvo. Es toda la razon por la que valia la pena
+   construir la historia SEC: sin ella, "PER 43" no se puede juzgar.
+2. **El crecimiento requerido contra el historico** traduce el multiplo a una
+   exigencia sobre el negocio y la contrasta con lo que la empresa logro
+   alguna vez.
+
+Cuando el crecimiento necesario supera el maximo historico, el CLI lo dice
+explicitamente y aclara que **no invalida la tesis**: dice que se apoya en algo
+que esa empresa todavia no hizo, y que eso merece argumento aparte.
+
+### 17.3 Lo que el backtest midio, y lo que NO
+
+En la seccion anterior se corrio un backtest del percentil por quintiles y dio
+que **no ordena el retorno futuro** (spread barato-menos-caro sin signo estable
+en ninguno de los cuatro multiplos). Ese resultado esta bien medido y hay que
+tenerlo presente, pero contesta **otra pregunta**: si el percentil sirve como
+senal de timing autonoma.
+
+Esta herramienta no lo usa asi. Lo usa como **regla de plausibilidad** de una
+tesis que el usuario ya trae. Un percentil que no predice puede describir
+perfectamente bien donde estuvo un multiplo, que es todo lo que se le pide
+aca. Confundir las dos cosas -- y dar el backtest por veredicto sobre la
+calculadora -- es un error de lectura, no un hallazgo.
+
+### 17.4 Las reglas del calculo
+
+1. **UNA sola incognita por escenario.** La direccion directa mueve el precio y
+   congela los TTM y la deuda neta; la inversa congela el precio y despeja el
+   denominador. Un escenario que mueva las dos cosas a la vez tiene dos
+   incognitas y una ecuacion: cualquier numero que devuelva es una eleccion
+   disfrazada de calculo.
+
+2. **Todo sale de agregados**, nunca de magnitudes por accion. Misma regla que
+   gobierna `fundamentales_sec_multiplos_d` (sec. 13): SEC re-expresa lo "por
+   accion" ante un split y `precios_diarios` tambien, pero con horizontes
+   distintos.
+
+3. **La deuda neta se resta del lado correcto.** En las metricas sobre EV el
+   numerador es market cap + deuda neta. `denominador_para(BASE, "ev_ebitda",
+   10, 15)` da 170 y no 150, y hay un test que lo fija: usar el market cap ahi
+   es el error clasico de esta cuenta. Sin deuda conocida el EV no existe y se
+   devuelve None (sec. 16.6).
+
+4. **El crecimiento historico se mide sobre la serie TRIMESTRAL**, deduplicada
+   por `period_end`, no sobre la diaria. El TTM es una escalera que solo se
+   mueve cuando sale un balance: medirlo en cada rueda multiplica por ~63 las
+   observaciones sin agregar una sola, inflando el n y aplastando la
+   dispersion. Con la serie trimestral, AAPL tiene 19 observaciones y se dice
+   cuantas son.
+
+5. **El ROE exigido es un TECHO.** Se calcula contra el patrimonio de HOY. Si
+   la empresa gana mas y no reparte todo, el patrimonio crece y el ROE que hace
+   falta es menor. Sirve para descartar lo imposible, no para proyectar.
+
+6. **Un denominador negativo no produce multiplo.** Un PER con resultado
+   negativo no es "barato", es otra categoria.
+
+### 17.5 ROIC y ROTCE: ausentes a proposito
+
+Los dos se pidieron y ninguno esta. No es un pendiente disimulado:
+
+- **ROIC** necesita NOPAT, o sea EBIT y una tasa impositiva efectiva. Ninguno
+  de los dos esta en `fundamentales_sec_multiplos_d`.
+- **ROTCE** necesita patrimonio TANGIBLE, o sea goodwill e intangibles, que
+  tampoco estan en la capa derivada.
+
+Aproximarlos con lo que hay seria inventar un numero con cara de dato. Si se
+los quiere, el costo es concreto: agregar `operating_income_ttm`, la tasa
+efectiva y los intangibles a la capa derivada, y recomputarla.
+
+Ademas, y esto es lo que hace que su ausencia no rompa nada: **ROE, ROIC y
+ROTCE no se mueven con el precio.** Ninguno tiene el precio en su formula. No
+existe una columna "ROE si sube 20%"; entran solo como chequeo de plausibilidad
+del crecimiento requerido, que es exactamente el papel que cumple el ROE hoy.
+
+### 17.6 Como se lee
+
+```
+python scripts/manual/valuacion_implicita.py AAPL --variacion 20
+python scripts/manual/valuacion_implicita.py AAPL --precio 250
+python scripts/manual/valuacion_implicita.py AAPL --variacion 20 --referencia 75
+python scripts/manual/valuacion_implicita.py AAPL --desde 2023-01-01
+```
+
+`--referencia` elige que percentil se considera "normal" (default 50). Subirlo
+a 75 pregunta "para que este precio sea caro-pero-visto", que suele ser la
+comparacion honesta con una empresa en expansion.
+
+`--desde` recorta la historia. Importa mas de lo que parece: buena parte del
+rango de multiplos de 2021 viene del **regimen de tasas** y no de la empresa.
+Un PER de 20 con la tasa en cero no significa lo mismo que un PER de 20 hoy, y
+el percentil no sabe la diferencia. Es la limitacion de fondo de "caro contra
+si misma" y esta impresa al pie de cada corrida.

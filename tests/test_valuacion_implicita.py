@@ -173,3 +173,126 @@ def test_ida_y_vuelta_entre_escenario_y_referencia():
     precio = V.precios_de_referencia(BASE, historia, percentiles=(0.5,))["pe_ratio"][0.5]
     r = V.escenario(BASE, historia, precio_objetivo=precio)
     assert r["multiplos"]["pe_ratio"] == pytest.approx(25.0)
+
+
+# ---------------------------------------------------------------------------
+# La direccion inversa: que tiene que hacer el NEGOCIO
+# ---------------------------------------------------------------------------
+
+def test_denominador_para_es_el_espejo_de_multiplos():
+    """
+    Round-trip: si con el precio en 15 el PER da X, entonces pedir el
+    denominador que hace falta para un PER de X a 15 tiene que devolver el
+    resultado original. Si el despeje esta mal, esto no cierra.
+    """
+    m = V.multiplos(BASE, 15.0)
+    den = V.denominador_para(BASE, "pe_ratio", m["pe_ratio"], 15.0)
+    assert den == pytest.approx(BASE["net_income_ttm"])
+
+
+def test_denominador_para_resta_la_deuda_del_lado_correcto():
+    """
+    En las metricas sobre EV el numerador es market cap MAS deuda neta, no el
+    market cap. A 15: mc 1.500, EV 1.700; para un EV/EBITDA de 10 hace falta
+    un ebitda de 170, no de 150. Usar el market cap aca es el error clasico.
+    """
+    assert V.denominador_para(BASE, "ev_ebitda", 10.0, 15.0) == pytest.approx(170.0)
+    m = V.multiplos(BASE, 15.0)
+    vuelta = V.denominador_para(BASE, "ev_ebitda", m["ev_ebitda"], 15.0)
+    assert vuelta == pytest.approx(BASE["ebitda_ttm"])
+
+
+def test_sin_deuda_conocida_no_hay_denominador_sobre_ev():
+    """Misma regla que en precio_para: un EV sin deuda neta no existe."""
+    sin_deuda = dict(BASE, net_debt=None)
+    assert V.denominador_para(sin_deuda, "ev_ebitda", 10.0, 15.0) is None
+    assert V.denominador_para(sin_deuda, "pe_ratio", 20.0, 15.0) is not None
+
+
+def test_el_fcf_requerido_admite_ser_negativo():
+    """
+    fcf_yield es el unico que se lee al reves y el unico que acepta objetivo
+    negativo: quemar caja es informacion, no un dato invalido.
+    """
+    assert V.denominador_para(BASE, "fcf_yield", -0.02, 10.0) == pytest.approx(-20.0)
+
+
+def test_un_multiplo_objetivo_no_positivo_no_produce_denominador():
+    assert V.denominador_para(BASE, "pe_ratio", 0.0, 10.0) is None
+    assert V.denominador_para(BASE, "pe_ratio", -5.0, 10.0) is None
+
+
+def test_la_exigencia_es_la_razon_entre_el_multiplo_implicito_y_el_objetivo():
+    """
+    Identidad que amarra la inversa a la directa: el crecimiento que hace falta
+    es exactamente multiplo_implicito / multiplo_objetivo - 1. Se verifica por
+    separado porque exigencia() lo calcula por la via larga (despejando el
+    denominador) y las dos cuentas tienen que coincidir.
+    """
+    historia = {"pe_ratio": [10.0, 20.0, 30.0, 40.0]}     # mediana 25
+    ex = V.exigencia(BASE, historia, 15.0)["pe_ratio"]
+    assert ex["multiplo_objetivo"] == pytest.approx(25.0)
+    assert ex["multiplo_implicito"] == pytest.approx(30.0)   # 1.500 / 50
+    assert ex["actual"] == pytest.approx(50.0)
+    assert ex["requerido"] == pytest.approx(60.0)            # 1.500 / 25
+    assert ex["crecimiento"] == pytest.approx(30.0 / 25.0 - 1.0)
+
+
+def test_la_identidad_tambien_vale_sobre_ev():
+    """
+    La deuda neta se cancela al dividir, asi que la razon vale igual para las
+    metricas sobre EV. Es lo que justifica leer la columna 'crece' sin
+    preguntarse si el multiplo era sobre equity o sobre EV.
+    """
+    historia = {"ev_ebitda": [8.0, 10.0, 12.0]}              # mediana 10
+    ex = V.exigencia(BASE, historia, 15.0)["ev_ebitda"]
+    assert ex["crecimiento"] == pytest.approx(
+        ex["multiplo_implicito"] / ex["multiplo_objetivo"] - 1.0)
+
+
+def test_sin_historia_no_hay_exigencia():
+    ex = V.exigencia(BASE, {}, 15.0)["pe_ratio"]
+    assert ex["multiplo_objetivo"] is None
+    assert ex["requerido"] is None
+    assert ex["crecimiento"] is None
+
+
+def test_el_crecimiento_historico_compara_contra_el_mismo_trimestre():
+    """
+    pasos=4 significa "el mismo trimestre del anio pasado". Con 100 en los 4
+    primeros y 110/120 despues, los crecimientos son +10% y +20%.
+    """
+    serie = [("2023-03-31", 100.0), ("2023-06-30", 100.0),
+             ("2023-09-30", 100.0), ("2023-12-31", 100.0),
+             ("2024-03-31", 110.0), ("2024-06-30", 120.0)]
+    assert V.crecimiento_historico(serie) == pytest.approx([0.10, 0.20])
+
+
+def test_el_crecimiento_historico_saltea_huecos_y_bases_no_positivas():
+    """
+    Un None no es un cero y una base <= 0 no produce porcentaje: dividir por
+    un patrimonio negativo devolveria un numero con signo invertido que se
+    leeria como caida.
+    """
+    serie = [("q1", 100.0), ("q2", None), ("q3", -50.0), ("q4", 100.0),
+             ("q5", 110.0), ("q6", 50.0), ("q7", 10.0), ("q8", 200.0)]
+    assert V.crecimiento_historico(serie) == pytest.approx([0.10, 1.0])
+
+
+def test_el_crecimiento_historico_necesita_un_anio_entero():
+    serie = [("q1", 100.0), ("q2", 110.0), ("q3", 120.0)]
+    assert V.crecimiento_historico(serie) == []
+
+
+def test_el_roe_implicito_usa_el_patrimonio_de_hoy():
+    """Resultado 100 contra patrimonio 400 -> 25%."""
+    assert V.roe_implicito(BASE, 100.0) == pytest.approx(0.25)
+
+
+def test_un_patrimonio_no_positivo_no_produce_roe():
+    """
+    Con patrimonio negativo el ROE cambia de signo y deja de significar lo que
+    dice su nombre. Vale None antes que un numero que se lee al reves.
+    """
+    assert V.roe_implicito(dict(BASE, equity=-400.0), 100.0) is None
+    assert V.roe_implicito(dict(BASE, equity=None), 100.0) is None

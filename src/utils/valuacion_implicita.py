@@ -255,3 +255,146 @@ def precios_de_referencia(base, historia, percentiles=(0.10, 0.25, 0.50,
                        if objetivo is not None else None)
         salida[metrica] = fila
     return salida
+
+
+# ---------------------------------------------------------------------------
+# La direccion inversa: que tiene que hacer el NEGOCIO
+# ---------------------------------------------------------------------------
+#
+# Todo lo de arriba mueve el precio y deja el negocio quieto. Esta seccion hace
+# exactamente lo contrario: fija el precio en la tesis, fija el multiplo en una
+# referencia de la propia historia, y despeja cuanto tiene que valer el
+# denominador.
+#
+# Son dos preguntas opuestas y las dos son legitimas. Lo que NO es legitimo es
+# mezclarlas: un escenario que mueve el precio Y el negocio al mismo tiempo
+# tiene dos incognitas y una sola ecuacion, y cualquier numero que devuelva es
+# una eleccion disfrazada de calculo.
+#
+# Por que esto importa: un +20% de precio mueve TODOS los multiplos de precio
+# exactamente +20%. Eso es aritmetica, no informacion. Lo que convierte "PER
+# 43" en una respuesta es contra que se lo compara -- su propia historia -- y
+# que hace falta que pase para llegar ahi.
+
+
+def denominador_para(base, metrica, objetivo, precio):
+    """
+    Cuanto tiene que valer el denominador TTM para que `metrica` valga
+    `objetivo` con el precio en `precio`.
+
+    Espejo exacto de precio_para(): alla se despeja el precio dejando el
+    negocio quieto, aca se despeja el negocio dejando el precio quieto. Sale de
+    la misma formula que multiplos(), no de una aproximacion.
+
+    Devuelve un valor en la MONEDA Y ESCALA de los *_ttm de `base` (millones,
+    en la fuente SEC), no un ratio.
+    """
+    p, obj = _num(precio), _num(objetivo)
+    acciones = _num(base.get("shares", base.get("acciones")))
+    if p is None or p <= 0 or obj is None:
+        return None
+    if acciones is None or acciones <= 0:
+        return None
+    mc = p * acciones
+
+    # fcf_yield va primero porque es el unico que se lee al reves (el fcf esta
+    # en el numerador) y el unico que admite objetivo negativo.
+    if metrica == "fcf_yield":
+        return mc * obj
+
+    if metrica not in METRICAS or obj <= 0:
+        return None
+    campo, usa_ev = METRICAS[metrica]
+    num = mc
+    if usa_ev:
+        nd = _num(base.get("net_debt"))
+        if nd is None:
+            return None                       # EV sin deuda conocida no existe
+        num = mc + nd
+    return (num / obj) if num > 0 else None
+
+
+def exigencia(base, historia, precio, referencia=0.50):
+    """
+    Que tiene que hacer el negocio para que `precio` sea consistente con un
+    multiplo NORMAL de la propia empresa.
+
+    Fija el multiplo en el percentil `referencia` de su historia (la mediana
+    por defecto) y despeja el denominador. Por metrica devuelve:
+
+      multiplo_objetivo   el de referencia, sacado de su propia historia
+      multiplo_implicito  el que resulta de `precio` sin tocar el negocio
+      actual              denominador TTM de hoy
+      requerido           denominador que haria falta
+      crecimiento         requerido/actual - 1
+
+    El crecimiento es identicamente multiplo_implicito/multiplo_objetivo - 1
+    (vale tambien para las metricas sobre EV, porque la deuda neta se cancela
+    al dividir). Igual se calcula por la via larga: asi la formula de cada
+    multiplo vive en UN solo lugar y la directa y la inversa no pueden
+    divergir en silencio.
+    """
+    implicitos = multiplos(base, precio)
+    salida = {}
+    for metrica in list(METRICAS) + ["fcf_yield"]:
+        campo = FCF if metrica == "fcf_yield" else METRICAS[metrica][0]
+        objetivo = cuantil((historia or {}).get(metrica), referencia)
+        actual = _num(base.get(campo))
+        requerido = (denominador_para(base, metrica, objetivo, precio)
+                     if objetivo is not None else None)
+        crecimiento = None
+        if requerido is not None and actual is not None and actual > 0:
+            crecimiento = requerido / actual - 1.0
+        salida[metrica] = {"multiplo_objetivo": objetivo,
+                           "multiplo_implicito": implicitos.get(metrica),
+                           "actual": actual,
+                           "requerido": requerido,
+                           "crecimiento": crecimiento}
+    return salida
+
+
+def crecimiento_historico(serie, pasos=4):
+    """
+    Distribucion del crecimiento interanual de una serie TTM TRIMESTRAL.
+
+    serie: [(period_end, valor)] ordenada por period_end y SIN repetidos.
+
+    La serie DIARIA no sirve aca, y es la trampa de esta cuenta: el TTM es una
+    escalera que solo cambia cuando sale un balance, asi que medir su
+    crecimiento en cada rueda multiplica por ~63 las observaciones sin agregar
+    una sola. El n quedaria inflado y la dispersion, aplastada.
+
+    `pasos` = 4 compara contra el mismo trimestre del anio anterior, que es lo
+    que hace comparable el numero contra el crecimiento requerido por una
+    tesis anual.
+
+    Devuelve la lista ORDENADA de crecimientos, lista para cuantil().
+    """
+    vals = [_num(v) for _, v in (serie or [])]
+    out = []
+    for i in range(pasos, len(vals)):
+        previo, actual = vals[i - pasos], vals[i]
+        if previo is not None and actual is not None and previo > 0:
+            out.append(actual / previo - 1.0)
+    return sorted(out)
+
+
+def roe_implicito(base, net_income):
+    """
+    ROE que implica `net_income` contra el patrimonio de HOY.
+
+    El patrimonio se deja quieto a proposito, y eso convierte el resultado en
+    un TECHO: si la empresa gana mas y no reparte todo, el patrimonio crece y
+    el ROE que hace falta es menor que este. Sirve para descartar lo imposible,
+    no para proyectar.
+
+    Se usa el equity contable tal cual. ROTCE (sobre patrimonio tangible) y
+    ROIC (sobre capital invertido, que necesita NOPAT y por lo tanto una tasa
+    impositiva) no salen de esta tabla: pedirian columnas que la capa derivada
+    no tiene, y aproximarlos aca seria inventar un numero con cara de dato.
+    """
+    eq = _num(base.get("equity"))
+    ni = _num(net_income)
+    if eq is None or eq <= 0 or ni is None:
+        return None
+    return ni / eq
