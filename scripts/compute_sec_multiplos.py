@@ -129,6 +129,12 @@ def leer_acciones(cur, ticker):
             for f, s, u in cur.fetchall()]
 
 
+def ultima_rueda(cur, ticker):
+    """Ultima fecha ya calculada para el ticker, o None si no hay serie."""
+    cur.execute(f"SELECT MAX(fecha) FROM {TABLA} WHERE ticker=%s", (ticker,))
+    return cur.fetchone()[0]
+
+
 def leer_precios(cur, ticker, desde):
     cur.execute("SELECT fecha, close FROM precios_diarios "
                 "WHERE ticker=%s AND fecha >= %s AND close IS NOT NULL "
@@ -291,6 +297,69 @@ def _limpiar(fila, ticker):
 
 
 # ---------------------------------------------------------------- main --
+def computar(env, tickers=None, desde=DESDE_DEFECTO, ventana=VENTANA_PCT,
+             min_obs=MIN_OBS_PCT, estricto=True, rebuild=False,
+             incremental=False, dry_run=False, verbose=False):
+    """
+    Motor, separado del CLI para que lo pueda llamar el paso diario de
+    recovery_incremental sin lanzar un subproceso -- el mismo patron que
+    compute_multiplos_px.
+
+    Devuelve {n_ok, n_filas, sin_acciones, sin_ttm, sin_precios}.
+    """
+    lista = tickers_disponibles(env, tickers)
+    log(f"tickers: {len(lista)}  |  desde: {desde}  |  "
+        f"ventana percentil: {ventana} ruedas (min {min_obs})")
+
+    n_filas = n_ok = 0
+    sin_acciones, sin_ttm, sin_precios = [], [], []
+    with _conn(env) as cx:
+        with cx.cursor() as cur:
+            for ticker in lista:
+                precios = leer_precios(cur, ticker, desde)
+                if not precios:
+                    sin_precios.append(ticker)
+                    continue
+                acc = leer_acciones(cur, ticker)
+                if not acc:
+                    sin_acciones.append(ticker)
+                    continue
+                ttm = T.enriquecer(T.serie_ttm(leer_trimestres(cur, ticker)))
+                if not any(f["ventana_ok"] for f in ttm):
+                    sin_ttm.append(ticker)
+                    continue
+                filas = serie_diaria(precios, ttm, acc)
+                filas = percentiles(filas, ventana, min_obs, estricto=estricto)
+                # El recorte va DESPUES de calcular. El percentil es una
+                # ventana rodante de 756 ruedas: para la rueda de hoy hace
+                # falta toda la historia previa, asi que lo que se ahorra es
+                # la ESCRITURA, no el calculo -- que es aritmetica local y
+                # barata. Contrapartida asumida: un restatement que cambie un
+                # TTM viejo no se propaga hacia atras en modo incremental; de
+                # eso se encarga la corrida completa que sigue a cada refresh
+                # de la fuente SEC.
+                if incremental:
+                    ultima = ultima_rueda(cur, ticker)
+                    if ultima:
+                        filas = [f for f in filas if f["fecha"] > ultima]
+                filas = [_limpiar(f, ticker) for f in filas]
+                n_ok += 1
+                if not filas:
+                    continue
+                if not dry_run:
+                    n_filas += upsert(env, ticker, filas, rebuild)
+                else:
+                    n_filas += len(filas)
+                if verbose:
+                    con_pe = sum(1 for f in filas if f["pe_ratio"] is not None)
+                    log(f"  {ticker:<6} {len(filas):>5} ruedas  "
+                        f"PER en {con_pe:>5}  ({filas[0]['fecha']} -> "
+                        f"{filas[-1]['fecha']})")
+
+    return {"n_ok": n_ok, "n_filas": n_filas, "sin_acciones": sin_acciones,
+            "sin_ttm": sin_ttm, "sin_precios": sin_precios}
+
+
 def main():
     p = argparse.ArgumentParser(
         description="Computa fundamentales_sec_multiplos_d (LOCAL-only)")
@@ -304,12 +373,19 @@ def main():
                         f"(default {MIN_OBS_PCT})")
     p.add_argument("--rebuild", action="store_true",
                    help="Borra la serie del ticker antes de reescribirla")
+    p.add_argument("--incremental", action="store_true",
+                   help="Escribe solo las ruedas posteriores a la ultima ya "
+                        "calculada. Para el paso diario; no propaga "
+                        "restatements hacia atras (ver la nota en el codigo)")
     p.add_argument("--percentil-permisivo", action="store_true",
                    help="Emite percentil sin exigir la ventana llena. Ver la "
                         "advertencia en percentiles()")
     p.add_argument("--dry-run", action="store_true", help="No escribe en la DB")
     p.add_argument("--verbose", action="store_true", help="Detalle por ticker")
     args = p.parse_args()
+    if args.incremental and args.rebuild:
+        p.error("--incremental y --rebuild se contradicen: uno escribe solo lo "
+                "nuevo y el otro reescribe la serie entera")
 
     env = _parse_env_file(os.path.join(ROOT, ".env"))
     tickers = [t.strip().upper() for t in args.tickers.split(",")] if args.tickers else None
@@ -320,50 +396,20 @@ def main():
     print(SEP)
     print()
 
-    lista = tickers_disponibles(env, tickers)
-    log(f"tickers: {len(lista)}  |  desde: {args.desde}  |  "
-        f"ventana percentil: {args.ventana_pct} ruedas (min {args.min_obs})")
-
-    n_filas = n_ok = 0
-    sin_acciones, sin_ttm, sin_precios = [], [], []
-    with _conn(env) as cx:
-        with cx.cursor() as cur:
-            for ticker in lista:
-                precios = leer_precios(cur, ticker, args.desde)
-                if not precios:
-                    sin_precios.append(ticker)
-                    continue
-                acc = leer_acciones(cur, ticker)
-                if not acc:
-                    sin_acciones.append(ticker)
-                    continue
-                ttm = T.enriquecer(T.serie_ttm(leer_trimestres(cur, ticker)))
-                if not any(f["ventana_ok"] for f in ttm):
-                    sin_ttm.append(ticker)
-                    continue
-                filas = serie_diaria(precios, ttm, acc)
-                filas = percentiles(filas, args.ventana_pct, args.min_obs,
-                                    estricto=not args.percentil_permisivo)
-                filas = [_limpiar(f, ticker) for f in filas]
-                if not args.dry_run:
-                    n_filas += upsert(env, ticker, filas, args.rebuild)
-                else:
-                    n_filas += len(filas)
-                n_ok += 1
-                if args.verbose:
-                    con_pe = sum(1 for f in filas if f["pe_ratio"] is not None)
-                    log(f"  {ticker:<6} {len(filas):>5} ruedas  "
-                        f"PER en {con_pe:>5}  ({filas[0]['fecha']} -> "
-                        f"{filas[-1]['fecha']})")
+    r = computar(env, tickers=tickers, desde=args.desde,
+                 ventana=args.ventana_pct, min_obs=args.min_obs,
+                 estricto=not args.percentil_permisivo, rebuild=args.rebuild,
+                 incremental=args.incremental, dry_run=args.dry_run,
+                 verbose=args.verbose)
 
     print()
     print(SEP)
-    print(f"  OK  |  tickers: {n_ok}  |  filas: {n_filas}")
-    for etiqueta, xs in (("sin serie de acciones", sin_acciones),
-                         ("sin TTM completo", sin_ttm),
-                         ("sin precios", sin_precios)):
-        if xs:
-            print(f"  {etiqueta}: {len(xs)}  ->  {', '.join(xs)}")
+    print(f"  OK  |  tickers: {r['n_ok']}  |  filas: {r['n_filas']}")
+    for etiqueta, clave in (("sin serie de acciones", "sin_acciones"),
+                            ("sin TTM completo", "sin_ttm"),
+                            ("sin precios", "sin_precios")):
+        if r[clave]:
+            print(f"  {etiqueta}: {len(r[clave])}  ->  {', '.join(r[clave])}")
     print(SEP)
     print()
 

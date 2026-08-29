@@ -58,6 +58,43 @@ SET "REFRESH_RC="
 if exist "%RCFILE%" set /p REFRESH_RC=<"%RCFILE%"
 del "%RCFILE%" 2>nul
 
+REM ============================================================
+REM  PASOS DERIVADOS
+REM
+REM  La fuente SEC cruda no sirve sola: los multiplos necesitan ademas la
+REM  serie de acciones en circulacion. Antes habia que acordarse de correr
+REM  los tres comandos a mano y en orden -- el hermano de yahooquery
+REM  (refresh_fundamentales.bat) ya encadenaba sus 5 pasos y este no.
+REM
+REM    1. refresh_acciones_circulacion : yahooquery + extension SEC validada.
+REM       SALE A LA RED. Usa yfinance_lock (regla 9) y NO debe correr
+REM       pre-mercado (regla 10).
+REM    2. compute_sec_multiplos        : serie diaria. Recomputa DB->local,
+REM       sin red. Va COMPLETO (no --incremental) porque un refresh puede
+REM       traer restatements que cambian TTM viejos.
+REM
+REM  Solo corren si el refresh anduvo: sobre una fuente a medio escribir
+REM  los derivados propagarian el error en vez de detenerse.
+REM  Escape: set SEC_NO_DERIVADOS=1  (util con --solo-normalizar, que es
+REM  offline, o cuando solo se quiere refrescar el crudo).
+REM ============================================================
+if not "%REFRESH_RC:~0,2%"=="OK" goto :sin_derivados
+if defined SEC_NO_DERIVADOS goto :sin_derivados
+
+echo.
+echo ------------------------------------------------------------
+echo   PASO DERIVADO 1/2 -- acciones en circulacion
+echo ------------------------------------------------------------
+"%PYTHON%" "%ROOT%scripts\refresh_acciones_circulacion.py" 2>&1 | tee -a "%LOGFILE%"
+
+echo.
+echo ------------------------------------------------------------
+echo   PASO DERIVADO 2/2 -- multiplos diarios
+echo ------------------------------------------------------------
+"%PYTHON%" "%ROOT%scripts\compute_sec_multiplos.py" 2>&1 | tee -a "%LOGFILE%"
+
+:sin_derivados
+
 echo.
 echo ============================================================
 if "%REFRESH_RC:~0,2%"=="OK" (

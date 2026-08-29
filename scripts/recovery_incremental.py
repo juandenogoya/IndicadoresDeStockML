@@ -685,6 +685,24 @@ def main():
         except Exception as e:
             log(f"\nMULTIPLOS *_px: ERROR (no critico): {str(e)[:120]}")
 
+    # MULTIPLOS SEC diarios (fuente PARALELA a la de arriba): market_cap, EV,
+    # PER/P-B/P-S/EV-EBITDA y el percentil "caro vs si misma" sobre la historia
+    # propia del ticker. Depende del precio, por eso es diario y va aca.
+    # Recompute DB->local sin red. --incremental escribe solo la rueda nueva; la
+    # corrida COMPLETA la hace refresh_fundamentales_sec.bat, que es donde
+    # pueden aparecer restatements que cambien un TTM viejo.
+    # El modulo lee el .env por su cuenta y siempre apunta a LOCAL, sin importar
+    # DATABASE_URL: la fuente SEC es LOCAL-only. No critico.
+    if not args.dry_run and args.target == "local":
+        try:
+            from scripts.compute_sec_multiplos import computar as _sec_multiplos
+            from scripts.oneshot.create_fundamentales_tables import _parse_env_file as _pef
+            _r = _sec_multiplos(_pef(os.path.join(ROOT, ".env")), incremental=True)
+            log(f"\nMULTIPLOS SEC: {_r['n_filas']} filas nuevas en "
+                f"{_r['n_ok']} tickers -> fundamentales_sec_multiplos_d")
+        except Exception as e:
+            log(f"\nMULTIPLOS SEC: ERROR (no critico): {str(e)[:120]}")
+
     # ── REPORTE FINAL ─────────────────────────────────────────────────────────
     print()
     print(SEP)
