@@ -237,21 +237,55 @@ def _hechos(facts, tags):
     return out
 
 
+def _rango_forma(hecho):
+    """
+    1 si el hecho viene de un reporte periodico (10-K / 10-Q y sus enmiendas),
+    0 si viene de cualquier otro formulario.
+
+    Existe porque la regla "gana la presentacion mas reciente" es correcta
+    entre reportes periodicos y desastrosa fuera de ellos. El DEF 14A -- el
+    proxy de compensacion -- taguea NetIncomeLoss en su tabla "Pay Versus
+    Performance", se presenta DESPUES del 10-K y por lo tanto ganaba. Medido
+    sobre el universo: 295 hechos de DEF 14A ganaban la eleccion en 59
+    tickers, y en 8 de ellos cambiaban el numero. El peor, Schwab, publica su
+    resultado anual en miles en el proxy: 8,9 MM contra los 8.852,0 MM del
+    10-K, y eso se arrastraba a los cinco ejercicios. El Q4, que se deriva
+    como FY menos 9M, salia en -6.384 MM cuando el real fue +2.459 MM.
+
+    Un 8-K (comunicado de resultados) tiene el mismo problema al reves: llega
+    ANTES que el 10-Q y trae cifras preliminares. Si un periodo SOLO existe en
+    un 8-K, se sigue usando -- este rango solo decide cuando hay competencia.
+    """
+    return 1 if hecho.get("form", "").split("/")[0] in ("10-K", "10-Q") else 0
+
+
 def _elegir(cands, hasta_filed=None):
     """
     Elige un hecho entre varios que describen el MISMO periodo.
 
-    Criterio: primero la prioridad del tag (el sinonimo preferido), despues el
-    'filed' mas reciente -- que es la ultima reexpresion conocida.
+    Se ordena ASCENDENTE y se toma el ultimo, asi que cada clave esta escrita
+    de modo que "mas grande" signifique "mejor":
+
+      1. el reporte periodico le gana a cualquier otro formulario;
+      2. despues `pri`, la posicion del tag en la lista de sinonimos;
+      3. a igualdad, el 'filed' mas reciente -- la ultima reexpresion conocida.
 
     hasta_filed habilita el POINT-IN-TIME: descarta lo presentado despues de
     esa fecha, devolviendo lo que se sabia entonces.
+
+    OJO -- DEFECTO CONOCIDO Y NO CORREGIDO ACA: al tomar el ultimo del orden
+    ascendente, `pri` grande le gana a `pri` chico, o sea que entre dos
+    sinonimos GANA EL MENOS PREFERIDO. Es lo contrario de lo que hace la otra
+    rama de seleccion, el bloque `directos` de _serie_aditiva, que compara
+    `h["pri"] < prev["pri"]`. Las dos ramas se contradicen. Se deja como estaba
+    a proposito: cambiarlo mueve numeros en todo el universo y merece su
+    propia medicion, no venir de arrastre con el arreglo del formulario.
     """
     if hasta_filed:
         cands = [c for c in cands if c["filed"] and c["filed"] <= hasta_filed]
     if not cands:
         return None
-    return sorted(cands, key=lambda h: (h["pri"], h["filed"]))[-1]
+    return sorted(cands, key=lambda h: (_rango_forma(h), h["pri"], h["filed"]))[-1]
 
 
 # ------------------------------------------------------- calendario fiscal --

@@ -15,8 +15,9 @@ from src.utils import sec_xbrl
 
 
 # --------------------------------------------------------------- helpers --
-def _hecho(val, end, start=None, filed="2026-01-01", tag=None, accn="x"):
-    h = {"val": val, "end": end, "filed": filed, "accn": accn, "form": "10-Q"}
+def _hecho(val, end, start=None, filed="2026-01-01", tag=None, accn="x",
+           form="10-Q"):
+    h = {"val": val, "end": end, "filed": filed, "accn": accn, "form": form}
     if start:
         h["start"] = start
     return h
@@ -472,6 +473,53 @@ def test_descarta_publicacion_anterior_al_cierre():
         _hecho(10, "2025-03-31", "2025-01-01", filed="2025-05-05")])
     p = _periodo(sec_xbrl.normalizar(facts), "2025-03-31")
     assert p["filed_primero"] == "2025-05-05"
+
+
+# ------------------------------- 8b. de que formulario sale cada numero --
+def test_el_reporte_periodico_le_gana_al_proxy_aunque_sea_mas_viejo():
+    """
+    "Gana la presentacion mas reciente" es correcto entre reportes periodicos
+    y desastroso fuera de ellos. El DEF 14A -- el proxy de compensacion --
+    taguea NetIncomeLoss en su tabla Pay Versus Performance y se presenta
+    DESPUES del 10-K, asi que ganaba.
+
+    Caso real: Schwab publica su resultado anual en MILES en el proxy. Se
+    tomaba 8,9 MM en vez de 8.852,0 MM, en los cinco ejercicios, y como el Q4
+    se deriva restando 9M al anual, el Q4 salia -6.384 MM cuando el real fue
+    +2.459 MM.
+
+    Los numeros son los de Schwab 2025: 1.909 + 2.126 + 2.358 acumulan 6.393
+    a los nueve meses, y el anual real es 8.852.
+    """
+    facts = _facts(NetIncomeLoss=[
+        _hecho(1909.0, "2025-03-31", "2025-01-01", filed="2025-05-05"),
+        _hecho(4035.0, "2025-06-30", "2025-01-01", filed="2025-08-05"),
+        _hecho(6393.0, "2025-09-30", "2025-01-01", filed="2025-11-05"),
+        _hecho(8852.0, "2025-12-31", "2025-01-01",
+               filed="2026-02-25", form="10-K"),
+        _hecho(8.9, "2025-12-31", "2025-01-01",
+               filed="2026-04-06", form="DEF 14A")])
+    r = sec_xbrl.normalizar(facts)
+    # Con el proxy ganando, este Q4 daba 8,9 - 6.393 = -6.384.
+    assert _periodo(r, "2025-12-31")["net_income"] == pytest.approx(2459.0)
+
+
+def test_si_el_periodo_SOLO_esta_en_un_8K_igual_se_usa():
+    """
+    El rango de formulario decide entre COMPETIDORES; no descarta datos. Un
+    trimestre que solo existe en un comunicado de resultados sigue valiendo:
+    la alternativa es un hueco, y el 8-K es la misma empresa informando.
+    """
+    facts = _facts(Revenues=[_hecho(42, "2025-03-31", "2025-01-01", form="8-K")])
+    assert _periodo(sec_xbrl.normalizar(facts), "2025-03-31")["revenue"] == 42
+
+
+def test_entre_dos_periodicos_sigue_ganando_el_mas_reciente():
+    """La regla de la reexpresion no se toca donde si corresponde."""
+    facts = _facts(Revenues=[
+        _hecho(10, "2025-03-31", "2025-01-01", filed="2025-05-05", form="10-Q"),
+        _hecho(11, "2025-03-31", "2025-01-01", filed="2026-02-20", form="10-K")])
+    assert _periodo(sec_xbrl.normalizar(facts), "2025-03-31")["revenue"] == 11
 
 
 # ------------------------------------- 9. tags curados y mezcla de tags --
