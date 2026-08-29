@@ -373,13 +373,16 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min. Encadena 5 pasos derivados: ratios -> ticker_pais -> vs_sector -> **multiplos_px -> vs_sector --valuacion-px** (los 2 ultimos agregados 27/8/2026: sin ellos el trimestre nuevo queda sin `*_px` y el dashboard muestra la valuacion vacia). `set REFRESH_NO_PAUSE=1` para correrlo desatendido |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
-| `scripts/manual/refresh_fundamentales_sec.bat` (+ `scripts/refresh_fundamentales_sec.py`) | Refresh de la fuente SEC XBRL (PARALELA a yahooquery, LOCAL-only, ~147 tickers USA). INCREMENTAL: consulta `submissions` (~164 KB) y solo baja `companyfacts` (~4 MB) si cambio el accession del ultimo 10-Q/10-K -> sin balances nuevos mueve ~24 MB en vez de ~522 MB. REQUIERE `SEC_USER_AGENT` en el .env (SEC devuelve 403 sin User-Agent con mail de contacto). `--solo-normalizar` / `--forzar` / `--tickers` / `--dry-run`. Ver docs/fuentes_fundamentales.md |
-| `src/utils/sec_xbrl.py` | Normalizador PURO de SEC XBRL -> serie trimestral (stdlib, sin DB/red). Resuelve sinonimos por concepto, tags que cambian dentro de la misma empresa, desacumulacion YTD (Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M) y restatements. Etiqueta fiscal_year/fiscal_quarter reales. `hasta_filed` = point-in-time. Emite avisos como red contra el error silencioso. Incluye la identidad `net_income = ProfitLoss - minoritarios` para los 8 filers que no tagean NetIncomeLoss (MA/CAT/SCCO/AVAV/AVGO/F/FCX/AMT): solo rellena huecos, exige el hecho de minoritarios EN ESE PERIODO (nunca asume cero) y cruza contra ...AvailableToCommonStockholders. Ver docs/fuentes_fundamentales.md sec. 14 |
+| `scripts/manual/refresh_fundamentales_sec.bat` (+ `scripts/refresh_fundamentales_sec.py`) | Refresh de la fuente SEC XBRL (PARALELA a yahooquery, LOCAL-only, ~147 tickers USA). INCREMENTAL: consulta `submissions` (~164 KB) y solo baja `companyfacts` (~4 MB) si cambio el accession del ultimo 10-Q/10-K -> sin balances nuevos mueve ~24 MB en vez de ~522 MB. REQUIERE `SEC_USER_AGENT` en el .env (SEC devuelve 403 sin User-Agent con mail de contacto). `--solo-normalizar` / `--forzar` / `--tickers` / `--dry-run`. ENCADENA 2 pasos derivados (refresh_acciones_circulacion + compute_sec_multiplos completo), solo si el refresh anduvo; `set SEC_NO_DERIVADOS=1` los saltea (necesario con --solo-normalizar, que es offline). Ver docs/fuentes_fundamentales.md |
+| `src/utils/sec_xbrl.py` | Normalizador PURO de SEC XBRL -> serie trimestral (stdlib, sin DB/red). Resuelve sinonimos por concepto, tags que cambian dentro de la misma empresa, desacumulacion YTD (Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M) y restatements. Etiqueta fiscal_year/fiscal_quarter reales. `hasta_filed` = point-in-time. Emite avisos como red contra el error silencioso. Incluye la identidad `net_income = ProfitLoss - minoritarios` para los 8 filers que no tagean NetIncomeLoss (MA/CAT/SCCO/AVAV/AVGO/F/FCX/AMT): solo rellena huecos, exige el hecho de minoritarios EN ESE PERIODO (nunca asume cero) y cruza contra ...AvailableToCommonStockholders. Acepta `tags_curados={concepto: tag}` por ticker (el tag curado REEMPLAZA la lista de sinonimos, no se antepone: preferimos el hueco visible al numero mezclado invisible). Aviso `mezcla_en_ejercicio` = los Q de un mismo ejercicio salieron de tags distintos Y sus anuales difieren; si coinciden son sinonimos y calla (109 de 126 mezclas son inocuas). Ver docs/fuentes_fundamentales.md sec. 14 y 16 |
 | `src/utils/fundamentales_ttm.py` | TTM rodante PURO sobre la serie SEC + as-of por `filed_primero`. Rechaza ventanas que cruzan un hueco (un rolling(4) sobre serie con huecos suma 5-6 trimestres en silencio). Deriva ebitda/fcf/net_debt/bvps |
 | `src/utils/sec_acciones.py` | Serie POINT-IN-TIME de acciones desde la portada `dei` (nunca re-expresada por splits). Descarta errores de unidad y picos; invariante `fecha > filed` |
 | `src/utils/acciones_series.py` | Combina yahooquery (base de split ACTUAL) + SEC (base de su momento) y VALIDA que coincidan antes de mezclarlas. Yahoo manda donde llega; SEC solo extiende hacia atras; ESCALON nunca interpolacion; la discrepancia AVISA, no corrige |
 | `scripts/refresh_acciones_circulacion.py` | Puebla `acciones_circulacion` (yahooquery + extension SEC validada). LOCAL-only. Usa yfinance_lock |
-| `scripts/compute_sec_multiplos.py` | Serie DIARIA de multiplos sobre la fuente SEC (`fundamentales_sec_multiplos_d`). Capa derivada pura y recomputable. Percentil trailing ESTRICTO (exige ventana llena en tiempo); `--percentil-permisivo` la afloja |
+| `scripts/compute_sec_multiplos.py` | Serie DIARIA de multiplos sobre la fuente SEC (`fundamentales_sec_multiplos_d`). Capa derivada pura y recomputable. Percentil trailing ESTRICTO (exige ventana llena en tiempo); `--percentil-permisivo` la afloja. `--incremental` (paso diario en recovery_incremental) escribe solo la rueda nueva pero CALCULA la serie entera -- el percentil es rodante de 756 ruedas; no propaga restatements hacia atras, de eso se encarga la corrida completa del .bat. Motor expuesto como `computar()` |
+| `src/data/sec/tags_curados.py` | Mapeo CURADO ticker -> tag XBRL (modulo de DATOS, sin logica). Los 23 tickers donde "revenue" es ambiguo porque dos tags valen cosas distintas. 10 decididos por ARBITRAJE contra yahooquery, 13 por CRITERIO contable (yahooquery tiene filas stub ahi). Cada entrada anota su base y la cifra 2025 |
+| `scripts/manual/sec_avisos.py` | UNICO lector de `fundamentales_sec_avisos`. Ordena por SEVERIDAD y no por volumen: DEFECTO / HUECO / SOSPECHA / info. `--defectos` / `--detalle` / `--ticker` / `--alertar` (Telegram, SOLO defectos) |
+| `scripts/oneshot/revenue_tags_reporte.py` | Regenera el diagnostico de ambiguedad de revenue: por ejercicio, cuanto da cada tag candidato, que tags usaron los 4 Q y cuanto da yahooquery de arbitro. Solo lee (cache SEC + DB). Correrlo cuando `mezcla_en_ejercicio` senale un ticker nuevo |
 | `src/data/sec/client.py` | Descarga de data.sec.gov con cache en disco (`data/sec_cache/`, gitignoreado). REGLA: nada en `src/data/sec/` importa del lado de trading. OJO: SEC corta los loops de `curl` (conexion nueva por pedido) -> usar `requests.Session` con keep-alive |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
 | `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental Y al final de refresh_fundamentales.bat. Ver docs/fundamentales_calculo.md |
@@ -459,13 +462,22 @@ Las criticas:
   `normalizar(hasta_filed=...)` sobre el cache. Ver docs/fuentes_fundamentales.md
   CALIDAD MEDIDA (29/8/2026, control = la suma de 4 Q contra el anual que
   publico la empresa): net_income 99,6% | operating_income 98,6% | cfo 97,0% |
-  **revenue 87,8%**. El revenue falla en 30 tickers por MEZCLA DE TAGS dentro
+  revenue 87,8%. El revenue fallaba en 30 tickers por MEZCLA DE TAGS dentro
   del mismo ejercicio (siempre el Q4, que sale del 10-K y viene etiquetado
   distinto que los 10-Q). NO es un problema aritmetico y ningun algoritmo lo
   resuelve: 122 de 147 tickers no tienen ambiguedad, 23 necesitan un mapeo
-  CURADO ticker -> tag. **Consumir P/S y EV-EBITDA de SEC con cuidado hasta
-  que ese mapeo exista.** Detalle y las 4 salidas ya descartadas (resta contra
+  CURADO ticker -> tag. Las 4 salidas automaticas ya descartadas (resta contra
   el anual, `frame`, solo-publicado, pasarse al anual): doc sec. 15.
+  RESUELTO 29/8/2026 (doc sec. 16): el mapeo vive en src/data/sec/tags_curados.py
+  y lo aplica el refresh. Queda 1 mezcla consecuente en revenue (LNC, ejercicio
+  2018, borde de la transicion ASC 606 y fuera de la ventana 2021+ de la capa
+  derivada). P/S de SEC ya es consumible.
+  **PENDIENTE de la misma clase: `d_and_a` mezcla de forma consecuente en 79 de
+  147 tickers** -- sus sinonimos NO son equivalentes (Depreciation a secas no es
+  DepreciationDepletionAndAmortization). Alimenta el EBITDA, asi que
+  **EV-EBITDA de SEC sigue siendo el multiplo a consumir con cuidado**; explica
+  su mal acuerdo contra yahooquery (mediana 9,04%, p90 38,7%). Verlo con
+  `python scripts/manual/sec_avisos.py --defectos`.
 - `acciones_circulacion` (+ `acciones_circulacion_validacion`, LOCAL) --
   acciones en circulacion por (ticker, fecha) en base de split **ACTUAL**, que
   es la unica apareable con `precios_diarios` (que se corrige retroactivamente
@@ -586,6 +598,10 @@ Las criticas:
       compute_multiplos_px (PER/PB/PS/EV-EBITDA *_px en fundamentales_ratios_q con
       el cierre actual) + compute_sector_valuacion_px (comparativo de valuacion).
       Recompute DB->local, sin Yahoo. Ver docs/fundamentales_calculo.md.
+   -> incluye multiplos SEC diarios (29/8/2026, target=local): compute_sec_multiplos
+      --incremental (fundamentales_sec_multiplos_d). Fuente PARALELA a la de arriba.
+      Escribe solo la rueda nueva pero calcula la serie entera (el percentil es
+      rodante). Recompute DB->local, sin red. Ver docs/fuentes_fundamentales.md.
 3. status_local.bat         (verificar 0 tickers desactualizados)
 4. cron_diario --step features  (calcular features sobre los nuevos precios)
 5. cron_diario --step scanner   (generar alertas)

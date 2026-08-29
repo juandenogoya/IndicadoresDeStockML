@@ -4,14 +4,26 @@ Registro de la investigacion sobre de donde traer los estados contables
 trimestrales. NO es documentacion de codigo en produccion: es el conocimiento
 que costo trabajo obtener y que no se puede derivar leyendo el repo.
 
-ESTADO (29/8/2026): **Fases 1, 2 y 3 implementadas** -- normalizador (sec. 11),
-ingesta (sec. 12), capa derivada de multiplos diarios (sec. 13). La fuente SEC
-corre en PARALELO a yahooquery, sin ningun consumidor todavia.
+ESTADO (29/8/2026): **Fases 1, 2, 3 implementadas + curacion de revenue y
+operacion** -- normalizador (sec. 11), ingesta (sec. 12), capa derivada de
+multiplos diarios (sec. 13), mapeo curado y detector de mezcla de tags
+(sec. 16). La fuente SEC corre en PARALELO a yahooquery, sin ningun consumidor
+todavia.
+
+Reparto de roles decidido: SEC = eje TEMPORAL (historia larga, point-in-time,
+multiplos diarios y "caro vs si misma", 147 tickers USA). yahooquery = eje
+TRANSVERSAL (los 200 tickers incluidos los ADR sin XBRL trimestral, comparativa
+sectorial del ultimo Q). Ninguna reemplaza a la otra: SEC no cubre 53 tickers y
+yahooquery no puede hacer historia larga ni point-in-time. El cruce entre las
+dos es ademas el control que faltaba.
 
 Pendiente y ABIERTO:
-- El **mapeo curado de revenue** (23 tickers): sec. 15. Ningun algoritmo lo
-  resuelve; la decision es humana. Es EL bloqueante de P/S y EV-EBITDA.
-- Decidir cual fuente sigue y cual se deprecia (sec. 10, con los numeros de la 15).
+- **`d_and_a` mezcla tags en 79 de 147 tickers**: sec. 16.5. Alimenta el
+  EBITDA -> EV-EBITDA de SEC sigue siendo el multiplo a consumir con cuidado.
+  Es el sucesor directo del problema de revenue, ya diagnosticado y sin
+  decidir.
+- Los 13 tickers de revenue decididos por CRITERIO y no por arbitraje externo
+  (sec. 16.2) no tienen confirmacion independiente.
 - El objetivo original: escenarios de valuacion implicita y comparativa
   sectorial. La capa de datos ya esta; falta el consumidor.
 
@@ -25,6 +37,9 @@ Pendiente y ABIERTO:
 | por que revenue falla en bancos, AMT, PM | 15 |
 | ya se probo `Q4 = FY - (Q1+Q2+Q3)`? y `frame`? | 15 (las dos, no sirven) |
 | SEC o yahooquery para cada metrica | 15, ultimo bloque |
+| como se eligio el tag de cada uno de los 23 | 16.2 |
+| que hago si aparece un ticker con mezcla de tags | 16.3 y 16.6 |
+| por que EV-EBITDA de SEC todavia no es confiable | 16.5 |
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -1000,3 +1015,168 @@ Comparativa SEC vs yahooquery al ultimo dato de cada fuente (144 tickers):
 
 EV/EBITDA diverge por una razon ya declarada: yahooquery usa
 `NormalizedEBITDA`, SEC usa EBIT+D&A sin excluir one-offs.
+
+
+---
+
+## 16. La curacion del revenue, y el defecto que destapo (29/8/2026)
+
+La seccion 15 cierra con un diagnostico y sin solucion: 23 tickers necesitan
+un mapeo curado ticker -> tag, y ningun algoritmo lo resuelve. Esta seccion es
+lo que se hizo con eso.
+
+### 16.1 El mecanismo
+
+`normalizar()` acepta `tags_curados={concepto: tag}`. Dos decisiones de diseno
+que conviene no revertir por comodidad:
+
+**El tag curado REEMPLAZA la lista de sinonimos, no se antepone.** Si se
+antepusiera, los demas quedarian de respaldo y el normalizador volveria a
+mezclar exactamente en los trimestres donde el tag elegido falta -- que es el
+caso que la curacion viene a resolver. Se prefiere el hueco VISIBLE al numero
+mezclado invisible. Es la misma regla que gobierna al resto del modulo.
+
+**Acepta una lista** cuando la empresa migro de taxonomia de verdad y ningun
+tag solo cubre la ventana. En ese caso sigue siendo posible mezclar dentro de
+un ejercicio, y el aviso de 16.3 lo dice.
+
+El mapeo vive en `src/data/sec/tags_curados.py`, que es un modulo de DATOS: sin
+logica, sin DB, sin red. Lo aplica `refresh_fundamentales_sec.py`, que llama a
+`tags_curados.para(ticker)` -- `{}` para los 124 tickers sin ambiguedad, con lo
+que el comportamiento no cambia para ellos.
+
+### 16.2 Como se decidio cada uno de los 23
+
+`scripts/oneshot/revenue_tags_reporte.py` regenera el diagnostico desde cero:
+por ejercicio, cuanto da cada tag candidato, que tags usaron los 4 trimestres,
+y cuanto da yahooquery. Derivo los mismos 23 tickers de la investigacion
+original, por un camino distinto -- una confirmacion util de que el
+diagnostico era correcto.
+
+**Diez por ARBITRAJE** contra yahooquery: el anual de ese tag coincide con la
+suma de sus 4 trimestres, que es evidencia de una fuente independiente. AMT,
+AXP, BAC, BG, BLK, CVX, FCX, GS, PM, UPST.
+
+**Trece por CRITERIO contable**, porque yahooquery NO tiene los 4 trimestres de
+ningun ejercicio para ellos: son sus filas stub con `total_revenue` en NULL,
+uno de los defectos que motivaron traer SEC en primer lugar. Las dos fuentes
+fallan sobre los mismos tickers, y sobre todo en bancos.
+
+Los criterios, que es lo que hay que revisar si algo huele mal:
+
+- **Bancos y seguros** -> el ingreso NETO de intereses. El bruto cuenta como
+  ingreso plata que se paga como costo de fondeo; usarlo infla el denominador
+  de un P/S entre 40% y 70% y hace al sector incomparable consigo mismo.
+  C, MS, WFC, PGR, MA.
+- **Industria y consumo con brazo financiero** -> el tag MAYOR si es el
+  titular: la actividad de GM Financial y de HDFS es un segmento operativo, no
+  un resultado no operativo. GM, HOG.
+- **Energia** -> la linea de ventas, NO "total revenues and other income", que
+  suma resultados por participaciones y ventas de activos. Mismo criterio que
+  CVX, que si tiene arbitraje. COP, OXY, VST.
+- **Resto** -> el total. LYFT, PFE, RBLX.
+
+**Alpha Vantage se probo como tercer arbitro y NO sirve.** Para WFC da 125.397
+MM en 2024 y 77.198 MM en 2023: cambia de base a mitad de la serie. Es el mismo
+problema semantico, no una fuente de verdad. No reintentarlo.
+
+### 16.3 El detector, que es la parte que envejece bien
+
+Un mapeo curado se pudre en silencio: entra un ticker nuevo al universo, o una
+empresa cambia de taxonomia, y nadie se entera. Por eso el aviso
+`mezcla_en_ejercicio`: los trimestres de un mismo ejercicio armados con tags
+distintos.
+
+Es mas fuerte que `cambio_de_tag` y se lee distinto. Migrar de taxonomia entre
+anios es legitimo y deja cada ejercicio internamente consistente. Mezclar
+DENTRO de un ejercicio no lo es nunca: los 4 trimestres tienen que medir la
+misma magnitud para poder sumarse.
+
+**Pero la mezcla sola no alcanza como senal.** De 126 ejercicios que mezclan
+tags, 109 son INOCUOS: los dos tags son sinonimos y publican el mismo anual, asi
+que ninguna suma cambia (JPM, GOOG, COST). Avisar de los 126 condenaria el
+aviso a que nadie lo lea -- que es literalmente lo que le paso a
+`cambio_de_tag`, que ya senalaba a los 20 peores casos de revenue y estuvo
+marcado todo el tiempo sin que nadie lo mirara.
+
+Por eso se cruza contra el anual de cada tag y se separan tres casos:
+
+| caso | aviso | que significa |
+|---|---|---|
+| los anuales DIFIEREN | `mezcla_en_ejercicio` | el defecto real, hay que curar |
+| los anuales COINCIDEN | (silencio) | sinonimos redundantes, la suma no cambia |
+| un solo tag publica anual | `mezcla_no_verificable` | no se puede comprobar |
+
+### 16.4 Resultado
+
+De 30 tickers que fallaban la reconciliacion en revenue queda **uno**: LNC, y
+en el ejercicio 2018 -- el borde de la transicion ASC 606, fuera de la ventana
+2021+ de la capa derivada.
+
+El efecto en el TTM no es cosmetico:
+
+| ticker | TTM antes | TTM despues |
+|---|---|---|
+| AMT | 3.444 | 10.819 |
+| AXP | 38.726 | 75.950 |
+| BG | 36.816 | 80.547 |
+| PGR | 69.283 | 91.055 |
+| GM | 172.654 | 185.528 |
+| C | 102.003 | 85.225 |
+| GS | 73.128 | 66.203 |
+
+Seis quedan igual (BLK, MA, PFE, PM, RBLX, UPST): su mezcla estaba en
+ejercicios viejos, asi que la curacion les arregla la historia, no el TTM.
+
+**P/S de SEC ya es consumible.** Los valores resultantes al ultimo cierre:
+AMT 7,50 | GM 0,41 | C 2,61 | WFC 2,96 | PGR 1,39 | BG 0,27 | GS 4,58.
+
+### 16.5 El defecto que el detector destapo: d_and_a
+
+Con el criterio de 16.3 aplicado a todos los conceptos, aparece uno que nadie
+estaba mirando:
+
+| concepto | ejercicios con mezcla consecuente | tickers |
+|---|---|---|
+| d_and_a | 476 | 79 |
+| cfo | 31 | 10 |
+| capex | 22 | 6 |
+| net_income_common | 21 | 9 |
+| pretax_income | 20 | 7 |
+| revenue | 1 | 1 |
+
+`d_and_a` mezcla en 79 de 147 tickers, mas de la mitad del universo. La causa
+es distinta a la de revenue y mas simple: **sus sinonimos no son
+equivalentes**. La lista es `DepreciationDepletionAndAmortization`,
+`DepreciationAmortizationAndAccretionNet`, `DepreciationAndAmortization`,
+`Depreciation` -- y `Depreciation` a secas no es lo mismo que D&A. No es
+ambiguedad semantica de la empresa; es una lista de sinonimos demasiado
+generosa.
+
+Importa porque `d_and_a` alimenta el EBITDA, y eso explica el sintoma que ya
+estaba medido en la seccion 12: EV/EBITDA es el multiplo con PEOR acuerdo
+contra yahooquery (mediana 9,04%, p90 38,7%, solo 34% dentro del 5%). Parte de
+esa divergencia se atribuia a `NormalizedEBITDA`; ahora hay una segunda causa
+identificada y del lado de SEC.
+
+**EV-EBITDA de SEC sigue siendo el multiplo a consumir con cuidado.** La
+decision de como arreglarlo -- podar la lista de sinonimos, o curar por ticker
+como se hizo con revenue -- esta abierta. Podar es tentador porque el problema
+parece uniforme, pero dejaria huecos donde la empresa solo publica el tag
+podado, y esa es exactamente la clase de decision que conviene tomar con la
+evidencia a la vista y no por elegancia.
+
+### 16.6 Como se opera esto
+
+```
+python scripts/manual/sec_avisos.py --defectos --detalle
+python scripts/oneshot/revenue_tags_reporte.py --tickers XXX
+```
+
+El primero es el UNICO lector de `fundamentales_sec_avisos`, que hasta esta
+fecha no tenia ninguno. Ordena por SEVERIDAD y no por volumen -- DEFECTO /
+HUECO / SOSPECHA / info -- porque ordenar por cantidad pone arriba lo
+informativo. Un tipo de aviso nuevo cae en "info" hasta que alguien lo
+clasifique, para que no se haga pasar por defecto solo. `--alertar` manda a
+Telegram unicamente los DEFECTOS: un canal que se usa para lo informativo deja
+de leerse.
