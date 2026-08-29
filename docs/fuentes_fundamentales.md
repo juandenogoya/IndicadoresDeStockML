@@ -49,6 +49,12 @@ Pendiente y ABIERTO:
 | el backtest dio que no predice: sirve igual? | 17.3 (mide otra pregunta) |
 | donde estan ROIC y ROTCE | 17.5 (afuera, y por que) |
 | por que el crecimiento se mide por trimestre y no por rueda | 17.4, regla 4 |
+| sirve sec-api.io / EDGAR como fuente unica | 18.8 (no) |
+| por que 56 tickers no tienen EV, y cuanto cuesta arreglarlo | 18.8 (33 gratis) |
+| por que companyfacts no tiene el ultimo balance de F o C | 18.3 (atrasa) |
+| se puede evitar la desacumulacion del Q4 con otra fuente | 18.6 (no) |
+| se puede cubrir RIO/UL/VOD/BABA con SEC | 18.6 (no, es regulatorio) |
+| que fuente usar para cada cosa | docs/arquitectura_fuentes.md |
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -1417,3 +1423,178 @@ rango de multiplos de 2021 viene del **regimen de tasas** y no de la empresa.
 Un PER de 20 con la tasa en cero no significa lo mismo que un PER de 20 hoy, y
 el percentil no sabe la diferencia. Es la limitacion de fondo de "caro contra
 si misma" y esta impresa al pie de cada corrida.
+
+---
+
+## 18. EDGAR / sec-api.io evaluado como fuente (29/8/2026)
+
+Evaluacion de `sec-api.io` (key en `EDGAR_API_KEY` del .env) contra la lista
+real de problemas de este proyecto, no en abstracto. La pregunta era si
+sirve como FUENTE UNICA. **No sirve como fuente unica, y si sirve como
+complemento quirurgico.** Abajo el detalle y, sobre todo, la evidencia.
+
+### 18.1 Que es y que endpoints se probaron
+
+- `POST https://api.sec-api.io` -- buscador de filings (barato, JSON chico).
+  Devuelve formType, periodOfReport, filedAt, accessionNo.
+- `GET  https://api.sec-api.io/xbrl-to-json?accession-no=...` -- **el que
+  importa**. Devuelve UN filing entero (3-5 MB) organizado por estado
+  contable (`StatementsOfIncome`, `BalanceSheets`, `StatementsOfCashFlows`)
+  MAS cada nota al pie como seccion propia (`DEBT`, `SEGMENTINFORMATION`,
+  `REVENUE`...).
+
+Diferencia estructural con `companyfacts`: companyfacts entrega una BOLSA
+PLANA de hechos por concepto, sin decir de que estado salieron ni en que
+orden. sec-api entrega el estado contable ARMADO.
+
+### 18.2 El hallazgo central: conserva los hechos DIMENSIONADOS
+
+Cada hecho puede traer:
+
+```json
+"segment": {"explicitMember": {"dimension": "us-gaap:StatementBusinessSegmentsAxis",
+                               "$t": "f:FordCreditMember"}}
+```
+
+Esos son exactamente los hechos que la API de companyfacts DESCARTA, y son la
+causa raiz del agujero de deuda documentado en 16.6. Verificado en Ford
+(10-Q Q2 2026), balance al 2026-06-30:
+
+| concepto | monto (MM) | segmento |
+|---|---|---|
+| DebtCurrent | 4.381 | Ford ex-Credit |
+| DebtCurrent | 46.956 | **Ford Credit** |
+| LongTermDebtAndCapitalLeaseObligations | 19.238 | Ford ex-Credit |
+| LongTermDebtAndCapitalLeaseObligations | 90.392 | **Ford Credit** |
+| | **160.967** | total |
+
+**Ningun hecho de deuda de Ford tiene version consolidada**: los cuatro llevan
+segmento. Por eso companyfacts nos daba NULL, y por eso la supresion del EV
+(regla de 16.6) era correcta -- el numero que habriamos emitido no habria
+estado un poco mal, habria estado mal por 2,6 veces el market cap.
+
+### 18.3 El otro hallazgo: las dos APIs de la SEC se contradicen
+
+`companyfacts` **atrasa**. Verificado en vivo (no era cache viejo nuestro):
+
+| API de la SEC | ultimo 10-Q de Ford |
+|---|---|
+| `submissions` | Q2, periodo 2026-06-30, **filed 2026-07-28** |
+| `companyfacts` | Q1, periodo 2026-03-31, filed 2026-04-30 |
+
+Mas de un mes de atraso sobre un filing que la propia SEC ya lista. NO es un
+bug nuestro. Medido sobre el universo, antiguedad del TTM en la ultima rueda:
+
+| antiguedad | tickers |
+|---|---|
+| <=45 dias (fresco) | 113 (78%) |
+| 46-90 (normal entre balances) | 15 (10%) |
+| **>90 dias (reporto y no lo tenemos)** | **16 (11%)** |
+
+El peor es **C con 188 dias** (le faltan DOS trimestres). `lag_dias` los
+detecta a todos: el problema es visible, no silencioso. Pero es estructural
+de companyfacts, y sec-api no lo tiene.
+
+### 18.4 La evaluacion completa, problema por problema
+
+| # | Problema (seccion donde esta) | Lo resuelve? | Evidencia |
+|---|---|---|---|
+| 1 | Hechos dimensionados descartados (16.6) | **SI** | 18.2 |
+| 2 | Atraso de companyfacts | **SI** | 18.3 |
+| 3 | DEF 14A / 8-K contaminando (16.8, caso SCHW) | **SI, por construccion** | se pide por accession: elegis el formulario |
+| 4 | Point-in-time / reexpresiones | **MEJOR** | cada filing es lo que se publico ese dia; companyfacts mezcla reexpresiones |
+| 5 | Ambiguedad de revenue (15, 16.2) | **PARCIAL** | 18.5 |
+| 6 | Resultado neto sin taguear (14) | **PARCIAL** | la cara trae la cadena `ProfitLoss` -> minoritarios -> neto: verificable en vez de inferido |
+| 7 | Q4 no se publica discreto (11) | **NO** | 18.6 |
+| 8 | `Depreciation` subconjunto de D&A (16.5) | **NO** | misma semantica de tags |
+| 9 | Cobertura 147 de 200 | **NO** | 18.6 |
+
+### 18.5 Revenue: reduce la curacion, no la elimina
+
+La cara del estado de resultados excluye los tags de notas y segmentos, que
+es de donde salia buena parte de la ambiguedad. Citigroup, 10-Q Q2 2026:
+
+```
+Revenues                              24.766 MM   <- nuestro tag curado
+InterestIncomeExpenseNet              17.125 MM
+NoninterestIncome                      7.641 MM     17.125 + 7.641 = 24.766
+InterestAndDividendIncomeOperating    37.662 MM     (el bruto: la trampa)
+```
+
+Dos conclusiones. **La curacion de C estaba bien**, confirmada por tercera
+fuente independiente. Y aparece un control NUEVO que companyfacts no puede
+dar: los componentes SUMAN al total, asi que la eleccion del tag es
+AUDITABLE en vez de ser un juicio a ciegas.
+
+Pero la cara sigue teniendo cuatro conceptos con cara de "revenue" y hay que
+saber cual es el total. Reduce el trabajo de curacion y lo hace verificable;
+no lo elimina.
+
+### 18.6 Lo que NINGUNA fuente arregla, porque no es de la fuente
+
+- **Q4.** El 10-K de Ford (FY2025) trae en su estado de resultados **solo
+  tres periodos ANUALES** (2023, 2024, 2025). No hay Q4 discreto en ningun
+  lado porque las empresas no lo publican. La desacumulacion `Q4 = FY - 9M`
+  sigue siendo obligatoria.
+- **Cobertura.** RIO, UL, VOD, HMY, BABA, TSM: **ninguno presenta 10-Q**.
+  Todos presentan 20-F (anual) + 6-K. Es REGULATORIO, no de la API: los
+  emisores privados extranjeros no tienen obligacion de XBRL trimestral. Los
+  53 tickers sin fuente SEC seguiran sin ella.
+- **Profundidad.** Los 10-K de AAPL figuran desde 1994, pero XBRL arranca
+  ~2009 y nuestro cache ya tiene 2007+. No se gana historia.
+
+### 18.7 Limitaciones NUEVAS que introduce
+
+- **Se pierde la serie temporal.** companyfacts da TODA la historia de una
+  empresa en UNA llamada de ~4 MB. sec-api da UN filing por llamada de 3-5 MB.
+  Reconstruir 147 tickers x ~35 trimestres: **~5.000 llamadas y ~20 GB**, unas
+  **40 veces** el volumen para la misma informacion.
+- **El armado pasa a ser nuestro.** Cada 10-Q trae el trimestre actual Y los
+  comparativos del anio anterior: hay que deduplicar y empalmar filing por
+  filing. Trabajo que hoy no hacemos.
+- **Dependencia de un tercero pago.** companyfacts es publica y gratis; esto
+  es un proveedor con cuota y seria un punto unico de falla que no
+  controlamos.
+
+Incremental, en cambio, es trivial: ~600 llamadas al anio (~50/mes).
+
+### 18.8 VEREDICTO, y el descubrimiento que lo relativiza todo
+
+Resuelve 4 de 9 limpio, 2 a medias, deja 3 intactos, y a cambio multiplica
+por 40 el volumen y agrega dependencia paga. **No es reemplazo. Es
+complemento quirurgico para dos cosas: hechos dimensionados y frescura.**
+
+Y lo mas importante de toda esta investigacion:
+
+> **El mayor agujero que tenemos NO lo arregla ninguna API, porque es
+> nuestro.**
+
+Medido: **56 de 144 tickers no tienen EV en la ultima rueda** (39%). De esos:
+
+| causa | tickers | costo de arreglarlo |
+|---|---|---|
+| tags de deuda que NO estan en nuestra lista de sinonimos | **33** | **gratis, sin API** |
+| deuda 100% dimensionada, o sin deuda real | 23 | sec-api, o nada |
+
+Los tags que faltan, con rendimiento medido sobre el cache propio:
+
+```
+LongTermDebtAndCapitalLeaseObligations    24 tickers  (T, KO, ORCL, PEP, UPS, HD...)
+DebtLongtermAndShorttermCombinedAmount     6 tickers
+ConvertibleDebtNoncurrent                  3 tickers
+```
+
+Nuestra lista es solo `["LongTermDebtNoncurrent", "LongTermDebt"]`. VZ y T
+**si publican deuda consolidada** (158.150 y 136.100 MM) con un tag que no
+estabamos mirando. No era la API: eramos nosotros.
+
+**TRAMPA AL APLICARLO, no agregar los tags a la ligera:** choca con el
+defecto de `_elegir` documentado en el codigo -- entre sinonimos GANA EL
+MENOS PREFERIDO (`pri` grande gana). Agregar los tags al final de la lista
+los haria ganarle a los actuales en todos los tickers que hoy funcionan.
+Hacerlo bien exige arreglar `_elegir` primero, con su propia medicion.
+
+### 18.9 Costo de esta evaluacion
+
+~8 llamadas a `xbrl-to-json` (3-5 MB c/u) y ~15 al buscador de filings. La
+API no expone headers de rate limit; la cuota se mira en la cuenta.

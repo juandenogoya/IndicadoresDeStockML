@@ -101,6 +101,19 @@ Documentacion que existe hoy en docs/:
                             el problema es SEMANTICO, no aritmetico (122 de 147
                             sin ambiguedad, 23 requieren mapeo curado). El
                             encabezado tiene una tabla de atajos por pregunta.
+- docs/arquitectura_fuentes.md : QUE FUENTE SE USA PARA QUE, y cual manda
+                            cuando dos difieren. Las 4 fuentes medidas
+                            (yahooquery libreria / SEC companyfacts / Alpha
+                            Vantage / EDGAR-sec-api.io, key EDGAR_API_KEY).
+                            Reparto por EJE y no por metrica: temporal
+                            ("caro vs si misma") = SEC; transversal ("vs
+                            pares hoy") = yahooquery (unica que cubre los 53
+                            no-USA); eventos = Alpha Vantage; EDGAR = bisturi,
+                            no fuente. Incluye la decision abierta de la deuda
+                            neta cuantificada (56 de 144 tickers sin EV; 33 se
+                            arreglan GRATIS con tags propios) y las 5 reglas
+                            de convivencia. Leer ANTES de agregar una fuente
+                            o de resolver "de donde saco este numero".
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
