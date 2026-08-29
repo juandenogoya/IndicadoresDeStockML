@@ -67,7 +67,7 @@ TABLA = "fundamentales_sec_multiplos_d"
 DESDE_DEFECTO = "2021-01-01"
 
 # Ventana del percentil "vs si misma": ~3 anios de ruedas. Es un LOOKBACK FIJO
-# y no toda la historia disponible a propósito -- con ventana expansiva, una
+# y no toda la historia disponible a proposito -- con ventana expansiva, una
 # lectura de 2026 se compara contra una muestra el doble de larga que una de
 # 2022 y los percentiles dejan de ser comparables entre si.
 VENTANA_PCT = 756
