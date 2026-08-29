@@ -190,12 +190,20 @@ def bloque_exigencia(base, historia, trimestral, precio, referencia):
         d = ex[clave]
         crec = d["crecimiento"]
 
-        hist = V.crecimiento_historico(trimestral.get(campo))
+        serie = trimestral.get(campo)
+        hist = V.crecimiento_historico(serie)
+        posibles = V.observaciones_posibles(serie)
         if hist:
-            med, mx = V.cuantil(hist, 0.50), hist[-1]
-            resumen = "med %s  max %s  (%d obs)" % (_var(med), _var(mx), len(hist))
-            if crec is not None and crec > mx:
-                imposibles.append((etiqueta, articulado, crec, mx))
+            # La barra es el p90 y no el MAXIMO. El maximo de una serie que
+            # salio de una base chica es un rebote irrepetible, y usarlo como
+            # vara vuelve permisiva a la herramienta justo donde deberia dudar.
+            med, alto = V.cuantil(hist, 0.50), V.cuantil(hist, 0.90)
+            resumen = "med %s  p90 %s  (%d/%d obs)" % (_var(med), _var(alto),
+                                                       len(hist), posibles)
+            if crec is not None and crec > alto:
+                imposibles.append((etiqueta, articulado, crec, alto))
+        elif posibles:
+            resumen = "cambio de signo: sin patron"
         else:
             resumen = "sin historia suficiente"
 
@@ -217,11 +225,12 @@ def bloque_exigencia(base, historia, trimestral, precio, referencia):
 
     if imposibles:
         print()
-        for etiqueta, articulado, crec, mx in imposibles:
-            print("    %s: exige un crecimiento %s de %s, y su mejor anio "
-                  "fue %s." % (etiqueta, articulado, _var(crec), _var(mx)))
-        print("    No invalida la tesis. Dice que se apoya en algo que esta "
-              "empresa todavia no hizo.")
+        for etiqueta, articulado, crec, alto in imposibles:
+            print("    %s: exige un crecimiento %s de %s; su p90 historico "
+                  "es %s." % (etiqueta, articulado, _var(crec), _var(alto)))
+        print("    No invalida la tesis. Dice que se apoya en un ritmo que "
+              "esta empresa alcanzo")
+        print("    pocas veces o ninguna, y eso merece argumento aparte.")
 
 
 def main():

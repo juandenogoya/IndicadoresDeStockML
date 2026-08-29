@@ -296,3 +296,31 @@ def test_un_patrimonio_no_positivo_no_produce_roe():
     """
     assert V.roe_implicito(dict(BASE, equity=-400.0), 100.0) is None
     assert V.roe_implicito(dict(BASE, equity=None), 100.0) is None
+
+
+def test_el_crecimiento_exige_los_dos_extremos_positivos():
+    """
+    Ir de +100 a -162 da -262%: aritmetica valida, lectura falsa. Si esos pares
+    entran, el maximo de la distribucion puede terminar siendo NEGATIVO y se
+    imprime como "su mejor anio fue -121%". Paso con CRWD.
+    """
+    serie = [("q1", 100.0), ("q2", 100.0), ("q3", 100.0), ("q4", 100.0),
+             ("q5", -162.0), ("q6", 120.0)]
+    assert V.crecimiento_historico(serie) == pytest.approx([0.20])
+
+
+def test_una_serie_toda_negativa_no_deja_ninguna_observacion():
+    """Sin patron de crecimiento no se inventa uno: la lista queda vacia."""
+    serie = [("q%d" % i, -10.0) for i in range(1, 9)]
+    assert V.crecimiento_historico(serie) == []
+
+
+def test_observaciones_posibles_expone_cuantas_se_perdieron():
+    """
+    "Su mejor anio fue +20%" con 19 observaciones y con 2 se leen igual y no
+    valen igual. La cuenta de posibles es lo que separa una de la otra.
+    """
+    serie = [("q1", 100.0), ("q2", 100.0), ("q3", 100.0), ("q4", 100.0),
+             ("q5", -162.0), ("q6", 120.0)]
+    assert V.observaciones_posibles(serie) == 2
+    assert len(V.crecimiento_historico(serie)) == 1

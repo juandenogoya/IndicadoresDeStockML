@@ -368,15 +368,43 @@ def crecimiento_historico(serie, pasos=4):
     que hace comparable el numero contra el crecimiento requerido por una
     tesis anual.
 
+    LOS DOS EXTREMOS TIENEN QUE SER POSITIVOS, y esta es la regla que hace que
+    el numero signifique lo que dice su nombre. Un "crecimiento" entre un
+    resultado positivo y uno negativo es aritmetica valida y lectura falsa:
+    pasar de +100 a -162 da -262%, y ese -262% entra despues en un maximo que
+    se imprime como "su mejor anio fue -121%". Se vio en CRWD. Descartar esos
+    pares deja el hueco a la vista en vez del disparate.
+
+    OJO con la limitacion que NO se puede arreglar aca: si la base es positiva
+    pero minuscula, el porcentaje explota sin ser un error (LYFT saliendo de un
+    resultado cercano a cero da +4.920% de mediana). Por eso el llamador tiene
+    que mostrar cuantas observaciones quedaron usables sobre las posibles, y
+    por eso la vista imprime SIEMPRE los importes absolutos al lado del
+    porcentaje: son el respaldo cuando el porcentaje deja de significar algo.
+
     Devuelve la lista ORDENADA de crecimientos, lista para cuantil().
     """
     vals = [_num(v) for _, v in (serie or [])]
     out = []
     for i in range(pasos, len(vals)):
         previo, actual = vals[i - pasos], vals[i]
-        if previo is not None and actual is not None and previo > 0:
+        if previo is None or actual is None:
+            continue
+        if previo > 0 and actual > 0:
             out.append(actual / previo - 1.0)
     return sorted(out)
+
+
+def observaciones_posibles(serie, pasos=4):
+    """
+    Cuantos crecimientos interanuales PODRIA haber dado `serie`.
+
+    Contra len(crecimiento_historico()) dice cuantos se perdieron por cruces de
+    signo o huecos. Es la diferencia entre "su mejor anio fue +20%" apoyado en
+    19 observaciones y lo mismo apoyado en 2, que se leen igual y no valen
+    igual.
+    """
+    return max(0, len(serie or []) - pasos)
 
 
 def roe_implicito(base, net_income):

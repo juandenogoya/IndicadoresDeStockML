@@ -1355,11 +1355,30 @@ calculadora -- es un error de lectura, no un hallazgo.
    dispersion. Con la serie trimestral, AAPL tiene 19 observaciones y se dice
    cuantas son.
 
-5. **El ROE exigido es un TECHO.** Se calcula contra el patrimonio de HOY. Si
+5. **El crecimiento porcentual exige los dos extremos positivos.** Ir de +100
+   a -162 da -262%: aritmetica valida, lectura falsa. Sin esta regla el
+   MAXIMO de la distribucion puede salir negativo y se imprime como "su mejor
+   anio fue -121%" -- paso con CRWD, cuyo resultado fue negativo toda la
+   ventana. Ahora esos pares se descartan y la vista declara cuantas
+   observaciones quedaron sobre las posibles (`19/19 obs`, `8/19 obs`), que es
+   lo que separa un benchmark solido de uno de dos puntos.
+
+   La **vara es el p90, no el maximo**. El maximo de una serie que salio de una
+   base chica es un rebote irrepetible, y usarlo volveria permisiva a la
+   herramienta justo donde deberia dudar.
+
+   Lo que NO se puede arreglar en el calculo: si la base es positiva pero
+   minuscula, el porcentaje explota sin ser un error (LYFT saliendo de un
+   resultado cercano a cero; MU, T y UBER con la mitad de sus trimestres
+   descartados). Por eso la vista imprime SIEMPRE los importes absolutos al
+   lado del porcentaje: son el respaldo cuando el porcentaje deja de
+   significar algo.
+
+6. **El ROE exigido es un TECHO.** Se calcula contra el patrimonio de HOY. Si
    la empresa gana mas y no reparte todo, el patrimonio crece y el ROE que hace
    falta es menor. Sirve para descartar lo imposible, no para proyectar.
 
-6. **Un denominador negativo no produce multiplo.** Un PER con resultado
+7. **Un denominador negativo no produce multiplo.** Un PER con resultado
    negativo no es "barato", es otra categoria.
 
 ### 17.5 ROIC y ROTCE: ausentes a proposito
