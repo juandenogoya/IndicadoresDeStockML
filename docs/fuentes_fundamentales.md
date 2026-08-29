@@ -18,10 +18,12 @@ yahooquery no puede hacer historia larga ni point-in-time. El cruce entre las
 dos es ademas el control que faltaba.
 
 Pendiente y ABIERTO:
-- **`d_and_a` mezcla tags en 79 de 147 tickers**: sec. 16.5. Alimenta el
-  EBITDA -> EV-EBITDA de SEC sigue siendo el multiplo a consumir con cuidado.
-  Es el sucesor directo del problema de revenue, ya diagnosticado y sin
-  decidir.
+- Los **streamers** (NFLX, WBD): la amortizacion de CONTENIDO no esta en los
+  tags de D&A, asi que su EBITDA queda subestimado. Es un hueco de cobertura
+  real, sec. 16.7.
+- **La cobertura de EV/EBITDA cayo a 50 de 144 tickers** al dejar de calcular
+  el EV con deuda parcial (sec. 16.6). Recuperarla exige una fuente de deuda
+  de largo plazo que la API de companyfacts no entrega.
 - Los 13 tickers de revenue decididos por CRITERIO y no por arbitraje externo
   (sec. 16.2) no tienen confirmacion independiente.
 - El objetivo original: escenarios de valuacion implicita y comparativa
@@ -39,7 +41,9 @@ Pendiente y ABIERTO:
 | SEC o yahooquery para cada metrica | 15, ultimo bloque |
 | como se eligio el tag de cada uno de los 23 | 16.2 |
 | que hago si aparece un ticker con mezcla de tags | 16.3 y 16.6 |
-| por que EV-EBITDA de SEC todavia no es confiable | 16.5 |
+| por que se podo `Depreciation` de los sinonimos | 16.5 |
+| por que el EV de VZ y T estaba mal | 16.6 |
+| se puede comparar el EV/EBITDA de SEC con el de yahooquery | 16.7 (no) |
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -1159,12 +1163,86 @@ contra yahooquery (mediana 9,04%, p90 38,7%, solo 34% dentro del 5%). Parte de
 esa divergencia se atribuia a `NormalizedEBITDA`; ahora hay una segunda causa
 identificada y del lado de SEC.
 
-**EV-EBITDA de SEC sigue siendo el multiplo a consumir con cuidado.** La
-decision de como arreglarlo -- podar la lista de sinonimos, o curar por ticker
-como se hizo con revenue -- esta abierta. Podar es tentador porque el problema
-parece uniforme, pero dejaria huecos donde la empresa solo publica el tag
-podado, y esa es exactamente la clase de decision que conviene tomar con la
-evidencia a la vista y no por elegancia.
+RESUELTO. La evidencia decidio y resulto ser las DOS cosas a la vez.
+
+**Podar `Depreciation`.** Sobre 337 ejercicios de las 60 empresas que publican
+los dos tags, `Depreciation` es la MEDIANA del 73% de la D&A completa, y en 28
+de esas 60 esta por debajo del 70% (SPGI 10%, AMGN 17%, WBD 17%, HL 0%). No es
+un sinonimo, es un subconjunto. Sale de la lista. Elimina 429 de las 476
+mezclas y cuesta que 17 tickers se queden sin d_and_a -- el precio correcto
+segun la regla del modulo.
+
+**Curar los 13 que quedan.** Publican dos tags de D&A completos con valores
+distintos: uno es el total y el otro un componente suelto, y cual es cual
+cambia por empresa. En AMGN el total es DDA (5.592 vs 887); en MCD es
+`DepreciationAndAmortization` (2.199 vs 457); en VLO y WFC es
+`...AndAccretionNet`.
+
+Aca la MAGNITUD si sirve de criterio, al reves que en revenue (donde elegia el
+bruto en bancos, salida #2 de la seccion 15): D&A no tiene semantica de neteo,
+no existe un "D&A bruto" que exceda al titular. Y coincide con un segundo
+criterio independiente, la COBERTURA trimestral -- el D&A total esta en el
+estado de flujo todos los trimestres y un renglon suplementario no (AMGN 22Q vs
+10Q, BLK 11 vs 0, UPS 22 vs 4, WFC 22 vs 0). Los dos criterios coinciden en los
+13, y MCD tiene ademas confirmacion de yahooquery.
+
+Mezclas de d_and_a: **476 -> 2**.
+
+### 16.6 El defecto mas grave: el EV se calculaba con deuda PARCIAL
+
+Validar el EV/EBITDA destapo algo peor que la D&A, y del otro lado del
+cociente.
+
+`net_debt` tenia la regla "si falta una de las dos deudas, cuenta como 0, la
+empresa tagea la que tiene". **La premisa es falsa.** La API de companyfacts
+DESCARTA los hechos dimensionados, y varias empresas grandes pasaron a declarar
+su deuda de largo plazo solo con dimensiones. Verizon tiene 8 hechos de
+`LongTermDebt` y NINGUNO desde 2025; AT&T igual.
+
+No es la lista de sinonimos: 31 de esos 38 tickers publican `LongTermDebt`, que
+ya estaba incluida. Es la fuente la que no lo entrega.
+
+El resultado era un EV construido con la deuda corta sola:
+
+| ticker | net_debt calculado | real aproximado |
+|---|---|---|
+| VZ | 19.479 MM | ~150.000 MM |
+| T | NEGATIVO (caja neta) | ~120.000 MM |
+
+52 de 147 tickers sin `debt_long` y 41.820 filas con deuda neta negativa, todo
+propagado al EV y al EV/EBITDA sin un solo aviso.
+
+El arreglo es la misma regla que el modulo ya usa para los minoritarios del
+resultado neto: `enriquecer()` mira la serie ENTERA y, si la empresa tagea esa
+deuda en algun periodo pero no en este, **no asume cero** -- `net_debt` queda en
+None y el EV desaparece. Una empresa realmente sin deuda de largo plazo nunca
+tagea el concepto, asi que conserva su EV. Filas con deuda neta negativa:
+41.820 -> 22.999.
+
+### 16.7 Estado final del EV/EBITDA
+
+Acuerdo contra yahooquery al ultimo punto de cada fuente:
+
+| | n | mediana | dentro del 5% |
+|---|---|---|---|
+| EV/EBITDA antes | 74 | 9,24% | 34% |
+| EV/EBITDA ahora | 48 | 6,38% | 46% |
+| P/S (tras curar revenue) | 139 | 0,00% | 94% |
+| PER | 113 | 1,75% | 78% |
+
+La cobertura baja de 78 a 50 tickers y ese es el precio buscado: lo que queda
+sale de insumos completos.
+
+**Lo que NO se cierra, y hay que leerlo como diferencia de definicion y no como
+defecto:** yahooquery usa `NormalizedEBITDA` (excluye one-offs) y SEC usa
+EBIT+D&A. Y queda un hueco de cobertura real en los streamers -- la
+amortizacion de CONTENIDO no esta en los tags de D&A, por eso NFLX (ratio de
+EBITDA 0,42 contra yahooquery) y WBD (0,22) siguen lejos.
+
+**Conclusion para el consumidor:** el EV/EBITDA de SEC es internamente
+consistente y sirve para "caro vs si misma", que es el objetivo del proyecto.
+NO es intercambiable con el de yahooquery, y no deberia compararse entre
+fuentes.
 
 ### 16.6 Como se opera esto
 

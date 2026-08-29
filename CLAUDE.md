@@ -472,12 +472,21 @@ Las criticas:
   y lo aplica el refresh. Queda 1 mezcla consecuente en revenue (LNC, ejercicio
   2018, borde de la transicion ASC 606 y fuera de la ventana 2021+ de la capa
   derivada). P/S de SEC ya es consumible.
-  **PENDIENTE de la misma clase: `d_and_a` mezcla de forma consecuente en 79 de
-  147 tickers** -- sus sinonimos NO son equivalentes (Depreciation a secas no es
-  DepreciationDepletionAndAmortization). Alimenta el EBITDA, asi que
-  **EV-EBITDA de SEC sigue siendo el multiplo a consumir con cuidado**; explica
-  su mal acuerdo contra yahooquery (mediana 9,04%, p90 38,7%). Verlo con
-  `python scripts/manual/sec_avisos.py --defectos`.
+  EV/EBITDA VALIDADO 29/8/2026 (doc sec. 16.5-16.7). Dos defectos silenciosos
+  corregidos: (a) `Depreciation` a secas salio de los sinonimos de d_and_a --
+  es un SUBCONJUNTO (mediana 73% de la D&A completa), subestimaba el EBITDA y
+  sobreestimaba el multiplo; mezclas 476 -> 2. (b) MAS GRAVE: el EV se
+  calculaba con deuda PARCIAL. La API de companyfacts descarta los hechos
+  dimensionados y 52 tickers no entregan `debt_long` (VZ daba 19.479 MM en vez
+  de ~150.000; T daba deuda neta NEGATIVA). Ahora si la empresa tagea esa deuda
+  en algun periodo y no en este, net_debt = NULL y el EV desaparece.
+  Acuerdo vs yahooquery: EV/EBITDA mediana 9,24% -> 6,38%, dentro del 5%
+  34% -> 46%, cobertura 78 -> 50 tickers (precio buscado). **El EV/EBITDA de
+  SEC es internamente consistente y sirve para "caro vs si misma", pero NO es
+  intercambiable con el de yahooquery**: alla es NormalizedEBITDA (sin
+  one-offs), aca EBIT+D&A. Hueco de cobertura real en streamers (NFLX/WBD): la
+  amortizacion de CONTENIDO no esta en los tags de D&A.
+  Estado de los avisos: `python scripts/manual/sec_avisos.py --defectos`.
 - `acciones_circulacion` (+ `acciones_circulacion_validacion`, LOCAL) --
   acciones en circulacion por (ticker, fecha) en base de split **ACTUAL**, que
   es la unica apareable con `precios_diarios` (que se corrige retroactivamente
