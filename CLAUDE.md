@@ -93,6 +93,14 @@ Documentacion que existe hoy en docs/:
                             y los 3 errores SILENCIOSOS que encontro el cruce.
                             NINGUNA decision de fuente tomada. Prototipo en
                             scripts/oneshot/sec_xbrl_prototipo.py
+                            FASES 1-3 IMPLEMENTADAS (29/8/2026). Secciones 13-15
+                            con la capa derivada (multiplos diarios, base de
+                            SPLIT, percentil estricto), la identidad
+                            ProfitLoss-minoritarios que recupero el resultado
+                            neto de 8 tickers, y la investigacion de REVENUE:
+                            el problema es SEMANTICO, no aritmetico (122 de 147
+                            sin ambiguedad, 23 requieren mapeo curado). El
+                            encabezado tiene una tabla de atajos por pregunta.
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
@@ -366,7 +374,12 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min. Encadena 5 pasos derivados: ratios -> ticker_pais -> vs_sector -> **multiplos_px -> vs_sector --valuacion-px** (los 2 ultimos agregados 27/8/2026: sin ellos el trimestre nuevo queda sin `*_px` y el dashboard muestra la valuacion vacia). `set REFRESH_NO_PAUSE=1` para correrlo desatendido |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/manual/refresh_fundamentales_sec.bat` (+ `scripts/refresh_fundamentales_sec.py`) | Refresh de la fuente SEC XBRL (PARALELA a yahooquery, LOCAL-only, ~147 tickers USA). INCREMENTAL: consulta `submissions` (~164 KB) y solo baja `companyfacts` (~4 MB) si cambio el accession del ultimo 10-Q/10-K -> sin balances nuevos mueve ~24 MB en vez de ~522 MB. REQUIERE `SEC_USER_AGENT` en el .env (SEC devuelve 403 sin User-Agent con mail de contacto). `--solo-normalizar` / `--forzar` / `--tickers` / `--dry-run`. Ver docs/fuentes_fundamentales.md |
-| `src/utils/sec_xbrl.py` | Normalizador PURO de SEC XBRL -> serie trimestral (stdlib, sin DB/red). Resuelve sinonimos por concepto, tags que cambian dentro de la misma empresa, desacumulacion YTD (Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M) y restatements. Etiqueta fiscal_year/fiscal_quarter reales. `hasta_filed` = point-in-time. Emite avisos como red contra el error silencioso |
+| `src/utils/sec_xbrl.py` | Normalizador PURO de SEC XBRL -> serie trimestral (stdlib, sin DB/red). Resuelve sinonimos por concepto, tags que cambian dentro de la misma empresa, desacumulacion YTD (Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M) y restatements. Etiqueta fiscal_year/fiscal_quarter reales. `hasta_filed` = point-in-time. Emite avisos como red contra el error silencioso. Incluye la identidad `net_income = ProfitLoss - minoritarios` para los 8 filers que no tagean NetIncomeLoss (MA/CAT/SCCO/AVAV/AVGO/F/FCX/AMT): solo rellena huecos, exige el hecho de minoritarios EN ESE PERIODO (nunca asume cero) y cruza contra ...AvailableToCommonStockholders. Ver docs/fuentes_fundamentales.md sec. 14 |
+| `src/utils/fundamentales_ttm.py` | TTM rodante PURO sobre la serie SEC + as-of por `filed_primero`. Rechaza ventanas que cruzan un hueco (un rolling(4) sobre serie con huecos suma 5-6 trimestres en silencio). Deriva ebitda/fcf/net_debt/bvps |
+| `src/utils/sec_acciones.py` | Serie POINT-IN-TIME de acciones desde la portada `dei` (nunca re-expresada por splits). Descarta errores de unidad y picos; invariante `fecha > filed` |
+| `src/utils/acciones_series.py` | Combina yahooquery (base de split ACTUAL) + SEC (base de su momento) y VALIDA que coincidan antes de mezclarlas. Yahoo manda donde llega; SEC solo extiende hacia atras; ESCALON nunca interpolacion; la discrepancia AVISA, no corrige |
+| `scripts/refresh_acciones_circulacion.py` | Puebla `acciones_circulacion` (yahooquery + extension SEC validada). LOCAL-only. Usa yfinance_lock |
+| `scripts/compute_sec_multiplos.py` | Serie DIARIA de multiplos sobre la fuente SEC (`fundamentales_sec_multiplos_d`). Capa derivada pura y recomputable. Percentil trailing ESTRICTO (exige ventana llena en tiempo); `--percentil-permisivo` la afloja |
 | `src/data/sec/client.py` | Descarga de data.sec.gov con cache en disco (`data/sec_cache/`, gitignoreado). REGLA: nada en `src/data/sec/` importa del lado de trading. OJO: SEC corta los loops de `curl` (conexion nueva por pedido) -> usar `requests.Session` con keep-alive |
 | `scripts/compute_fundamentales_ratios.py` | Computa fundamentales_ratios_q (capa derivada, pura, recomputable sin re-fetch). Encadenado al refresh .bat |
 | `scripts/compute_multiplos_px.py` | Recalcula PER/PB/PS/EV-EBITDA *_px con el cierre del dia (numerador=precio hoy, denominador TTM). DIARIO via recovery_incremental Y al final de refresh_fundamentales.bat. Ver docs/fundamentales_calculo.md |
@@ -444,6 +457,36 @@ Las criticas:
   Las columnas se generan DESDE src/utils/sec_xbrl.py para que el esquema no
   se desincronice. El point-in-time NO se almacena: se re-deriva con
   `normalizar(hasta_filed=...)` sobre el cache. Ver docs/fuentes_fundamentales.md
+  CALIDAD MEDIDA (29/8/2026, control = la suma de 4 Q contra el anual que
+  publico la empresa): net_income 99,6% | operating_income 98,6% | cfo 97,0% |
+  **revenue 87,8%**. El revenue falla en 30 tickers por MEZCLA DE TAGS dentro
+  del mismo ejercicio (siempre el Q4, que sale del 10-K y viene etiquetado
+  distinto que los 10-Q). NO es un problema aritmetico y ningun algoritmo lo
+  resuelve: 122 de 147 tickers no tienen ambiguedad, 23 necesitan un mapeo
+  CURADO ticker -> tag. **Consumir P/S y EV-EBITDA de SEC con cuidado hasta
+  que ese mapeo exista.** Detalle y las 4 salidas ya descartadas (resta contra
+  el anual, `frame`, solo-publicado, pasarse al anual): doc sec. 15.
+- `acciones_circulacion` (+ `acciones_circulacion_validacion`, LOCAL) --
+  acciones en circulacion por (ticker, fecha) en base de split **ACTUAL**, que
+  es la unica apareable con `precios_diarios` (que se corrige retroactivamente
+  por divisor). Fuente primaria yahooquery `OrdinarySharesNumber`; se extiende
+  hacia atras con la portada SEC SOLO en los tickers donde se VALIDA que no
+  cambiaron de base. La tabla `_validacion` guarda el veredicto por ticker
+  (extendido, ratio_min/max, motivo). Motor puro: src/utils/acciones_series.py.
+  200 tickers / 2.379 puntos: 101 arrancan en 2021, 83 en 2022, 16 en 2023+.
+- `fundamentales_sec_multiplos_d` (LOCAL) -- serie DIARIA de multiplos sobre la
+  fuente SEC. Capa DERIVADA y recomputable (funcion de fundamentales_sec_q +
+  acciones_circulacion + precios_diarios). 1 fila por (ticker, rueda):
+  market_cap, EV, PER/PB/PS/EV-EBITDA, fcf_yield + percentil TRAILING de cada
+  uno dentro de su propia historia ("caro vs si misma"). 152.054 filas / 144
+  tickers / 2021+. **Todos los multiplos salen de AGREGADOS** (market_cap /
+  net_income_ttm, etc.), nunca de magnitudes por accion: SEC re-expresa lo "por
+  accion" ante un split y precios_diarios tambien, pero con horizontes
+  distintos -- `eps_ttm` y BVPS se sacaron a proposito. `shares_dias` = la
+  antiguedad del conteo (el error del escalon anual es mediana 0,24% pero p99
+  11,35%, y sobreestima). El percentil es ESTRICTO: NULL si la ventana de 756
+  ruedas no esta llena en tiempo. El limitante es `precios_diarios`, no SEC:
+  solo 84 tickers llegan a 756 ruedas.
 - `fundamentales_ratios_q` -- capa DERIVADA (funcion pura de las 4 raw,
   recomputable sin re-fetch). 1 fila por (ticker, fiscal_period_end). Vista
   PARALELA/DESCRIPTIVA del fundamental: NO se mezcla con el score tecnico ni

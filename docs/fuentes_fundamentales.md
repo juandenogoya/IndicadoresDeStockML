@@ -4,11 +4,27 @@ Registro de la investigacion sobre de donde traer los estados contables
 trimestrales. NO es documentacion de codigo en produccion: es el conocimiento
 que costo trabajo obtener y que no se puede derivar leyendo el repo.
 
-ESTADO: investigacion cerrada. **Fase 1 (normalizador) y Fase 2 (ingesta y
-persistencia) implementadas** -- ver secciones 11 y 12. La fuente SEC esta
-ingestada y andando en PARALELO a yahooquery, sin ningun consumidor todavia.
-Pendiente: la capa derivada (multiplos historicos, "caro vs si misma") y
-decidir cual fuente sigue y cual se deprecia (seccion 10).
+ESTADO (29/8/2026): **Fases 1, 2 y 3 implementadas** -- normalizador (sec. 11),
+ingesta (sec. 12), capa derivada de multiplos diarios (sec. 13). La fuente SEC
+corre en PARALELO a yahooquery, sin ningun consumidor todavia.
+
+Pendiente y ABIERTO:
+- El **mapeo curado de revenue** (23 tickers): sec. 15. Ningun algoritmo lo
+  resuelve; la decision es humana. Es EL bloqueante de P/S y EV-EBITDA.
+- Decidir cual fuente sigue y cual se deprecia (sec. 10, con los numeros de la 15).
+- El objetivo original: escenarios de valuacion implicita y comparativa
+  sectorial. La capa de datos ya esta; falta el consumidor.
+
+**Si volves aca con una duda puntual, atajos:**
+
+| pregunta | seccion |
+|----------|---------|
+| por que los multiplos no usan EPS ni BVPS | 13 (base de split) |
+| de donde salen las acciones en circulacion | 13 |
+| por que a MA/CAT les faltaba el resultado neto | 14 |
+| por que revenue falla en bancos, AMT, PM | 15 |
+| ya se probo `Q4 = FY - (Q1+Q2+Q3)`? y `frame`? | 15 (las dos, no sirven) |
+| SEC o yahooquery para cada metrica | 15, ultimo bloque |
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -687,3 +703,300 @@ Resultado: 4.781 filas con fecha, cero lags negativos.
 CAVEAT: para periodos pre-2015 el lag da ~350 dias, porque su 10-Q original
 quedo fuera de la retencion XBRL de SEC y su primera aparicion es como
 comparativo anios despues. Irrelevante dentro de la ventana 2018+.
+
+---
+
+## 13. Fase 3 -- la capa derivada (29/8/2026)
+
+Objetivo original: **escenarios de valuacion implicita** -- dada una tesis de
+precio, que PER / EV-EBITDA / P-S implica y si es plausible. Primero "caro
+contra SI MISMA" (su propia historia), despues contra la mediana del sector.
+Para eso hace falta una serie DIARIA de multiplos historicos, no una foto por
+trimestre: sin distribucion no hay contra que comparar.
+
+Tres modulos PUROS nuevos + dos tablas. Todo LOCAL-only, sin consumidores aun.
+
+| modulo | que hace |
+|--------|----------|
+| `src/utils/fundamentales_ttm.py` | rolling TTM sobre la serie trimestral SEC + as-of por `filed_primero` |
+| `src/utils/sec_acciones.py` | serie POINT-IN-TIME de acciones desde la portada `dei` |
+| `src/utils/acciones_series.py` | combina yahooquery + SEC y VALIDA que esten en la misma base de split |
+
+| tabla | contenido |
+|-------|-----------|
+| `acciones_circulacion` (+ `_validacion`) | acciones por ticker/fecha en base de split ACTUAL, apareable con `precios_diarios` |
+| `fundamentales_sec_multiplos_d` | 1 fila por ticker/rueda: multiplos + percentil trailing |
+
+### El descubrimiento que reescribio el diseno: la base de split
+
+Para multiplicar precio por acciones los dos tienen que estar en la MISMA base
+de split. Y las dos fuentes estan en bases distintas:
+
+- `precios_diarios` **se corrige retroactivamente** por divisor (`splits.py
+  corregir`) -> toda la historia queda en base ACTUAL.
+- SEC **re-expresa lo "por accion" hacia atras, pero solo en los comparativos
+  de los filings recientes** -> horizonte de reexpresion de ~2 anios. Ninguna
+  serie de acciones de SEC esta en una sola base a lo largo de 8 anios.
+- yahooquery `OrdinarySharesNumber` **si** re-expresa a base actual (KLAC da
+  1.367,5M para 2023, ya post 10:1) -> aparea directo con el precio corregido.
+
+CONSECUENCIA DE DISENO, no negociable: **todos los multiplos se calculan sobre
+AGREGADOS**, nunca sobre magnitudes por accion.
+
+    PER = market_cap / net_income_ttm       market_cap = close(D) * shares(D)
+    P/B = market_cap / equity
+    P/S = market_cap / revenue_ttm
+    EV/EBITDA = (market_cap + net_debt) / ebitda_ttm
+
+Los agregados son invariantes al split; `eps_ttm` y BVPS NO, y por eso se
+sacaron de la tabla a proposito (ver los DROP COLUMN en el create).
+
+`dei:EntityCommonStockSharesOutstanding` **nunca** se re-expresa (es un hecho
+de portada atado a su accession). `us-gaap:CommonStockSharesOutstanding` si se
+re-expresa Y ademas mide acciones EMITIDAS en algunos filers (BA:
+1.012.261.159 constante contra 754-790M reales) -- no entra ni como respaldo.
+
+### Como se construye la serie de acciones, y por que asi
+
+Yahoo llega a 2022/2023 (4 puntos anuales + 5 trimestrales); SEC llega a 2018
+pero en base de su momento. Ninguna alcanza sola. La combinacion se
+COMPRUEBA, no se asume: se comparan las dos donde se solapan; si coinciden
+dentro del 10%, SEC esta en base actual en ese tramo y se puede extender hacia
+atras -- siempre que ademas no tenga saltos, chequeo que **incluye el primer
+punto posterior al corte** (un split que caiga justo en el hueco de datos no
+se veria mirando solo los previos).
+
+Reglas: **Yahoo manda donde llega** (SEC solo extiende hacia atras);
+**ESCALON, nunca interpolacion** (un escalon es dato viejo y etiquetable, una
+interpolacion es dato inventado e indistinguible); **la discrepancia avisa, no
+corrige**.
+
+Validacion 2021 sobre 200 tickers / 2.379 puntos: **101 arrancan en 2021, 83
+en 2022, 16 en 2023+**. Los ratios de rechazo recuperaron los factores de
+split exactos sin que se los dijeran: KLAC 10,009 / AVGO 10,003 / NFLX 10,000
+/ NVDA 9,984 / NOW 5,012 / CRWD 4,000 / WMT 3,005; mas rechazos por salto
+(AMZN x20,03, FTNT x4,91, CSX x2,98, TSLA x3,02) y eventos de capital reales
+(RKLB 1,112, BG 1,045, HON 2:1 inverso del spinoff). 74 quedaron "sin
+solapamiento" (ADR no-USA + filers de clases multiples) y usan solo Yahoo.
+
+### El error de la granularidad anual, cuantificado
+
+yahooquery sirve UN punto por ano entre 2023 y 2025. Medido contra la serie
+trimestral real, el error del escalon: **mediana 0,24% / p75 1,07% / p90 2,74%
+/ p99 11,35%**, >5% en el 4,7% de los casos. Cola: BG 33,0%, CAR 29,7%, SPGI
+29,1% (fusion con IHS Markit). El error va 1:1 al market cap.
+
+Tiene SIGNO: un conteo viejo queda ALTO (las empresas recompran), medido
++0,29% en media -- sobreestima el market cap y hace ver el multiplo mas barato
+de lo que es. Por eso la tabla guarda `shares_dias` (antiguedad del conteo):
+sin esa columna el riesgo es invisible en la fila.
+
+### Percentil ESTRICTO
+
+Ventana movil TRAILING de 756 ruedas (~3 anios), y se exige que este llena EN
+TIEMPO, no solo que haya `min_obs` observaciones. Son dos cosas distintas: con
+250 dias de historia el percentil sale de un solo regimen de tasas y una sola
+fase del ciclo del ticker, y despues se lee como "su rango historico". Se
+prefiere un NULL honesto a un numero que invita a decidir.
+`--percentil-permisivo` afloja la regla.
+
+Resultado: 152.054 filas / 144 tickers / 2021-01-04 a 2026-08-27. El limitante
+NO es SEC sino `precios_diarios`: solo 84 tickers llegan a 756 ruedas.
+
+---
+
+## 14. El resultado neto que SEC no tagea (29/8/2026)
+
+Ocho tickers del universo (MA, CAT, SCCO, AVAV, AVGO, F, FCX, AMT) declaran el
+resultado bajo `ProfitLoss` y no bajo `NetIncomeLoss`. MA y CAT no tagean
+`NetIncomeLoss` desde 2014 y 2011. Como `ProfitLoss` incluye minoritarios esta
+prohibido usarlo como sinonimo (seccion 7), y el efecto era que esos ocho
+quedaban SIN resultado neto -- y por lo tanto **sin PER** -- sin que nada
+avisara. El modo de falla silencioso, otra vez.
+
+La salida no es un sinonimo nuevo sino una IDENTIDAD contable:
+
+    NetIncomeLoss = ProfitLoss - NetIncomeLossAttributableToNoncontrollingInterest
+
+**Condiciones, ninguna relajable** (`_completar_net_income`):
+
+1. Solo rellena HUECOS. Donde hay `NetIncomeLoss`, gana `NetIncomeLoss`.
+2. El hecho de minoritarios tiene que existir PARA ESE PERIODO. No se asume
+   cero: medido en AVGO, asumir cero da 11% de error. Solo se toma NCI=0
+   cuando la empresa NO tiene el tag en ningun lado.
+3. Control cruzado contra `...AvailableToCommonStockholders*` (medicion
+   independiente del mismo renglon). Si difieren mas de `TOL_NET_INCOME`
+   (5%, mas laxa que la de ponderados porque el control descuenta ademas los
+   dividendos preferidos), no se emite y queda aviso.
+
+**Resultado**: 4.478 -> 4.682 trimestres con `net_income`; tickers sin
+resultado en ningun Q: 5 -> 1 (AU, que es IFRS). PER: 112.574 -> 117.741
+filas. Verificado contra el anual publicado por la propia empresa: MA, CAT,
+SCCO, F, AMT y FCX reconcilian EXACTO en FY2023, FY2024 y FY2025.
+
+Quedan afuera AVGO y AVAV, con aviso, no adivinados.
+
+### La variante que se RECHAZO por evidencia
+
+Para rescatar AVGO se probo relajar la condicion 2 a "el mismo filing
+(accession) no declara minoritarios". **Contradice el control en 256 de 646
+casos verificables (40%)**: MS falla 101 de 122, AIG 38 de 69, WBD 63 de 116.
+Un filing puede omitir el hecho sin que los minoritarios dejen de existir --
+la misma razon por la que companyfacts descarta los conteos de clases
+multiples (hechos dimensionales). NO reintentar este camino.
+
+Medicion de respaldo: 0 tickers del cache usan una variante del tag de
+minoritarios sin tener tambien el estandar, asi que la ausencia TOTAL del tag
+si significa que no hay minoritarios.
+
+---
+
+## 15. Revenue: el problema es SEMANTICO, no aritmetico (29/8/2026)
+
+El control que lo expuso: **la suma de los 4 trimestres tiene que dar el hecho
+ANUAL que publico la propia empresa**. Es independiente de la desacumulacion
+(el anual viene del 10-K sin tocar) y escala a 147 tickers.
+
+| concepto | anios-ticker | cuadran |
+|----------|--------------|---------|
+| net_income | 701 | **99,6%** |
+| operating_income | 582 | 98,6% |
+| cfo | 723 | 97,0% |
+| **revenue** | 721 | **87,8%** |
+
+30 tickers fallan en revenue, y la causa es unica: **mezcla de dos tags de
+revenue dentro del mismo ejercicio**. Siempre es el Q4 el que cambia de tag,
+porque el 10-K etiqueta distinto que los 10-Q y el Q4 sale del anual.
+
+    AXP  Q1-Q3 RFCWCExclTax  +  Q4 InterestAndDividendIncomeOperating
+    GS   Q1-Q3 RevenuesNetOfInterestExpense + Q4 IntDivIncome (49,7B vs 59,3B)
+    AMT  Q1-Q3 RFCWCExclTax (0,2B!)  +  Q4 Revenues (2,5B, el correcto)
+
+La red de seguridad **funciono**: los 20 peores ya tenian aviso
+`cambio_de_tag` en revenue. Nadie lo estaba consumiendo. El aviso tiene recall
+alto y precision baja (marca 59 tickers, rotos hay 30).
+
+### Inventario del crudo (lo que SEC realmente da)
+
+Sobre 38.238 hechos de revenue en 147 tickers:
+
+| tramo | % |
+|-------|---|
+| Q (3 meses discreto) | 55,6% |
+| FY | 19,6% |
+| H (6 meses) | 12,9% |
+| 9M | 11,9% |
+
+Campos al 100%: `start`, `end`, `val`, `accn`, `fy`, `fp`, `form`, `filed`.
+`frame` en el 32%. Formularios: 10-Q 23.334, **10-K 13.656** (el 10-K no trae
+solo el ano: trae los comparativos).
+
+**El 10-K casi nunca publica el Q4 suelto: 67 de 868 ejercicios, y solo 2
+tickers de forma consistente.** El Q4 SIEMPRE hay que derivarlo. Es una
+restriccion dura de la fuente.
+
+### Las cuatro salidas que se probaron y no alcanzan
+
+Arbitro externo: el revenue trimestral de yahooquery
+(`fundamentales_income_q`, period_type 3M).
+
+| regla | vs yahooquery | reconciliacion anual |
+|-------|---------------|----------------------|
+| actual (tag por periodo) | 89,7% | 87,8% |
+| un tag por ejercicio, por cobertura | 89,2% | 99,0% |
+| un tag por ejercicio, mayor anual | **91,6%** | **99,1%** |
+| hibrido prioridad + umbral de subtotal | 90,6% | 99,0% |
+
+**Leccion no obvia**: "un tag por ejercicio, por cobertura" sube la
+reconciliacion de 87,8% a 99,0% y BAJA la verdad (89,7 -> 89,2). En AMT elige
+el tag que aporta 3 trimestres (el subtotal) en vez del correcto: el ano queda
+coherente consigo mismo y sigue estando mal. **La reconciliacion anual es un
+control de consistencia, no de correccion.**
+
+Corolario, y por eso NO se hace `Q4 = FY - (Q1+Q2+Q3)`: esa resta haria que la
+reconciliacion pase POR CONSTRUCCION, destruyendo el unico control
+independiente que hay. En AMT daria Q4 = 9,3B (real 2,5B) y el control diria
+"cuadra". Convierte un error visible en uno invisible.
+
+Tampoco sirve `frame` (la marca de trimestre calendario de la SEC): **89,0%**,
+igual que todo lo demas, porque SEC le asigna frame a CADA tag, subtotal
+incluido -- AMT frame=0,23B contra yq=2,56B.
+
+Tampoco sirve quedarse SOLO con lo publicado (sin derivar nada):
+
+| revenue, 3.159 Q 2021+ | share | acierta vs yahooquery |
+|------------------------|-------|------------------------|
+| publicado directo | 78,1% | **89,0%** |
+| derivado | 21,9% | **92,4%** |
+
+| net_income, 3.111 Q | share | acierta |
+|---------------------|-------|---------|
+| publicado directo | 74,4% | **99,8%** |
+| derivado | 25,6% | **96,1%** |
+
+**En revenue los derivados le pegan MEJOR que los publicados.** El error no
+esta en la aritmetica sino en los hechos publicados -- AMT de nuevo: Q1-Q3
+publicados son el subtotal, Q4 derivado es el total. Quedarse con lo publicado
+tira la parte buena y cuesta el 22% de los trimestres.
+
+Y pasarse al ANUAL tampoco lo esquiva: la ambiguedad esta medida SOBRE los
+anuales. Ademas costaria el TTM (necesita 4 Q) y dejaria el denominador con
+hasta ~14 meses de antiguedad en vez de ~4.
+
+CAVEAT sobre el arbitro: yahooquery tampoco es infalible. En MS el que parece
+equivocado es yahooquery (SEC `RevenuesNetOfInterestExpense` 16,79B contra
+yq 15,60B).
+
+### El tamano real del problema
+
+Comparando los anuales de todos los tags candidatos por ticker:
+
+    102  un solo tag                       -> sin ambiguedad posible
+     20  varios tags pero todos coinciden  -> da igual cual se elija
+     23  AMBIGUOS de verdad                <- el problema entero
+      2  sin anual de revenue
+
+**122 de 147 (83%) no tienen problema.** Los 23 ambiguos, por brecha entre el
+mayor y el menor anual:
+
+| categoria | tickers |
+|-----------|---------|
+| financieras (bruto por intereses vs neto) | PGR 98%, UPST 98%, MS 84%, GS 80%, AXP 79%, WFC 50%, BAC 47%, C 44% |
+| subtotal vs total | RBLX 97%, AMT 93%, BG 76%, BLK 38%, MA 37%, VST 32% |
+| impuesto interno (bruto vs neto) | PM 62% |
+| brecha chica (linea "otros" menor) | COP 25%, HOG 20%, PFE 15%, GM 11%, LYFT 8%, CVX 5%, OXY 3%, FCX 3% |
+
+### Conclusion y camino propuesto (NO implementado)
+
+"Revenue" no es un renglon en XBRL. Una misma empresa puede tagear a la vez
+`RFCWCExcludingAssessedTax`, `Revenues`, `RevenuesNetOfInterestExpense` e
+`InterestAndDividendIncomeOperating` -- las cuatro correctamente, las cuatro
+con `frame`, las cuatro internamente consistentes. **Ninguna operacion sobre
+los numeros elige la buena, porque "cual es el total" es un juicio de
+definicion, no una cuenta.** Por eso todas las reglas topan en ~91%.
+
+Propuesta: **mapeo CURADO de 23 filas `ticker -> tag de revenue`**, el mismo
+patron que el `profile` banco/no-banco con su override curado
+(docs/fundamentales_calculo.md), mas un **detector de ambiguedad automatico**
+que avise cuando aparezca un ticker nuevo con dos tags de magnitudes
+distintas, para que la curaduria no se desactualice en silencio. La curaduria
+se puede sembrar con el arbitraje contra yahooquery (resuelve 112 de 147) pero
+la decision final es humana.
+
+### Que significa esto para elegir fuente (seccion 10)
+
+- SEC es SOLIDO en `net_income` (99,6%), `operating_income` (98,6%), `cfo`
+  (97,0%) y equity.
+- SEC es DEBIL en `revenue`, y por arrastre en **P/S y EV-EBITDA**.
+
+Comparativa SEC vs yahooquery al ultimo dato de cada fuente (144 tickers):
+
+| multiplo | n | mediana | p90 | <=5% |
+|----------|---|---------|-----|------|
+| P/S | 139 | 0,00% | 3,5% | 90% |
+| P/B | 132 | 0,39% | 12,4% | 77% |
+| PER | 113 | 1,75% | 14,2% | 78% |
+| EV/EBITDA | 74 | 9,04% | 38,7% | 34% |
+
+EV/EBITDA diverge por una razon ya declarada: yahooquery usa
+`NormalizedEBITDA`, SEC usa EBIT+D&A sin excluir one-offs.
