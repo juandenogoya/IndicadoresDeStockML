@@ -246,7 +246,10 @@ def test_serie_acciones_prefiere_portada():
 
 
 def test_serie_acciones_usa_respaldo_sin_portada():
-    """Los 20 filers de clases multiples caen aca."""
+    """
+    Ultimo recurso: los filers de clases multiples que ademas no publican el
+    conteo del balance (F, MA, META, NKE, UPS...).
+    """
     cf = _cf_prom([_hq("2026-03-31", 129_000_000, "2026-04-30", "2026-01-01")])
     s = SA.serie_acciones(cf)
     assert [p["fuente"] for p in s] == ["promedio_diluido"]
@@ -260,6 +263,114 @@ def test_serie_acciones_no_mezcla_las_dos_fuentes():
             _hq("2025-03-31", 200_000_000, "2025-05-01", "2025-01-01")]}}}
     s = SA.serie_acciones(cf)
     assert len({p["fuente"] for p in s}) == 1
+
+
+# ------------------------------------------------ nivel 2: el balance --
+def _cf_bal(hechos):
+    return {"facts": {SA.TAXONOMIA_BALANCE:
+                      {SA.TAG_BALANCE: {"units": {"shares": hechos}}}}}
+
+
+def test_balance_se_usa_cuando_no_hay_portada():
+    """
+    Los 21 filers de clases multiples no tienen portada: companyfacts descarta
+    los hechos dimensionales. La mayoria SI publica el conteo consolidado en el
+    balance -- medido, ratio 1.0000 contra yahooquery en 77 de 94 tickers.
+    """
+    cf = _cf_bal([_h("2026-06-30", 12_230_000_000, "2026-07-23")])
+    s = SA.serie_acciones(cf)
+    assert [p["fuente"] for p in s] == ["balance"]
+    assert s[0]["shares"] == 12_230_000_000
+
+
+def test_la_portada_le_gana_al_balance():
+    """
+    La portada no se re-expresa ante un split y el balance SI. Donde estan las
+    dos, gana la portada -- si se invierte, la serie historica queda en la base
+    de hoy y el market cap viejo sale multiplicado por el factor del split.
+    """
+    cf = _cf([_h("2026-04-27", 130_627_521, "2026-04-30")])
+    cf["facts"][SA.TAXONOMIA_BALANCE] = {
+        SA.TAG_BALANCE: {"units": {"shares": [
+            _h("2026-04-27", 1_306_546_783, "2026-04-30")]}}}
+    s = SA.serie_acciones(cf)
+    assert [p["fuente"] for p in s] == ["portada"]
+    assert s[0]["shares"] == 130_627_521
+
+
+def test_el_balance_le_gana_al_promedio():
+    """
+    El balance es un conteo A UNA FECHA, igual que la portada. El promedio
+    ponderado es otra magnitud (todo el trimestre) y por eso va ultimo.
+    """
+    cf = _cf_bal([_h("2026-03-31", 130_000_000, "2026-04-30")])
+    cf["facts"]["us-gaap"]["WeightedAverageNumberOfDilutedSharesOutstanding"] = {
+        "units": {"shares": [
+            _hq("2026-03-31", 129_000_000, "2026-04-30", "2026-01-01")]}}
+    s = SA.serie_acciones(cf)
+    assert [p["fuente"] for p in s] == ["balance"]
+
+
+def test_serie_acciones_no_mezcla_los_tres_niveles():
+    cf = _cf([_h("2026-04-27", 130_000_000, "2026-04-30")])
+    cf["facts"][SA.TAXONOMIA_BALANCE] = {
+        SA.TAG_BALANCE: {"units": {"shares": [
+            _h("2025-06-30", 128_000_000, "2025-07-25")]}},
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+            _hq("2024-03-31", 200_000_000, "2024-05-01", "2024-01-01")]}}}
+    s = SA.serie_acciones(cf)
+    assert len({p["fuente"] for p in s}) == 1
+
+
+def test_las_acciones_EMITIDAS_no_cuentan_como_en_circulacion():
+    """
+    CommonStockSharesIssued incluye las que estan en tesoreria y NO es sinonimo
+    del conteo en circulacion. Medido: en DELL da 1.11..1.31 contra yahooquery
+    y en HSY 1.08..1.09, mientras CommonStockSharesOutstanding da 1.0000 en los
+    dos. Si alguien lo agrega como sinonimo, el market cap se infla en silencio.
+    """
+    cf = {"facts": {SA.TAXONOMIA_BALANCE: {"CommonStockSharesIssued":
+          {"units": {"shares": [_h("2026-06-30", 999_000_000, "2026-07-23")]}}}}}
+    assert SA.serie_balance(cf) == []
+    assert SA.serie_acciones(cf) == []
+
+
+def test_series_por_nivel_ofrece_los_tres_sin_elegir():
+    """
+    EL caso TRIP: portada desde 2025-05 (2 puntos aca) contra balance desde
+    2021-03. Elegir en este modulo seria elegir a ciegas -- solo se sabe cual
+    nivel sirve despues de validarlo contra yahooquery. Asi que se ofrecen los
+    tres, etiquetados, y decide quien puede.
+    """
+    cf = _cf([_h("2025-05-01", 140_000_000, "2025-05-06")])
+    cf["facts"][SA.TAXONOMIA_BALANCE] = {
+        SA.TAG_BALANCE: {"units": {"shares": [
+            _h("2021-03-31", 135_000_000, "2021-05-04"),
+            _h("2025-05-01", 140_000_000, "2025-05-06")]}}}
+    niveles = SA.series_por_nivel(cf)
+    assert [p["fecha"] for p in niveles["portada"]] == ["2025-05-01"]
+    assert len(niveles["balance"]) == 2
+    assert niveles["balance"][0]["fecha"] == "2021-03-31"
+
+
+def test_series_por_nivel_devuelve_las_tres_claves_siempre():
+    """Quien consume itera sobre las claves; que falte una es un KeyError."""
+    niveles = SA.series_por_nivel({"facts": {}})
+    assert set(niveles) == set(SA.NIVELES)
+    assert all(v == [] for v in niveles.values())
+
+
+def test_series_por_nivel_ya_viene_despicada():
+    """
+    El filtrado de escala y picos tiene que estar aplicado POR NIVEL. Si se
+    hiciera despues de elegir, el nivel que se descarta nunca se limpia y quien
+    lo levante se come el error de unidad.
+    """
+    cf = _cf_bal([_h("2021-03-31", 100_000_000, "2021-05-04"),
+                  _h("2021-06-30", 100_000, "2021-08-04"),
+                  _h("2021-09-30", 101_000_000, "2021-11-04")])
+    fechas = [p["fecha"] for p in SA.series_por_nivel(cf)["balance"]]
+    assert "2021-06-30" not in fechas
 
 
 # ------------------------------------------------------------ despicado --

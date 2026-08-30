@@ -41,7 +41,7 @@ import psycopg2.extras
 from scripts.oneshot.create_fundamentales_tables import _parse_env_file
 from src.data.sec import client
 from src.data.sec import tags_curados
-from src.utils.sec_acciones import serie_acciones
+from src.utils.sec_acciones import NIVELES, series_por_nivel
 from src.utils.sec_xbrl import CONCEPTOS, normalizar
 
 SEP = "=" * 64
@@ -153,16 +153,25 @@ def filas_de(ticker, cik, resultado):
     return filas
 
 
-def filas_acciones(ticker, serie):
+def filas_acciones(ticker, niveles):
     """
-    Serie de acciones de PORTADA -> filas. Grano distinto al de la serie
-    trimestral: una fila por FILING, no por trimestre. Ver
-    src/utils/sec_acciones.py para por que no puede vivir en la misma tabla.
+    Series de acciones -> filas. Grano distinto al de la serie trimestral: una
+    fila por FILING, no por trimestre. Ver src/utils/sec_acciones.py para por
+    que no puede vivir en la misma tabla.
+
+    Se persisten LOS TRES NIVELES (portada / balance / promedio_diluido), cada
+    fila con su `fuente`. No es redundancia: elegir el nivel aca seria elegir
+    a ciegas, porque recien rio abajo se lo puede validar contra yahooquery.
+    Quien consume elige -- ver series_sec() en refresh_acciones_circulacion.
     """
-    return [{"ticker": ticker, "fecha": p["fecha"], "shares": p["shares"],
-             "accn": p.get("accn"), "filed": p.get("filed"),
-             "form": p.get("form"), "fuente": p.get("fuente")}
-            for p in serie]
+    filas = []
+    for fuente in NIVELES:
+        for p in niveles.get(fuente, []):
+            filas.append({"ticker": ticker, "fecha": p["fecha"],
+                          "shares": p["shares"], "accn": p.get("accn"),
+                          "filed": p.get("filed"), "form": p.get("form"),
+                          "fuente": p.get("fuente")})
+    return filas
 
 
 def filas_avisos(ticker, resultado):
@@ -330,7 +339,7 @@ def main():
                        tags_curados=tags_curados.para(ticker))
         filas = filas_de(ticker, cik, r)
         avisos = filas_avisos(ticker, r)
-        acciones = filas_acciones(ticker, serie_acciones(datos, desde=args.desde))
+        acciones = filas_acciones(ticker, series_por_nivel(datos, desde=args.desde))
         est = estados.get(ticker, {})
         if not args.dry_run:
             n_filas += upsert_serie(env, filas)

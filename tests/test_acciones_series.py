@@ -189,3 +189,42 @@ def test_aparear_descarta_lo_lejano():
     a = [_p("2025-06-30", 100)]
     b = [_p("2025-01-01", 90)]
     assert A.aparear(a, b) == []
+
+
+# ------------------------------------------------------- empalme continuo --
+def test_empalme_con_salto_de_split_se_rechaza():
+    """
+    EL caso WMT, reproducido con su forma real (split 3:1 de 2024).
+
+    Yahoo arranca en 2023-01 ya en la base NUEVA; la serie SEC esta en la
+    vieja. Las dos guardas previas aprueban igual:
+      - validar_base: los unicos pares que caen dentro de los 60 dias son de
+        2025, o sea POST split, y ahi las dos fuentes coinciden.
+      - sin_saltos: el tramo SEC que se agrega es todo pre-split y no tiene
+        ningun salto interno.
+    El escalon x2,99 esta justo en la juntura, que es donde nadie miraba.
+    """
+    yahoo = [{"fecha": "2023-01-31", "shares": 8_100_000_000},
+             {"fecha": "2025-04-30", "shares": 7_986_000_000}]
+    sec = [{"fecha": "2022-07-31", "shares": 2_745_000_000},
+           {"fecha": "2022-10-31", "shares": 2_711_000_000},
+           {"fecha": "2023-04-30", "shares": 2_704_000_000},
+           {"fecha": "2025-04-30", "shares": 7_986_000_000}]
+    serie, diag = A.construir(yahoo, sec, desde="2021-01-01")
+    assert diag["validacion"]["ok"] is True, "la validacion vieja aprueba: ese es el punto"
+    assert diag["extendido"] is False
+    assert "empalme" in diag["motivo"]
+    assert {p["fuente"] for p in serie} == {"yahooquery"}
+
+
+def test_empalme_normal_se_acepta():
+    """Un trimestre de recompras mueve unidades porcentuales, no multiplos."""
+    yahoo = [{"fecha": "2023-01-31", "shares": 990_000_000},
+             {"fecha": "2024-01-31", "shares": 975_000_000}]
+    sec = [{"fecha": "2022-04-30", "shares": 1_010_000_000},
+           {"fecha": "2022-10-31", "shares": 1_000_000_000},
+           {"fecha": "2024-01-31", "shares": 975_000_000}]
+    serie, diag = A.construir(yahoo, sec, desde="2021-01-01")
+    assert diag["extendido"] is True
+    assert diag["n_sec_usados"] == 2
+    assert serie[0]["fecha"] == "2022-04-30"

@@ -54,17 +54,35 @@ TAXONOMIA = "dei"
 # Respaldo para los filers de CLASES MULTIPLES. En esas empresas SEC declara el
 # conteo de portada POR CLASE, con dimensiones XBRL, y la API companyfacts
 # descarta los hechos dimensionales -> el tag de portada directamente no
-# aparece. Medido: 20 de 147 tickers (GOOG, META, V, MA, F, UPS, NKE, HSY,
-# DELL, SNAP, PINS, PLTR, RBLX, RIVN, ABNB, HOOD, ZM, ASAN, AI, PATH) -- todos
-# de clase dual o triple.
+# aparece. Medido: 21 de 147 tickers (GOOG, META, V, MA, F, UPS, NKE, HSY,
+# DELL, SNAP, PINS, PLTR, RBLX, RIVN, ABNB, HOOD, ZM, ASAN, AI, PATH, LEVI) --
+# todos de clase dual o triple. La consecuencia no era abstracta: esos 21
+# arrancaban en 2022-12 mientras el resto arrancaba en 2021, y a NKE le
+# faltaba el 41% de su historia de market cap.
 #
-# El respaldo es el promedio ponderado del TRIMESTRE, tomado en su PRIMER
-# `filed`, que es la version contemporanea al precio de ese trimestre. NO se usa
-# us-gaap:CommonStockSharesOutstanding: se re-expresa igual que todo lo demas y
-# ademas mide acciones EMITIDAS, no en circulacion.
+# NIVEL 2 -- us-gaap:CommonStockSharesOutstanding (el del BALANCE).
+# Este modulo lo descartaba con dos razones. La primera es cierta: se
+# re-expresa ante un split, igual que todo lo demas del balance. La segunda
+# ("mide acciones EMITIDAS, no en circulacion") es FALSA, y se midio:
+# contra yahooquery da ratio EXACTAMENTE 1.0000 en 77 de 94 tickers. El tag de
+# emitidas es otro y se comporta distinto -- en DELL da 1.11..1.31 y en HSY
+# 1.08..1.09, mientras el de circulacion da 1.0000 en los dos.
 #
-# Es una magnitud distinta (promedio del trimestre vs conteo a una fecha), asi
-# que cada punto queda etiquetado con su `fuente` y el consumidor puede verlo.
+# El riesgo real es la BASE DE SPLIT, y ya hay quien lo ataja: la validacion de
+# acciones_series.validar_base compara contra yahooquery antes de extender y
+# rechaza la serie si no coinciden. NVDA, NFLX y AVGO dan ratio 0.1000 (10:1) y
+# quedan afuera solos, sin necesidad de una lista de splits.
+#
+# NIVEL 3 -- el promedio ponderado del TRIMESTRE, en su PRIMER `filed`, que es
+# la version contemporanea al precio de ese trimestre. Es una magnitud DISTINTA
+# (promedio del periodo vs conteo a una fecha), asi que va ultimo.
+#
+# Los tres niveles NO se mezclan dentro de un ticker: alternar entre magnitudes
+# distintas meteria escalones que no ocurrieron. Cada punto queda etiquetado
+# con su `fuente` para que el consumidor lo vea.
+TAG_BALANCE = "CommonStockSharesOutstanding"
+TAXONOMIA_BALANCE = "us-gaap"
+
 TAGS_PROMEDIO = ["WeightedAverageNumberOfDilutedSharesOutstanding",
                  "WeightedAverageNumberOfSharesOutstandingBasic"]
 TAXONOMIA_PROMEDIO = "us-gaap"
@@ -156,6 +174,27 @@ def _dias(inicio, fin):
     return (b - a).days
 
 
+def serie_balance(companyfacts, desde=None):
+    """
+    Nivel 2: el conteo de acciones EN CIRCULACION del balance
+    (us-gaap:CommonStockSharesOutstanding).
+
+    Es point-in-time como la portada, no un promedio, y en los filers de clases
+    multiples suele venir SIN dimension -- o sea, ya sumado sobre las clases.
+    Medido contra yahooquery: 77 de 94 tickers dan ratio 1.0000.
+
+    OJO: a diferencia de la portada, este tag SI se re-expresa ante un split.
+    Por eso la serie que sale de aca no se puede empalmar a ciegas; quien la
+    consuma tiene que pasarla por acciones_series.validar_base(), que compara
+    contra yahooquery y la rechaza si las bases no coinciden.
+    """
+    facts = (companyfacts or {}).get("facts", {}).get(TAXONOMIA_BALANCE, {})
+    tag = facts.get(TAG_BALANCE)
+    if not tag:
+        return []
+    return _recolectar(tag, desde, "balance")
+
+
 def serie_promedio(companyfacts, desde=None):
     """
     Respaldo para los filers de clases multiples: promedio ponderado de
@@ -244,15 +283,50 @@ def despicar(serie, factor=1.6):
 
 def serie_acciones(companyfacts, desde=None):
     """
-    La serie a usar. Portada si la hay; si no, el respaldo del promedio
-    ponderado. NO se mezclan: son magnitudes distintas y alternar entre ellas
-    meteria escalones que no ocurrieron.
+    La serie a usar, en tres niveles y por ORDEN DE PREFERENCIA:
+
+      1. portada  -- dei:EntityCommonStockSharesOutstanding. Point-in-time y
+                     en la base de SU momento (no se re-expresa por splits).
+      2. balance  -- us-gaap:CommonStockSharesOutstanding. Tambien
+                     point-in-time, pero SI se re-expresa: exige validacion
+                     de base rio abajo.
+      3. promedio -- promedio ponderado del trimestre. Otra magnitud.
+
+    NO se mezclan entre si: alternar entre ellas meteria escalones que no
+    ocurrieron. Se elige UN nivel por ticker, el primero que tenga datos.
     """
-    s = serie_portada(companyfacts, desde=desde)
-    if not s:
-        s = serie_promedio(companyfacts, desde=desde)
+    niveles = series_por_nivel(companyfacts, desde=desde)
+    for fuente in NIVELES:
+        if niveles.get(fuente):
+            return niveles[fuente]
+    return []
+
+
+# Los niveles, en orden de preferencia. El nombre es el que va a la columna
+# `fuente` y el que usan los consumidores para elegir.
+NIVELES = ("portada", "balance", "promedio_diluido")
+
+
+def series_por_nivel(companyfacts, desde=None):
+    """
+    TODAS las series disponibles, {fuente: serie}, ya filtradas y despicadas.
+
+    Existe porque elegir el nivel aca es elegir a ciegas. La preferencia sola
+    ("el primero que tenga datos") tira dato bueno cuando la empresa empezo a
+    taguear la portada hace poco -- TRIP la tiene desde 2025-05 con 6 puntos y
+    el balance desde 2021-03 con 22. Pero elegir por COBERTURA tampoco sirve:
+    medido, cambiar de nivel a ciegas rompio UPST y SNOW, que ya andaban.
+
+    El unico que sabe cual nivel sirve es quien puede VALIDARLO contra
+    yahooquery, y eso pasa rio abajo en acciones_series.construir(). Asi que
+    aca se ofrecen todos, etiquetados, y la decision la toma quien tiene con
+    que decidir.
+    """
+    crudas = {"portada": serie_portada(companyfacts, desde=desde),
+              "balance": serie_balance(companyfacts, desde=desde),
+              "promedio_diluido": serie_promedio(companyfacts, desde=desde)}
     # Primero la escala (saca rachas), despues los picos aislados.
-    return despicar(_fuera_de_escala(s))
+    return {k: despicar(_fuera_de_escala(v)) for k, v in crudas.items()}
 
 
 def acciones_asof(serie, fecha):

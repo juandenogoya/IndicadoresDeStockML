@@ -88,17 +88,73 @@ def universo(env, tickers=None):
             return [r[0] for r in cur.fetchall()]
 
 
+# Orden de preferencia de las series SEC, de mas a menos fiel:
+#   portada  -- dei, point-in-time, NO se re-expresa ante un split
+#   balance  -- us-gaap, point-in-time, pero SI se re-expresa
+#   promedio -- promedio ponderado del trimestre: otra magnitud
+PREFERENCIA_FUENTE = ("portada", "balance", "promedio_diluido")
+
+
 def series_sec(env):
-    """{ticker: [{fecha, shares}]} de la serie SEC de portada."""
+    """
+    {ticker: {fuente: [{fecha, shares}]}} -- TODOS los niveles disponibles.
+
+    Antes esto filtraba `WHERE fuente='portada'` y descartaba en silencio los
+    respaldos que sec_acciones ya habia calculado y persistido. El efecto era
+    invisible y caro: los 21 filers de clases multiples (GOOG, META, F, MA,
+    NKE, UPS, V...) no tienen portada -- companyfacts descarta los hechos
+    dimensionales -- asi que llegaban con CERO puntos, la validacion anotaba
+    "sin solapamiento" y se quedaban sin extension. Medido antes del arreglo:
+    11.491 ruedas sin market cap en 43 tickers, hasta el 41% de un ticker.
+    """
     out = {}
     with _conn(env) as cx:
         with cx.cursor() as cur:
-            cur.execute("SELECT ticker, fecha, shares FROM fundamentales_sec_acciones "
-                        "WHERE fuente='portada' ORDER BY ticker, fecha")
-            for tk, f, s in cur.fetchall():
-                out.setdefault(tk, []).append(
-                    {"fecha": f.isoformat(), "shares": float(s)})
+            cur.execute("SELECT ticker, fecha, shares, fuente "
+                        "FROM fundamentales_sec_acciones "
+                        "ORDER BY ticker, fecha")
+            for tk, f, sh, fuente in cur.fetchall():
+                out.setdefault(tk, {}).setdefault(fuente, []).append(
+                    {"fecha": f.isoformat(), "shares": float(sh)})
     return out
+
+
+def construir_mejor(yah, niveles, desde):
+    """
+    Prueba los niveles SEC en orden de preferencia y se queda con el PRIMERO
+    que logra extender la serie hacia atras.
+
+    Por que probar y no elegir de antemano: ninguna regla ciega gana. Elegir
+    por preferencia deja a TRIP y LYFT con una portada de 4-6 puntos que
+    arranca en 2025 (930 ruedas perdidas); elegir por cobertura rompe UPST y
+    SNOW, que con la portada ya andaban. Lo unico que distingue un nivel util
+    de uno inservible es si PASA LA VALIDACION contra yahooquery, y eso solo se
+    sabe corriendola.
+
+    Los niveles no se mezclan entre si: se elige uno y se usa entero.
+
+    Si ninguno extiende se devuelve el intento del nivel mas preferido, para
+    que el diagnostico que se persiste hable del mejor dato disponible y no
+    del ultimo que se probo.
+    """
+    primero = None
+    for fuente in PREFERENCIA_FUENTE:
+        serie_sec = niveles.get(fuente) or []
+        if not serie_sec:
+            continue
+        serie, diag = A.construir(yah, serie_sec, desde=desde,
+                                  etiqueta="sec_" + fuente)
+        diag["fuente_sec"] = fuente
+        if primero is None:
+            primero = (serie, diag)
+        if diag["extendido"]:
+            return serie, diag
+    if primero is not None:
+        return primero
+    serie, diag = A.construir(yah, [], desde=desde)
+    diag["fuente_sec"] = None
+    return serie, diag
+
 
 
 # ------------------------------------------------------------------ red --
@@ -239,7 +295,7 @@ def main():
     sin_datos, no_ext = [], []
     for ticker in lista:
         yah = datos.get(ticker, [])
-        serie, diag = A.construir(yah, sec.get(ticker, []), desde=args.desde)
+        serie, diag = construir_mejor(yah, sec.get(ticker, {}), args.desde)
         if not serie:
             sin_datos.append(ticker)
             continue

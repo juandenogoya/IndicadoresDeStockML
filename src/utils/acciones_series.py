@@ -50,6 +50,22 @@ TOL_BASE = 0.10
 # Salto entre puntos consecutivos que se considera cambio de base.
 UMBRAL_SALTO = 1.5
 
+# Cuanto puede cambiar el conteo entre el ULTIMO punto SEC que se agrega y el
+# PRIMER punto de Yahoo. Son un trimestre vecinos: recompras y emisiones mueven
+# unidades porcentuales, no multiplos.
+#
+# Esta guarda existe porque las otras dos NO alcanzan, y se descubrio con datos:
+# validar_base() compara los tramos que se SOLAPAN, y sin_saltos() mira la
+# serie SEC por dentro. Si la serie SEC es internamente coherente pero esta en
+# otra base que Yahoo -- porque el split ocurrio DESPUES del ultimo punto SEC --
+# las dos dan el visto bueno y el escalon aparece justo en la juntura. Medido:
+# AVGO empalmaba con x9,72 (split 10:1) y WMT con x2,99 (3:1), o sea market cap
+# 10 y 3 veces mas chico en todo el tramo agregado.
+#
+# 1,25 separa limpio: los empalmes sanos dan mediana 0,49% y el peor legitimo
+# 13,8% (ASAN, que diluye fuerte por stock based compensation).
+UMBRAL_EMPALME = 1.25
+
 # Ventana para aparear un punto de una serie con el de la otra.
 DIAS_APAREO = 60
 
@@ -143,21 +159,34 @@ def sin_saltos(serie, desde=None, umbral=UMBRAL_SALTO):
 
 
 def construir(serie_yahoo, serie_sec, desde, tol=TOL_BASE,
-              umbral=UMBRAL_SALTO, dias=DIAS_APAREO):
+              umbral=UMBRAL_SALTO, dias=DIAS_APAREO, etiqueta="sec_portada"):
     """
     Serie final de acciones para un ticker, y el veredicto de la validacion.
 
     Devuelve (serie, diagnostico).
       serie       : [{fecha, shares, periodo, fuente}] ordenada, sin duplicados
                     de fecha, con Yahoo teniendo prioridad donde llega.
+
+    `etiqueta` es el valor que va a la columna `fuente` de los puntos que
+    aporta SEC. Hay tres niveles de serie SEC (portada / balance / promedio
+    ponderado) y no son la misma medicion, asi que el nombre tiene que decir
+    cual entro: si todos se guardan como "sec_portada", un promedio del
+    trimestre pasa por un conteo a una fecha y nadie se entera.
       diagnostico : {extendido, desde_efectivo, validacion, motivo, n_yahoo,
                      n_sec_usados}
 
-    La extension con SEC hacia atras requiere DOS condiciones, las dos
+    La extension con SEC hacia atras requiere TRES condiciones, las tres
     verificadas y ninguna asumida:
-      1. las fuentes coinciden en el solapamiento (misma base ahi), y
-      2. la serie SEC no tiene saltos en el tramo que se quiere agregar.
+      1. las fuentes coinciden en el solapamiento (misma base ahi),
+      2. la serie SEC no tiene saltos en el tramo que se quiere agregar, y
+      3. el EMPALME es continuo: el ultimo punto SEC y el primero de Yahoo no
+         pueden diferir por un multiplo.
     Si falla cualquiera, se devuelve solo Yahoo y el diagnostico dice por que.
+
+    La tercera no es redundante con las otras dos: cuando el split ocurre
+    DESPUES del ultimo punto SEC, la serie SEC es coherente consigo misma y el
+    solapamiento que se compara cae todo del mismo lado, asi que 1 y 2 aprueban
+    y el escalon entra igual.
     """
     yah = sorted((p for p in serie_yahoo if p.get("shares")),
                  key=lambda p: _iso(p["fecha"]))
@@ -196,8 +225,15 @@ def construir(serie_yahoo, serie_sec, desde, tol=TOL_BASE,
         diag["motivo"] = motivo
         return salida, diag
 
+    # El empalme mismo tiene que ser continuo. Ver UMBRAL_EMPALME.
+    r_emp = salida[0]["shares"] / previos[-1]["shares"] if previos[-1]["shares"] else None
+    if r_emp is None or r_emp >= UMBRAL_EMPALME or r_emp <= 1.0 / UMBRAL_EMPALME:
+        diag["motivo"] = (f"empalme x{r_emp:.2f} entre {_iso(previos[-1]['fecha'])} "
+                          f"y {salida[0]['fecha']}" if r_emp else "empalme sin valor")
+        return salida, diag
+
     extra = [{"fecha": _iso(p["fecha"]), "shares": float(p["shares"]),
-              "periodo": "q", "fuente": "sec_portada"} for p in previos]
+              "periodo": "q", "fuente": etiqueta} for p in previos]
     diag.update({"extendido": True, "n_sec_usados": len(extra),
                  "desde_efectivo": extra[0]["fecha"]})
     return extra + salida, diag
