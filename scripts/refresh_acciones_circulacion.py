@@ -119,7 +119,30 @@ def series_sec(env):
     return out
 
 
-def construir_mejor(yah, niveles, desde):
+def splits_por_ticker(env):
+    """
+    {ticker: [{fecha, ratio}]} desde polygon_splits.
+
+    Si la tabla no existe todavia devuelve {} y todo sigue funcionando como
+    antes: el rebase es una MEJORA opcional, no un requisito. Un entorno sin
+    Polygon ingerido pierde las ruedas de base de split -- que es exactamente
+    lo que pasaba hasta ahora -- pero no se rompe.
+    """
+    out = {}
+    try:
+        with _conn(env) as cx:
+            with cx.cursor() as cur:
+                cur.execute("SELECT ticker, execution_date, ratio FROM polygon_splits "
+                            "WHERE ratio IS NOT NULL ORDER BY ticker, execution_date")
+                for tk, fe, ratio in cur.fetchall():
+                    out.setdefault(tk, []).append(
+                        {"fecha": fe.isoformat(), "ratio": float(ratio)})
+    except Exception:
+        return {}
+    return out
+
+
+def construir_mejor(yah, niveles, desde, splits=None):
     """
     Prueba los niveles SEC en orden de preferencia y se queda con el PRIMERO
     que logra extender la serie hacia atras.
@@ -142,8 +165,14 @@ def construir_mejor(yah, niveles, desde):
         serie_sec = niveles.get(fuente) or []
         if not serie_sec:
             continue
+        # A la base de HOY antes de comparar. Las fuentes point-in-time
+        # publican la base de su momento y precios_diarios esta en la de hoy;
+        # sin esto, todo lo anterior a un split se rechaza (bien) y se pierde.
+        serie_sec, rb = A.rebasar(serie_sec, splits or [])
+        etiqueta = "sec_" + fuente + ("_rb" if rb else "")
         serie, diag = A.construir(yah, serie_sec, desde=desde,
-                                  etiqueta="sec_" + fuente)
+                                  etiqueta=etiqueta)
+        diag["rebase"] = len(rb)
         diag["fuente_sec"] = fuente
         if primero is None:
             primero = (serie, diag)
@@ -291,11 +320,15 @@ def main():
     log(f"yahooquery devolvio datos para {len(datos)} tickers")
 
     sec = series_sec(env)
+    sp = splits_por_ticker(env)
+    log(f"splits de Polygon: {sum(len(v) for v in sp.values())} "
+        f"en {len(sp)} tickers")
     n_filas = n_ext = 0
     sin_datos, no_ext = [], []
     for ticker in lista:
         yah = datos.get(ticker, [])
-        serie, diag = construir_mejor(yah, sec.get(ticker, {}), args.desde)
+        serie, diag = construir_mejor(yah, sec.get(ticker, {}), args.desde,
+                                      sp.get(ticker))
         if not serie:
             sin_datos.append(ticker)
             continue

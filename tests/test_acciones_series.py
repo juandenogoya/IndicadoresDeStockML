@@ -228,3 +228,43 @@ def test_empalme_normal_se_acepta():
     assert diag["extendido"] is True
     assert diag["n_sec_usados"] == 2
     assert serie[0]["fecha"] == "2022-04-30"
+
+
+# ------------------------------------------------------------- rebase --
+def test_rebase_lleva_la_serie_a_la_base_de_hoy():
+    """
+    EL caso GOOG: split 20:1 el 2022-07-18. Los conteos de 2021 estan en la
+    base vieja (~660 MM) y precios_diarios en la de hoy (~12.200 MM). Sin
+    rebase el market cap de 2021 sale 20 veces mas chico.
+    """
+    serie = [{"fecha": "2021-06-30", "shares": 663_763_994},
+             {"fecha": "2023-06-30", "shares": 12_600_000_000}]
+    sp = [{"fecha": "2022-07-18", "ratio": 20.0}]
+    out, usados = A.rebasar(serie, sp)
+    assert out[0]["shares"] == 663_763_994 * 20
+    assert out[1]["shares"] == 12_600_000_000, "lo posterior al split no se toca"
+    assert usados == [("2021-06-30", 20.0)]
+
+
+def test_rebase_acumula_splits_encadenados():
+    """NVDA: 4:1 en 2021-07 y 10:1 en 2024-06. Un punto previo lleva x40."""
+    serie = [{"fecha": "2021-06-30", "shares": 620_000_000},
+             {"fecha": "2022-06-30", "shares": 2_480_000_000},
+             {"fecha": "2025-06-30", "shares": 24_400_000_000}]
+    sp = [{"fecha": "2021-07-20", "ratio": 4.0}, {"fecha": "2024-06-10", "ratio": 10.0}]
+    out, _ = A.rebasar(serie, sp)
+    assert out[0]["shares"] == 620_000_000 * 40
+    assert out[1]["shares"] == 2_480_000_000 * 10
+    assert out[2]["shares"] == 24_400_000_000
+
+
+def test_rebase_sin_splits_no_toca_nada():
+    serie = [{"fecha": "2021-06-30", "shares": 1_000}]
+    out, usados = A.rebasar(serie, [])
+    assert out == serie and usados == []
+
+
+def test_rebase_no_muta_la_entrada():
+    serie = [{"fecha": "2021-06-30", "shares": 100.0}]
+    A.rebasar(serie, [{"fecha": "2022-01-01", "ratio": 2.0}])
+    assert serie[0]["shares"] == 100.0

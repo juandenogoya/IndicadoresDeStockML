@@ -158,6 +158,59 @@ def sin_saltos(serie, desde=None, umbral=UMBRAL_SALTO):
     return True, None
 
 
+def rebasar(serie, splits):
+    """
+    Lleva una serie de conteos, cada uno en la base de SU momento, a la base
+    de HOY. Devuelve (serie_nueva, factores_aplicados).
+
+    POR QUE HACE FALTA
+    Las dos fuentes point-in-time de acciones -- la portada de SEC y el
+    conteo de Polygon -- publican lo que era cierto ESE dia. `precios_diarios`,
+    en cambio, se corrige retroactivamente por divisor cuando aparece un split
+    (ver "Splits" en CLAUDE.md), o sea que esta en la base de hoy. Multiplicar
+    un precio de hoy por un conteo de ayer da un market cap dividido por el
+    factor del split.
+
+    Medido: 4.218 de las 6.396 ruedas sin market cap tienen esta unica causa.
+    Las guardas las rechazan bien -- solas no pueden distinguir un split de un
+    error de dato -- pero con una lista AUTORITATIVA de splits el ajuste deja
+    de ser una adivinanza y pasa a ser una multiplicacion.
+
+    `splits` : [{fecha, ratio}] con ratio = split_to / split_from. Un 10:1 da
+               10: las acciones se multiplican por 10 y el precio se divide.
+
+    Cada punto se multiplica por el producto de los splits POSTERIORES a su
+    fecha. Los posteriores y no los anteriores: un conteo de 2021 todavia no
+    "sabe" del split de 2022, asi que hay que aplicarselo.
+
+    EL BORDE ES ESTRICTO (`>`, no `>=`) y es una decision, no un descuido: la
+    fecha que publica Polygon es la de EJECUCION y puede caer uno o dos dias
+    despues de la ex-date que registra el proyecto (KLAC figura 2026-06-12 y
+    en CLAUDE.md quedo el 11/6). Con fechas de cierre de trimestre la
+    coincidencia exacta es rara, y si el borde se equivoca la serie NO se
+    corrompe en silencio: validar_base y la guarda de empalme la rechazan
+    despues, que es exactamente para lo que estan.
+    """
+    if not splits:
+        return list(serie), []
+    ss = sorted(({"fecha": _iso(x["fecha"]), "ratio": float(x["ratio"])}
+                 for x in splits if x.get("ratio")), key=lambda x: x["fecha"])
+    salida, usados = [], []
+    for p in serie:
+        f = _iso(p["fecha"])
+        factor = 1.0
+        for x in ss:
+            if x["fecha"] > f:
+                factor *= x["ratio"]
+        q = dict(p)
+        if factor != 1.0 and p.get("shares"):
+            q["shares"] = float(p["shares"]) * factor
+            q["rebase"] = factor
+            usados.append((f, factor))
+        salida.append(q)
+    return salida, usados
+
+
 def construir(serie_yahoo, serie_sec, desde, tol=TOL_BASE,
               umbral=UMBRAL_SALTO, dias=DIAS_APAREO, etiqueta="sec_portada"):
     """

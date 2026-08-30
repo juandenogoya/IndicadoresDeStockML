@@ -38,7 +38,13 @@ CUPO = 4
 VENTANA = 60.0
 
 REINTENTOS = 4
-TIMEOUT = 45
+# (conectar, leer) por separado, no un numero solo. Con un escalar, un socket
+# que quedo muerto -- la maquina se suspendio, se cayo la red -- puede colgar
+# el pedido indefinidamente: el reloj del timeout no corre mientras el proceso
+# esta congelado. Paso de verdad en la primera corrida: un pedido se comio
+# 4 horas y media entre COP y COST, y al volver pasaron 4 tickers en el mismo
+# segundo porque la ventana de caudal estaba vacia.
+TIMEOUT = (10, 45)
 
 
 def api_key():
