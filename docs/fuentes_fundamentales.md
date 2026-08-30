@@ -55,6 +55,8 @@ Pendiente y ABIERTO:
 | se puede evitar la desacumulacion del Q4 con otra fuente | 18.6 (no) |
 | se puede cubrir RIO/UL/VOD/BABA con SEC | 18.6 (no, es regulatorio) |
 | que fuente usar para cada cosa | docs/arquitectura_fuentes.md |
+| por que quedan 29 tickers sin EV | 19 (camino agotado) |
+| puedo usar la deuda de yahooquery para tapar el hueco | 19.3 (no, falla validacion) |
 
 `scripts/oneshot/sec_xbrl_prototipo.py` es el prototipo de la investigacion y
 queda como material historico reproducible; el modulo bueno es el de
@@ -1639,3 +1641,95 @@ punto: convertir una mina silenciosa en un error ruidoso.
 Quedan 29 sin EV: 13 sin ninguna de las dos deudas (Ford y GM entre ellos,
 deuda 100% dimensionada -> solo sec-api.io), 5 sin la larga y 11 sin la
 corta, mas los que genuinamente no tienen deuda.
+
+---
+
+## 19. Los 29 que quedan sin EV, y por que se para aca (29/8/2026)
+
+Despues del arreglo de tags (18.10) quedan 29 de 144 tickers sin deuda neta
+en la ultima rueda. Se evaluaron los tres caminos posibles y **ninguno pasa**.
+Queda documentado para no volver a intentarlo sin datos nuevos.
+
+### 19.1 Que les falta exactamente
+
+| grupo | tickers |
+|---|---|
+| les faltan LAS DOS deudas (13) | AI AIG CAT **F GM** GS HL KTOS PATH PGR PLTR UPST ZM |
+| les falta la CORTA (11) | AVAV EQIX KLAC LEVI MCD MS NEM PYPL RIVN RKLB SCCO |
+| les falta la LARGA (5) | CDE CVX DE ORCL TMUS |
+
+### 19.2 Camino A -- mas tags: AGOTADO
+
+Se barrio el cache buscando cualquier concepto con `Debt`, `Borrow`,
+`NotesPayable` o `CommercialPaper` presente en el ultimo periodo de esos
+tickers. Lo que aparece **no es deuda**:
+
+```
+AvailableForSaleDebtSecurities...            titulos de inversion = ACTIVO
+DebtSecuritiesAvailableForSale...            idem
+ProceedsFromSaleOfAvailableForSaleSecuritiesDebt   flujo, no saldo
+RepaymentsOfLongTermDebt                     flujo, no saldo
+DebtInstrumentFaceAmount                     nota al pie de UN instrumento
+```
+
+Meter cualquiera de esos como deuda seria confundir un activo con un pasivo o
+un flujo con un saldo. El camino de los sinonimos esta agotado: **companyfacts
+no tiene el dato**, no es que no lo estemos buscando bien.
+
+### 19.3 Camino B -- la deuda de yahooquery: RECHAZADO POR VALIDACION
+
+yahooquery tiene `total_debt` para **los 29**. Tentador, gratis y ya cargado.
+Se valido antes de mezclar, como manda `docs/arquitectura_fuentes.md` regla 4,
+comparando contra SEC (`debt_short + debt_long`) donde las dos existen:
+
+| | |
+|---|---|
+| pares comparables | 408 |
+| dentro del 5% | 171 (**42%**) |
+| diferencia mediana | **6,3%** |
+
+**No alcanza.** Un 6,3% de diferencia mediana en la deuda produce un salto
+artificial en el EV justo en la rueda donde la serie cambia de fuente -- el
+mismo defecto que un split sin aplicar, y por las mismas razones.
+
+Se reviso si era una diferencia de DEFINICION (leases operativos, por
+ejemplo), que se podria corregir con un factor. No lo es:
+
+```
+yahooquery mayor en 259 de 310 casos   (sesgo de un solo signo, si)
+p25  +0,0%   mediana +5,3%   p75 +17,8%   (pero magnitud NO constante)
+```
+
+Un sesgo unidireccional pero de magnitud variable entre 0% y 18% no se
+corrige con un factor: es ruido con direccion, no una diferencia sistematica.
+
+Ademas, aunque pasara la validacion, **no serviria para lo que importa**:
+yahooquery arranca en 2024-09, o sea ~480 ruedas, y el percentil trailing
+exige 756. Daria un EV/EBITDA sin percentil, que es un numero sin el juicio
+que lo hace util.
+
+### 19.4 Camino C -- sec-api.io: viable, con costo
+
+Es el unico que queda para el subgrupo dimensional (F, GM, CAT, CVX, TMUS,
+DE...). Verificado en Ford: la deuda esta completa y con segmento (18.2).
+Costo y limitaciones en 18.7. **Decision pendiente, no tecnica sino de si
+justifica el gasto y la dependencia.**
+
+### 19.5 Lo que NO es un problema
+
+De los 29, varios **genuinamente casi no tienen deuda** y el hueco no es un
+defecto sino la realidad: AI (6 MM), HL (13 MM), ZM (60 MM), PATH (83 MM),
+RKLB (139 MM), PLTR (211 MM). Para ellos el EV es practicamente el market
+cap y la ausencia de deuda no distorsiona nada.
+
+El subgrupo que si duele es el otro: **F, GM, CAT, CVX, DE, TMUS, ORCL, MCD**
+-- empresas con deuda grande y real que no aparece en companyfacts.
+
+### 19.6 Conclusion
+
+**56 -> 29 es donde termina el camino gratis.** Lo hecho fue lo correcto y
+esta validado. Lo que queda exige plata (sec-api.io) o es un no-problema.
+
+La regla de validar antes de mezclar hizo exactamente lo que tenia que hacer:
+**freno un cambio que se veia atractivo y gratis** y que habria metido un
+error variable de hasta 18% en el EV sin que nadie lo notara.
