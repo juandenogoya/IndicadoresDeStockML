@@ -268,3 +268,62 @@ def test_rebase_no_muta_la_entrada():
     serie = [{"fecha": "2021-06-30", "shares": 100.0}]
     A.rebasar(serie, [{"fecha": "2022-01-01", "ratio": 2.0}])
     assert serie[0]["shares"] == 100.0
+
+
+# --------------------------------------------------------------------------
+# El rebase corta por `filed`, no por la fecha de periodo. Ver A.rebasar.
+# --------------------------------------------------------------------------
+
+def test_rebase_corta_por_filed_y_no_por_fecha_de_periodo():
+    """
+    El caso GOOG, con sus numeros reales.
+
+    Los dos puntos cierran ANTES del split del 18/7/2022, pero el segundo se
+    presento DESPUES y el emisor ya lo publico re-expresado. Cortando por la
+    fecha de periodo se rebasan los dos y queda un salto de ~20x; cortando por
+    `filed` cada uno recibe lo que le corresponde y la serie queda continua.
+    """
+    serie = [
+        {"fecha": "2022-03-31", "filed": "2022-04-27", "shares": 658_763_000.0},
+        {"fecha": "2022-06-30", "filed": "2022-07-27", "shares": 13_078_000_000.0},
+    ]
+    reb, usados = A.rebasar(serie, [{"fecha": "2022-07-18", "ratio": 20.0}])
+
+    assert len(usados) == 1, "solo el presentado ANTES del split se rebasa"
+    assert reb[0]["shares"] == pytest.approx(13_175_260_000.0)
+    assert reb[1]["shares"] == pytest.approx(13_078_000_000.0)
+
+    # Lo que realmente importa: la serie dejo de tener el escalon.
+    ratio = reb[1]["shares"] / reb[0]["shares"]
+    assert 0.95 < ratio < 1.05
+    assert A.sin_saltos(reb)[0] is True
+
+
+def test_sin_filed_se_cae_a_la_fecha_de_periodo():
+    """El fallback existe: un punto sin `filed` sigue rebasandose por fecha."""
+    serie = [{"fecha": "2022-03-31", "shares": 100.0}]
+    reb, usados = A.rebasar(serie, [{"fecha": "2022-07-18", "ratio": 20.0}])
+    assert len(usados) == 1
+    assert reb[0]["shares"] == pytest.approx(2000.0)
+
+
+def test_un_ratio_de_spinoff_arruina_la_serie_que_ya_estaba_sana():
+    """
+    Por que el que llama tiene que probar CON y SIN rebase.
+
+    HON con sus numeros: Polygon publica 1,061 para la escision de Solstice,
+    que es un ajuste de PRECIO -- el conteo de acciones del padre no se mueve.
+    Aplicarlo empeora la serie en vez de arreglarla, y rebasar() no tiene como
+    saberlo. La defensa no vive aca sino en probar las dos variantes.
+    """
+    serie = [
+        {"fecha": "2025-03-31", "filed": "2025-04-29", "shares": 642_700_000.0},
+        {"fecha": "2025-06-30", "filed": "2025-07-24", "shares": 634_900_000.0},
+    ]
+    reb, usados = A.rebasar(serie, [{"fecha": "2025-10-30", "ratio": 1.061}])
+    assert len(usados) == 2
+
+    # Sin rebase los dos puntos estan en la base de yahoo; con rebase, ninguno.
+    yahoo_hoy = 634_900_000.0
+    assert serie[1]["shares"] / yahoo_hoy == pytest.approx(1.0)
+    assert reb[1]["shares"] / yahoo_hoy == pytest.approx(1.061)

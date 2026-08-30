@@ -97,7 +97,13 @@ PREFERENCIA_FUENTE = ("portada", "balance", "promedio_diluido")
 
 def series_sec(env):
     """
-    {ticker: {fuente: [{fecha, shares}]}} -- TODOS los niveles disponibles.
+    {ticker: {fuente: [{fecha, shares, filed}]}} -- TODOS los niveles.
+
+    `filed` viaja con cada punto porque A.rebasar corta por ahi, no por la
+    fecha de periodo: un numero esta en la base vigente cuando se PRESENTO.
+    Sin esta columna el rebase cae al fallback por `fecha` y rompe justo los
+    trimestres que cierran antes del split y se presentan despues -- GOOG
+    2022-06-30 es el caso testigo.
 
     Antes esto filtraba `WHERE fuente='portada'` y descartaba en silencio los
     respaldos que sec_acciones ya habia calculado y persistido. El efecto era
@@ -110,12 +116,13 @@ def series_sec(env):
     out = {}
     with _conn(env) as cx:
         with cx.cursor() as cur:
-            cur.execute("SELECT ticker, fecha, shares, fuente "
+            cur.execute("SELECT ticker, fecha, shares, fuente, filed "
                         "FROM fundamentales_sec_acciones "
                         "ORDER BY ticker, fecha")
-            for tk, f, sh, fuente in cur.fetchall():
+            for tk, f, sh, fuente, filed in cur.fetchall():
                 out.setdefault(tk, {}).setdefault(fuente, []).append(
-                    {"fecha": f.isoformat(), "shares": float(sh)})
+                    {"fecha": f.isoformat(), "shares": float(sh),
+                     "filed": filed.isoformat() if filed else None})
     return out
 
 
@@ -156,28 +163,44 @@ def construir_mejor(yah, niveles, desde, splits=None):
 
     Los niveles no se mezclan entre si: se elige uno y se usa entero.
 
+    Dentro de cada nivel se prueban DOS variantes -- con rebase y sin el -- y
+    tambien ahi decide la validacion. El motivo esta en el docstring de
+    A.rebasar: Polygon publica en el mismo endpoint los splits reales y los
+    ajustes de precio por spinoff, que no mueven el conteo. Aplicar un factor
+    de spinoff corrompe la serie (HON: 0,500 -> 0,471); no aplicar un split
+    real la pierde entera (WMT, NVDA, AMZN...). Como no hay forma confiable de
+    distinguirlos por el ratio -- BBD 1,1 e ITUB 1,03 son bonificaciones que
+    SI cuentan --, se corren las dos y gana la que valide.
+
+    El orden importa: primero SIN rebase. Si la serie ya validaba, no se la
+    toca; el rebase entra solo donde hace falta. Asi un ratio espurio nunca
+    puede desplazar a una serie que ya estaba sana.
+
     Si ninguno extiende se devuelve el intento del nivel mas preferido, para
     que el diagnostico que se persiste hable del mejor dato disponible y no
     del ultimo que se probo.
     """
     primero = None
     for fuente in PREFERENCIA_FUENTE:
-        serie_sec = niveles.get(fuente) or []
-        if not serie_sec:
+        base = niveles.get(fuente) or []
+        if not base:
             continue
-        # A la base de HOY antes de comparar. Las fuentes point-in-time
-        # publican la base de su momento y precios_diarios esta en la de hoy;
-        # sin esto, todo lo anterior a un split se rechaza (bien) y se pierde.
-        serie_sec, rb = A.rebasar(serie_sec, splits or [])
-        etiqueta = "sec_" + fuente + ("_rb" if rb else "")
-        serie, diag = A.construir(yah, serie_sec, desde=desde,
-                                  etiqueta=etiqueta)
-        diag["rebase"] = len(rb)
-        diag["fuente_sec"] = fuente
-        if primero is None:
-            primero = (serie, diag)
-        if diag["extendido"]:
-            return serie, diag
+        for usar_rebase in (False, True):
+            if usar_rebase and not splits:
+                continue
+            serie_sec, rb = ((base, []) if not usar_rebase
+                             else A.rebasar(base, splits))
+            if usar_rebase and not rb:
+                continue          # el rebase no cambio nada: ya se probo
+            etiqueta = "sec_" + fuente + ("_rb" if rb else "")
+            serie, diag = A.construir(yah, serie_sec, desde=desde,
+                                      etiqueta=etiqueta)
+            diag["rebase"] = len(rb)
+            diag["fuente_sec"] = fuente
+            if primero is None:
+                primero = (serie, diag)
+            if diag["extendido"]:
+                return serie, diag
     if primero is not None:
         return primero
     serie, diag = A.construir(yah, [], desde=desde)

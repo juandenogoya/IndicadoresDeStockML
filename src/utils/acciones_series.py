@@ -179,17 +179,38 @@ def rebasar(serie, splits):
     `splits` : [{fecha, ratio}] con ratio = split_to / split_from. Un 10:1 da
                10: las acciones se multiplican por 10 y el precio se divide.
 
-    Cada punto se multiplica por el producto de los splits POSTERIORES a su
-    fecha. Los posteriores y no los anteriores: un conteo de 2021 todavia no
-    "sabe" del split de 2022, asi que hay que aplicarselo.
+    Cada punto se multiplica por el producto de los splits POSTERIORES a el.
+    Los posteriores y no los anteriores: un conteo de 2021 todavia no "sabe"
+    del split de 2022, asi que hay que aplicarselo.
 
-    EL BORDE ES ESTRICTO (`>`, no `>=`) y es una decision, no un descuido: la
-    fecha que publica Polygon es la de EJECUCION y puede caer uno o dos dias
-    despues de la ex-date que registra el proyecto (KLAC figura 2026-06-12 y
-    en CLAUDE.md quedo el 11/6). Con fechas de cierre de trimestre la
-    coincidencia exacta es rara, y si el borde se equivoca la serie NO se
-    corrompe en silencio: validar_base y la guarda de empalme la rechazan
-    despues, que es exactamente para lo que estan.
+    EL CORTE ES `filed`, NO `fecha`, y esa distincion vale toda la funcion.
+    Un numero esta en la base vigente cuando se PRESENTO, no cuando cerro el
+    trimestre que describe. El nivel balance lo hace evidente: GOOG declara
+    658.763.000 acciones al 2022-03-31 (10-Q de abril) y 13.078.000.000 al
+    2022-06-30 (10-Q de julio, ya con el split del 18/7 aplicado). Las dos
+    fechas de periodo son PREVIAS al split; una de las cifras ya esta
+    re-expresada y la otra no. Cortando por `fecha` se rebasan las dos, queda
+    un salto de x19,85 y la serie se rechaza entera. Cortando por `filed`
+    cada una recibe lo que le toca y la serie queda continua.
+    (`_recolectar` guarda el `filed` MAS TEMPRANO de cada punto -- la
+    presentacion original -- que es justo el momento cuya base rige.)
+    Si un punto no trae `filed`, se cae a `fecha`.
+
+    EL BORDE ES ESTRICTO (`>`, no `>=`): la fecha que publica Polygon es la de
+    EJECUCION y puede caer uno o dos dias despues de la ex-date que registra
+    el proyecto (KLAC figura 2026-06-12 y en CLAUDE.md quedo el 11/6).
+
+    ESTA FUNCION NO SABE SI EL EVENTO ES UN SPLIT DE VERDAD, y no puede
+    saberlo. Polygon mezcla en el mismo endpoint los splits reales con los
+    ajustes de PRECIO por spinoff, que no mueven el conteo de acciones: HON
+    1,061 es la escision de Solstice, IBM 1,046 la de Kyndryl, MMM 1,196 la
+    de Solventum, DELL 1,973 la de VMware, GSK 0,8 la de Haleon. Aplicarles
+    el factor CORROMPE la serie (HON empeoro de 0,500 a 0,471). Filtrar por
+    "ratio plausible" tampoco alcanza: BBD 1,1 e ITUB 1,03 son bonificaciones
+    brasileras que SI cambian el conteo. Por eso el que decide no es esta
+    funcion sino el que la llama, corriendo la validacion con y sin rebase y
+    quedandose con la que pasa. Adivinar la accion corporativa es un problema
+    que no tenemos como resolver; medir cual de las dos series valida, si.
     """
     if not splits:
         return list(serie), []
@@ -197,7 +218,7 @@ def rebasar(serie, splits):
                  for x in splits if x.get("ratio")), key=lambda x: x["fecha"])
     salida, usados = [], []
     for p in serie:
-        f = _iso(p["fecha"])
+        f = _iso(p.get("filed") or p["fecha"])
         factor = 1.0
         for x in ss:
             if x["fecha"] > f:
