@@ -1598,3 +1598,44 @@ Hacerlo bien exige arreglar `_elegir` primero, con su propia medicion.
 
 ~8 llamadas a `xbrl-to-json` (3-5 MB c/u) y ~15 al buscador de filings. La
 API no expone headers de rate limit; la cuota se mira en la cuenta.
+
+### 18.10 APLICADO (29/8/2026) -- resultado medido
+
+Los tags se agregaron AL FRENTE de las listas de `INSTANTE`, que con el
+defecto de `_elegir` es la posicion de FALLBACK (gana el que esta mas al
+final). Eso permitio arreglar la deuda **sin tocar `_elegir`**, que se midio
+aparte y se descarto para esta tarea: cambia 145 de 147 tickers, llena CERO
+huecos y pierde 18 valores (`scripts/oneshot/medir_elegir_pri.py`).
+
+Hizo falta una segunda vuelta. Al agregar solo los tags de `debt_long`, HD,
+KO, LOW, TGT y CVS pasaron a tener deuda LARGA pero seguian sin la CORTA, y
+la regla de deuda parcial (16.6) les anulaba el EV igual -- que es el
+comportamiento correcto, pero mostraba que el problema se habia corrido de
+columna. Se repitio la medicion sobre `debt_short` y se agregaron sus
+fallbacks.
+
+| | antes | despues |
+|---|---|---|
+| tickers sin EV en la ultima rueda | 56 de 144 | **29** |
+| tickers con EV/EBITDA | 50 | **69** |
+| filas de la serie con deuda neta | -- | 77,6% |
+
+Validacion:
+
+- **Consistencia interna: 0 fallas.** `EV = market_cap + net_debt` y
+  `EV/EBITDA = EV / ebitda_ttm` se cumplen en las 152.054 filas.
+- **Contraste con yahooquery: 80% dentro del 25%, diferencia mediana 5,0%**
+  sobre 69 tickers. La cobertura subio 38% (50 -> 69) SIN degradar el
+  acuerdo (antes 6,38% de mediana sobre 50).
+- Los mayores desacuerdos son los ya documentados y ninguno es nuevo:
+  **NFLX 22,93 vs 9,93 y WBD 26,97 vs 7,43** (amortizacion de contenido
+  fuera de los tags de D&A, sec. 16.7) y LYFT (EBITDA cerca de cero).
+
+Guardas en `tests/test_sec_xbrl.py`: cuatro tests fijan que el tag preferido
+le gana al fallback y que el fallback entra cuando el preferido no esta. **Si
+alguien arregla `_elegir` sin dar vuelta las listas, fallan** -- que era el
+punto: convertir una mina silenciosa en un error ruidoso.
+
+Quedan 29 sin EV: 13 sin ninguna de las dos deudas (Ford y GM entre ellos,
+deuda 100% dimensionada -> solo sec-api.io), 5 sin la larga y 11 sin la
+corta, mas los que genuinamente no tienen deuda.

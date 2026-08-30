@@ -126,9 +126,43 @@ INSTANTE = {
     "current_assets": ["AssetsCurrent"],
     "current_liabilities": ["LiabilitiesCurrent"],
     "inventory": ["InventoryNet"],
-    "debt_short": ["ShortTermBorrowings", "DebtCurrent", "LongTermDebtCurrent",
+    # Los cuatro primeros son FALLBACKS -- ver la nota de orden en debt_long,
+    # que aplica igual: en INSTANTE gana el tag que esta MAS AL FINAL.
+    # Medido: al frente llenan 325 periodos en 26 tickers sin pisar ninguno;
+    # al final pisarian 472 en 32. Sin ellos, HD/KO/LOW/TGT/CVS quedaban con
+    # deuda LARGA pero sin la CORTA, y la regla de deuda parcial les anulaba
+    # el EV igual (que es lo correcto: mejor sin EV que con un EV a medias).
+    "debt_short": ["ShortTermBankLoansAndNotesPayable",
+                   "ConvertibleDebtCurrent",
+                   "LongTermDebtAndFinanceLeaseObligationsCurrent",
+                   "LongTermDebtAndCapitalLeaseObligationsCurrent",
+                   "ShortTermBorrowings", "DebtCurrent", "LongTermDebtCurrent",
                    "OtherShortTermBorrowings"],
-    "debt_long": ["LongTermDebtNoncurrent", "LongTermDebt"],
+    # OJO -- ESTA LISTA ESTA ORDENADA AL REVES DE LO INTUITIVO, A PROPOSITO.
+    # Los conceptos de INSTANTE los resuelve _elegir, que ordena ascendente por
+    # `pri` (la posicion en esta lista) y toma el ULTIMO: gana el que esta MAS
+    # AL FINAL. Por eso los tres primeros son FALLBACKS -- solo entran cuando
+    # ninguno de los dos ultimos esta presente.
+    #
+    # MEDIDO ANTES DE AGREGARLOS (scripts/oneshot/medir_tags_deuda.py): al
+    # frente llenan 856 periodos en 48 tickers y no pisan NI UN valor
+    # existente; al final llenarian los mismos 856 pero pisarian 510 periodos
+    # en 41 tickers. Tickers con debt_long en su ultimo periodo: 95 -> 126.
+    # Sin estos tags, VZ y T aparecian sin deuda cuando en realidad la
+    # publican consolidada (158.150 y 136.100 MM).
+    #
+    # SI ALGUIEN ARREGLA _elegir -- el defecto esta documentado en su
+    # docstring -- HAY QUE DAR VUELTA ESTA LISTA. No queda librado a que
+    # alguien lea este comentario: test_el_tag_preferido_le_gana_al_fallback
+    # falla ruidosamente si la relacion se invierte.
+    #
+    # DebtLongtermAndShorttermCombinedAmount NO va aca, aunque aparezca en 6
+    # de los tickers sin deuda: es la deuda TOTAL, no la de largo plazo, y
+    # sumarla duplicaria el corto en net_debt = debt_short + debt_long - cash.
+    "debt_long": ["ConvertibleDebtNoncurrent",
+                  "LongTermDebtAndFinanceLeaseObligations",
+                  "LongTermDebtAndCapitalLeaseObligations",
+                  "LongTermDebtNoncurrent", "LongTermDebt"],
     "goodwill": ["Goodwill"],
     "intangibles": ["IntangibleAssetsNetExcludingGoodwill",
                     "FiniteLivedIntangibleAssetsNet"],

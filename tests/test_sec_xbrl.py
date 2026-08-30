@@ -695,3 +695,78 @@ def test_la_mezcla_no_se_mira_en_los_conceptos_instantaneos():
     r = sec_xbrl.normalizar(facts)
     assert not [a for a in r["avisos"]
                 if a["tipo"] == "mezcla_en_ejercicio" and a["concepto"] == "assets"]
+
+
+# ------------------------------------- 12. los tags de deuda como fallback --
+#
+# El orden de INSTANTE["debt_long"] esta al reves de lo intuitivo porque
+# _elegir se queda con el `pri` MAS GRANDE. Estos dos tests fijan la relacion
+# para que, si alguien arregla _elegir sin dar vuelta la lista, falle en vez
+# de invertir el comportamiento en silencio.
+
+def _con_deuda(**tags_de_deuda):
+    """Un ejercicio calendario minimo mas los instantes de deuda que se pidan."""
+    base = {"Revenues": _anio("Revenues", 10, 20, 30, 40)}
+    for tag, val in tags_de_deuda.items():
+        base[tag] = [_hecho(val, "2025-12-31")]
+    return _facts(**base)
+
+
+def test_el_tag_preferido_le_gana_al_fallback():
+    """
+    Con los dos presentes gana LongTermDebtNoncurrent, no el fallback nuevo.
+    Si este test empieza a fallar es porque se toco _elegir: hay que DAR
+    VUELTA la lista de INSTANTE["debt_long"], no cambiar el test.
+    """
+    r = sec_xbrl.normalizar(_con_deuda(
+        LongTermDebtNoncurrent=500,
+        LongTermDebtAndCapitalLeaseObligations=900))
+    p = _periodo(r, "2025-12-31")
+    assert p["debt_long"] == 500
+    assert p["debt_long__tag"] == "LongTermDebtNoncurrent"
+
+
+def test_el_fallback_entra_cuando_no_esta_el_preferido():
+    """
+    Es la razon de ser del agregado: VZ y T publican su deuda consolidada con
+    este tag y quedaban sin deuda neta, y por lo tanto sin EV ni EV/EBITDA.
+    """
+    r = sec_xbrl.normalizar(_con_deuda(
+        LongTermDebtAndCapitalLeaseObligations=900))
+    p = _periodo(r, "2025-12-31")
+    assert p["debt_long"] == 900
+    assert p["debt_long__tag"] == "LongTermDebtAndCapitalLeaseObligations"
+
+
+def test_la_deuda_total_combinada_no_cuenta_como_deuda_larga():
+    """
+    DebtLongtermAndShorttermCombinedAmount es la deuda TOTAL. Si entrara como
+    sinonimo de debt_long, net_debt = debt_short + debt_long - cash contaria
+    el corto plazo DOS VECES. Debe quedar en None.
+    """
+    r = sec_xbrl.normalizar(_con_deuda(
+        DebtLongtermAndShorttermCombinedAmount=1500))
+    p = _periodo(r, "2025-12-31")
+    # Un concepto sin ningun hecho ni siquiera aparece como clave, que es lo
+    # que se quiere: hueco visible, no un cero silencioso.
+    assert p.get("debt_long") is None
+
+
+def test_el_tag_corto_preferido_le_gana_al_fallback():
+    """
+    Mismo contrato que en debt_long: con los dos presentes gana DebtCurrent.
+    Si falla, se toco _elegir y hay que dar vuelta INSTANTE["debt_short"].
+    """
+    r = sec_xbrl.normalizar(_con_deuda(
+        DebtCurrent=100,
+        LongTermDebtAndCapitalLeaseObligationsCurrent=700))
+    p = _periodo(r, "2025-12-31")
+    assert p["debt_short"] == 100
+
+
+def test_el_fallback_corto_entra_cuando_no_esta_el_preferido():
+    """HD, KO, LOW, TGT y CVS tenian la deuda larga y no la corta."""
+    r = sec_xbrl.normalizar(_con_deuda(
+        LongTermDebtAndCapitalLeaseObligationsCurrent=700))
+    p = _periodo(r, "2025-12-31")
+    assert p["debt_short"] == 700
