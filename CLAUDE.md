@@ -390,8 +390,9 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `src/utils/sec_xbrl.py` | Normalizador PURO de SEC XBRL -> serie trimestral (stdlib, sin DB/red). Resuelve sinonimos por concepto, tags que cambian dentro de la misma empresa, desacumulacion YTD (Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M) y restatements. Etiqueta fiscal_year/fiscal_quarter reales. `hasta_filed` = point-in-time. Emite avisos como red contra el error silencioso. Incluye la identidad `net_income = ProfitLoss - minoritarios` para los 8 filers que no tagean NetIncomeLoss (MA/CAT/SCCO/AVAV/AVGO/F/FCX/AMT): solo rellena huecos, exige el hecho de minoritarios EN ESE PERIODO (nunca asume cero) y cruza contra ...AvailableToCommonStockholders. Acepta `tags_curados={concepto: tag}` por ticker (el tag curado REEMPLAZA la lista de sinonimos, no se antepone: preferimos el hueco visible al numero mezclado invisible). Aviso `mezcla_en_ejercicio` = los Q de un mismo ejercicio salieron de tags distintos Y sus anuales difieren; si coinciden son sinonimos y calla (109 de 126 mezclas son inocuas). Ver docs/fuentes_fundamentales.md sec. 14 y 16 |
 | `src/utils/fundamentales_ttm.py` | TTM rodante PURO sobre la serie SEC + as-of por `filed_primero`. Rechaza ventanas que cruzan un hueco (un rolling(4) sobre serie con huecos suma 5-6 trimestres en silencio). Deriva ebitda/fcf/net_debt/bvps |
 | `src/utils/sec_acciones.py` | Serie POINT-IN-TIME de acciones desde la portada `dei` (nunca re-expresada por splits). Descarta errores de unidad y picos; invariante `fecha > filed` |
-| `src/utils/acciones_series.py` | Combina yahooquery (base de split ACTUAL) + SEC (base de su momento) y VALIDA que coincidan antes de mezclarlas. Yahoo manda donde llega; SEC solo extiende hacia atras; ESCALON nunca interpolacion; la discrepancia AVISA, no corrige |
-| `scripts/refresh_acciones_circulacion.py` | Puebla `acciones_circulacion` (yahooquery + extension SEC validada). LOCAL-only. Usa yfinance_lock |
+| `src/utils/acciones_series.py` | Combina yahooquery (base de split ACTUAL) + los respaldos point-in-time (SEC / Polygon, base de su momento) y VALIDA que coincidan antes de mezclarlas. Yahoo manda donde llega; los otros solo EXTIENDEN hacia atras; ESCALON nunca interpolacion; la discrepancia AVISA, no corrige. `rebasar()` lleva una serie a la base de hoy con los splits de Polygon y **corta por `filed`, no por la fecha de periodo** (un numero esta en la base vigente cuando se PRESENTO: GOOG declara 658 MM al 2022-03-31 y 13.078 MM al 2022-06-30, las dos previas al split del 18/7). `TOL_BASE=0.12` medido, no a ojo. Ver docs/arquitectura_fuentes.md sec. 7 |
+| `scripts/refresh_acciones_circulacion.py` | Puebla `acciones_circulacion`. Base yahooquery + 4 candidatos de extension probados EN ORDEN (portada / balance / promedio diluido de SEC, y Polygon ultimo): se queda con el primero que VALIDA, nunca elige a ciegas. Cada nivel se prueba sin rebase y con rebase -- Polygon mezcla splits reales con ajustes de precio por spinoff (HON 1,061 = Solstice) y no hay como distinguirlos por el ratio, asi que decide el validador. LOCAL-only. Usa yfinance_lock |
+| `scripts/refresh_polygon.py` (+ `src/data/polygon/`) | Ingesta Polygon: `--cobertura` (existe el ticker), `--splits` (lista AUTORITATIVA de ratios), `--acciones` (conteo por fecha, la mas cara: 1 pedido POR FECHA). REANUDABLE via `polygon_ingesta` (distingue "no pedido" de "pedido, sin resultados"); cupo por ventana deslizante 4/min. Key `POLYGON_APY_KEY`. Usa `weighted_shares_outstanding` (TOTAL), NUNCA `share_class_shares_outstanding` (UNA clase: en V da 0,79 del total) |
 | `scripts/compute_sec_multiplos.py` | Serie DIARIA de multiplos sobre la fuente SEC (`fundamentales_sec_multiplos_d`). Capa derivada pura y recomputable. Percentil trailing ESTRICTO (exige ventana llena en tiempo); `--percentil-permisivo` la afloja. `--incremental` (paso diario en recovery_incremental) escribe solo la rueda nueva pero CALCULA la serie entera -- el percentil es rodante de 756 ruedas; no propaga restatements hacia atras, de eso se encarga la corrida completa del .bat. Motor expuesto como `computar()` |
 | `scripts/manual/valuacion_implicita.py` | CALCULADORA de escenarios sobre la fuente SEC (solo lee). Toma una tesis de precio (`--precio` / `--variacion`) y responde 3 cosas: que multiplos implica, en que percentil de la propia historia caen, y **cuanto tiene que crecer el negocio** para que ese precio sea un multiplo normal (`--referencia`, default mediana) contra lo que la empresa logro alguna vez. NO predice retornos. Ver docs/fuentes_fundamentales.md sec. 17 |
 | `src/utils/valuacion_implicita.py` | Motor PURO de la calculadora (stdlib, sin DB). `multiplos`/`precio_para` (mover el precio) y `denominador_para`/`exigencia` (mover el negocio): UNA sola incognita por escenario. `crecimiento_historico` mide sobre la serie TRIMESTRAL, no la diaria (el TTM es una escalera: por rueda el n queda inflado x63). `roe_implicito` es un TECHO (patrimonio de hoy). ROIC/ROTCE ausentes a proposito: piden columnas que la capa derivada no tiene, y ninguno se mueve con el precio |
@@ -506,10 +507,26 @@ Las criticas:
   acciones en circulacion por (ticker, fecha) en base de split **ACTUAL**, que
   es la unica apareable con `precios_diarios` (que se corrige retroactivamente
   por divisor). Fuente primaria yahooquery `OrdinarySharesNumber`; se extiende
-  hacia atras con la portada SEC SOLO en los tickers donde se VALIDA que no
-  cambiaron de base. La tabla `_validacion` guarda el veredicto por ticker
+  hacia atras con el primer respaldo que VALIDA -- portada / balance /
+  promedio diluido de SEC, y Polygon como ultimo recurso (unico que cubre a
+  los filers multiclase: en V los TRES niveles de SEC vienen VACIOS porque
+  companyfacts descarta los hechos dimensionados). La tabla `_validacion` guarda el veredicto por ticker
   (extendido, ratio_min/max, motivo). Motor puro: src/utils/acciones_series.py.
   200 tickers / 2.379 puntos: 101 arrancan en 2021, 83 en 2022, 16 en 2023+.
+- `polygon_splits` / `polygon_acciones` / `polygon_ingesta` (LOCAL) --
+  fuente Polygon, incorporada 30/8/2026 para cerrar las acciones en
+  circulacion. `polygon_splits` (UNIQUE ticker, execution_date; `ratio` =
+  split_to/split_from) es la lista AUTORITATIVA que alimenta el rebase --
+  OJO: el endpoint mezcla splits reales con ajustes de PRECIO por spinoff
+  (HON 1,061 Solstice, IBM 1,046 Kyndryl, MMM 1,196 Solventum, DELL 1,973
+  VMware, GSK 0,8 Haleon), que NO mueven el conteo; filtrar por "ratio
+  plausible" no alcanza porque BBD 1,1 e ITUB 1,03 son bonificaciones que
+  SI cuentan, asi que el refresh prueba con y sin rebase y gana la que
+  valida. `polygon_acciones` guarda los DOS campos de conteo: se usa
+  `weighted_shares` (total), nunca `share_class_shares` (una clase).
+  `polygon_ingesta` (UNIQUE ticker, tarea) hace la corrida reanudable.
+  Los 200 tickers existen en Polygon, incluidos los 53 sin SEC -- pero
+  existir da acciones y splits, NO el denominador fundamental.
 - `fundamentales_sec_multiplos_d` (LOCAL) -- serie DIARIA de multiplos sobre la
   fuente SEC. Capa DERIVADA y recomputable (funcion de fundamentales_sec_q +
   acciones_circulacion + precios_diarios). 1 fila por (ticker, rueda):
