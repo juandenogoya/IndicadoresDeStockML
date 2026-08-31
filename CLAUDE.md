@@ -101,6 +101,19 @@ Documentacion que existe hoy en docs/:
                             el problema es SEMANTICO, no aritmetico (122 de 147
                             sin ambiguedad, 23 requieren mapeo curado). El
                             encabezado tiene una tabla de atajos por pregunta.
+- **LINEA SEC XBRL: DORMIDA desde el 30/8/2026.** Construida, medida y
+  mergeada a main, con el paso diario APAGADO y sin consumidores en uso.
+  Las tablas `fundamentales_sec_*`, `acciones_circulacion` y
+  `polygon_*` quedan CONGELADAS en su ultima fecha (no se corrompen).
+  El dashboard conserva la vista "Comparativo Fundamental", que lee
+  ese dato congelado y muestra su fecha.
+  Reactivar: `set SEC_MULTIPLOS_DIARIO=1` + una corrida de
+  `scripts/manual/refresh_fundamentales_sec.bat` (el incremental no
+  rellena el hueco hacia atras).
+  El analisis fundamental EN USO sigue siendo el de yahooquery
+  (`fundamentales_*_q` + `fundamentales_ratios_q`), que cubre los 200.
+  Veredicto y pendientes medidos: docs/fuentes_fundamentales.md, cierre.
+
 - docs/arquitectura_fuentes.md : QUE FUENTE SE USA PARA QUE, y cual manda
                             cuando dos difieren. Las 4 fuentes medidas
                             (yahooquery libreria / SEC companyfacts / Alpha

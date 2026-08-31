@@ -1733,3 +1733,112 @@ esta validado. Lo que queda exige plata (sec-api.io) o es un no-problema.
 La regla de validar antes de mezclar hizo exactamente lo que tenia que hacer:
 **freno un cambio que se veia atractivo y gratis** y que habria metido un
 error variable de hasta 18% en el EV sin que nadie lo notara.
+
+---
+
+# CIERRE DE LA LINEA SEC XBRL (30/8/2026) -- DORMIDA
+
+**Estado: construida, medida, mergeada a `main`, y APAGADA.** No se borro nada.
+No hay trabajo pendiente asignado. Este documento existe para que, si alguien
+vuelve, no re-derive nada de lo que ya se midio.
+
+## Por que se cerro
+
+La linea nacio para contestar "esta cara esta empresa contra si misma", que
+`yahooquery` no puede responder porque solo trae 8 trimestres. Eso se logro:
+la fuente SEC tiene historia desde 2018 y los multiplos diarios con percentil
+propio funcionan.
+
+Lo que no se logro fue **cobertura suficiente para que valiera el
+mantenimiento**. El numero que lo resume:
+
+| | de 144 |
+|---|---|
+| P/S | 144 |
+| PER | 134 |
+| **EV/EBITDA** | **75** |
+
+Y el techo estaba cerca: al medir los 68 sin EV/EBITDA aparecio que 12 son
+financieros (el EV no aplica: los depositos entran como deuda) y el resto se
+reparte en dos problemas cuyo rendimiento por unidad de trabajo era cada vez
+peor. La decision del usuario fue parar y seguir con analisis tecnico y los
+balances de yahooquery, que cubren el universo entero.
+
+## Que quedo funcionando (y se congelo)
+
+- `fundamentales_sec_q` -- 147 tickers USA, 2018+. Calidad medida contra el
+  anual publicado por la empresa: net_income 99,6% | operating_income 98,6% |
+  cfo 97,0% | revenue 87,8% -> resuelto con `src/data/sec/tags_curados.py`.
+- `fundamentales_sec_multiplos_d` -- 152.054 ruedas, 144 tickers, 2021+.
+- `acciones_circulacion` -- **el mejor resultado de toda la linea**: las ruedas
+  sin market cap pasaron de 11.491 a 2.092 (**-81,8%**), con cero escalones
+  artificiales introducidos. Detalle en `docs/arquitectura_fuentes.md` sec. 7.
+- `dashboard/comparativo.py` -- vista "Comparativo Fundamental", el unico
+  consumidor de interfaz que llego a existir.
+- Ingesta Polygon (`scripts/refresh_polygon.py`) -- splits autoritativos y
+  conteo total de multiclase.
+
+**El paso diario esta APAGADO** (`scripts/recovery_incremental.py`). La tabla
+queda congelada en su ultima fecha; no se corrompe. Para revivirla:
+
+```
+set SEC_MULTIPLOS_DIARIO=1
+scripts\manual\refresh_fundamentales_sec.bat
+```
+
+El `.bat` completo hay que correrlo una vez porque el paso incremental solo
+escribe la rueda del dia y no rellena el hueco hacia atras.
+
+## Las fuentes que se evaluaron, para no volver a probarlas
+
+| fuente | veredicto | medicion |
+|---|---|---|
+| **SEC companyfacts** | ADOPTADA | eje temporal; 147 tickers, 2018+ |
+| **Polygon** | ADOPTADA | splits + conteo total multiclase; los 200 existen |
+| **yahooquery** | ADOPTADA (ya estaba) | eje transversal; unica que cubre los 53 no-USA |
+| **FMP** | DESCARTADA | el plan tope `limit` en ~5: solo 4 trimestres |
+| **Alpha Vantage** | DESCARTADA para acciones | TSLA oscila 0,8964..1,0970 vs yahoo, y FABRICA historia pre-IPO para V/TSLA/META |
+| **SimFin** | DESCARTADA para acciones; NO PROBADA para deuda | valida en 5 de 41 tickers; en HSY se desvia 2x contra el 10-K de la propia empresa. Para deuda se estimo que recuperaria 18 de 29, pero la integracion no se hizo |
+| **EDGAR / sec-api.io** | bisturi, no fuente | paga; unica con hechos dimensionados |
+
+## Los cinco defectos silenciosos que encontro esta linea
+
+Valen aunque la linea duerma: son modos de falla del dominio, no de este codigo.
+
+1. **La caida dimensional golpea dos veces.** `companyfacts` descarta todo
+   hecho con dimensiones. Eso explica a la vez la deuda faltante de Ford y que
+   los 21 filers multiclase no tengan portada. En V (Visa) es total: los TRES
+   niveles de acciones vienen vacios.
+2. **Un valor sin su fecha es una trampa.** UBER mostraba 14.177 MM de
+   preferidas: un hecho de 2019, PRE-IPO, pasando por vigente.
+3. **La base de split se corrige por `filed`, no por fecha de periodo.** Un
+   numero esta en la base vigente cuando se PRESENTO. GOOG declara 658.763.000
+   acciones al 2022-03-31 y 13.078.000.000 al 2022-06-30: las dos fechas son
+   previas al split del 18/7 y solo una esta re-expresada.
+4. **Un subconjunto no es un sinonimo.** `Depreciation` a secas es la mediana
+   del 73% de la D&A completa; usarla como D&A subestimaba el EBITDA y
+   SOBREESTIMABA el EV/EBITDA en silencio. Lo mismo con `ProfitLoss` y el
+   resultado neto.
+5. **Extender no es extender bien.** El primer arreglo de acciones empalmo
+   AVGO a x9,72 y WMT a x2,99 sin que nada avisara. Aparecio solo porque se
+   corrio una pasada de verificacion DESPUES del arreglo. La query de control
+   esta en `docs/arquitectura_fuentes.md` sec. 7.
+
+## Lo que quedo sin hacer, y cuanto valia
+
+Medido, no estimado. Si alguien vuelve, este es el mapa:
+
+| pendiente | ganancia | por que se paro |
+|---|---|---|
+| **D&A** (composicion `Depreciation` + `AmortizationOfIntangibleAssets`, exigiendo los dos) | 5-8 tickers | valida en 15 de 21 verificables, pero de los 17 objetivo solo 9 son verificables y validan 5. Curacion de a uno con arbitraje flaco |
+| **operating_income** | ~6 tickers | solo 4 de 18 tienen el tag; los otros 14 (COP, CVX, OXY, PSX, JNJ, LLY, MRK, PFE) no publican subtotal. La ruta de abajo (pretax+intereses+D&A) da 6 de 18 |
+| **Deuda por SimFin** | hasta 12 tickers | 14 no financieros sin deuda neta, 12 con EBITDA. Requeria integrar una fuente nueva |
+| **Backfill a 2020** | percentil para ~143 | precios_diarios tiene 77 tickers que arrancan el 22/4/2024 y solo 19 llegan a 2020. NO es aditivo: Yahoo devuelve ajustado por split Y dividendos y la serie actual guarda el close crudo -> problema de base en la costura, y ademas es el cimiento de indicadores, features ML, backtests y FT |
+
+**Techo real del percentil: ~143 tickers, NO 200.** Los 53 sin SEC presentan
+20-F anual y no tienen XBRL trimestral. Eso es regulatorio: ninguna cantidad de
+precio ni de API lo cambia.
+
+**Trampa del backfill, si algun dia se hace:** los splits van PRIMERO.
+`polygon_splits` arranca en 2021-04-19, asi que el 5:1 de TSLA del 31/8/2020 no
+esta -- su market cap de 2020 saldria cinco veces mas chico, en silencio.

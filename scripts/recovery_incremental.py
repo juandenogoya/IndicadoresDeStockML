@@ -693,7 +693,28 @@ def main():
     # pueden aparecer restatements que cambien un TTM viejo.
     # El modulo lee el .env por su cuenta y siempre apunta a LOCAL, sin importar
     # DATABASE_URL: la fuente SEC es LOCAL-only. No critico.
-    if not args.dry_run and args.target == "local":
+    #
+    # ---------------------------------------------------------------------
+    # DORMIDO desde el 30/8/2026, por decision del usuario.
+    #
+    # La linea SEC XBRL quedo construida y medida pero SIN consumidores en uso.
+    # Un paso nocturno que recomputa 152.000 filas para una tabla que nadie
+    # lee no es gratis: ademas de tiempo, arma una alerta de Telegram que se
+    # aprende a ignorar, y una alerta ignorada es peor que ninguna.
+    #
+    # Apagarlo CONGELA fundamentales_sec_multiplos_d en su ultima fecha. La
+    # tabla no se corrompe ni se borra; simplemente deja de tener ruedas
+    # nuevas, y el dashboard muestra la fecha del dato que hay.
+    #
+    # PARA REACTIVARLO:
+    #   1. set SEC_MULTIPLOS_DIARIO=1   (o exportarla en el entorno)
+    #   2. correr scripts/manual/refresh_fundamentales_sec.bat UNA vez, para
+    #      recuperar el hueco de dias que quedo. El paso incremental solo
+    #      escribe la rueda del dia; no rellena hacia atras.
+    # Contexto completo: docs/fuentes_fundamentales.md, seccion de cierre.
+    # ---------------------------------------------------------------------
+    if (os.getenv("SEC_MULTIPLOS_DIARIO") and not args.dry_run
+            and args.target == "local"):
         try:
             from scripts.compute_sec_multiplos import computar as _sec_multiplos
             from scripts.oneshot.create_fundamentales_tables import _parse_env_file as _pef

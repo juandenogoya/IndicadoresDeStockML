@@ -1,5 +1,12 @@
 # Arquitectura de fuentes fundamentales
 
+> **ESTADO AL 30/8/2026: esta linea esta DORMIDA.** Construida,
+> medida y mergeada a `main`, pero con el paso diario APAGADO y sin
+> consumidores en uso. El veredicto, lo que quedo sin hacer y cuanto
+> valia estan en `docs/fuentes_fundamentales.md`, seccion de cierre.
+> Lo de abajo sigue siendo cierto y es lo que hay que leer antes de
+> tocar cualquier cosa de fundamentales.
+
 Que fuente sirve para que, por que, y cual manda cuando dos dicen cosas
 distintas. Escrito el 29/8/2026, despues de evaluar las cuatro contra
 problemas reales (el detalle de cada hallazgo esta en
