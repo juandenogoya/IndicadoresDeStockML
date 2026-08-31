@@ -701,7 +701,23 @@ def main():
             log(f"\nMULTIPLOS SEC: {_r['n_filas']} filas nuevas en "
                 f"{_r['n_ok']} tickers -> fundamentales_sec_multiplos_d")
         except Exception as e:
+            # "No critico" significa que no aborta el recovery, NO que se pueda
+            # ignorar. Antes esto solo escribia una linea en un log que nadie
+            # lee: si el paso se rompia, la tabla quedaba congelada y el
+            # silencio era indistinguible de que anduviera bien. Es el mismo
+            # modo de falla que dejo a `fundamentales_sec_avisos` sin lectores
+            # durante toda la Fase 2.
             log(f"\nMULTIPLOS SEC: ERROR (no critico): {str(e)[:120]}")
+            try:
+                from src.pipeline.telegram_notifier import _send
+                _send("*Multiplos SEC: fallo el paso diario*\n\n"
+                      f"`{str(e)[:300]}`\n\n"
+                      "La tabla `fundamentales_sec_multiplos_d` NO tiene la "
+                      "rueda de hoy. Reintento manual:\n"
+                      "`python scripts/compute_sec_multiplos.py --incremental`")
+            except Exception as e2:
+                # Si tambien falla el aviso, que quede en el log y siga.
+                log(f"  (no se pudo avisar por Telegram: {str(e2)[:80]})")
 
     # ── REPORTE FINAL ─────────────────────────────────────────────────────────
     print()

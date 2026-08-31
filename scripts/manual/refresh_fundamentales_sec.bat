@@ -88,6 +88,15 @@ REM       pre-mercado (regla 10).
 REM    2. compute_sec_multiplos        : serie diaria. Recomputa DB->local,
 REM       sin red. Va COMPLETO (no --incremental) porque un refresh puede
 REM       traer restatements que cambian TTM viejos.
+REM    3. sec_avisos --defectos --alertar : revisa la red de seguridad y avisa
+REM       por Telegram SOLO si hay DEFECTOS. Va al final porque los avisos los
+REM       reescribe el refresh del paso 0, y sin este paso la tabla
+REM       `fundamentales_sec_avisos` vuelve a ser lo que fue toda la Fase 2:
+REM       una red que nadie consulta. El defecto de revenue (87,8% de
+REM       reconciliacion) estuvo senalado ahi desde el principio y lo
+REM       encontramos meses despues, a mano.
+REM       No manda nada si no hay defectos: un canal que avisa de lo
+REM       informativo deja de leerse.
 REM
 REM  Solo corren si el refresh anduvo: sobre una fuente a medio escribir
 REM  los derivados propagarian el error en vez de detenerse.
@@ -99,15 +108,21 @@ if defined SEC_NO_DERIVADOS goto :sin_derivados
 
 echo.
 echo ------------------------------------------------------------
-echo   PASO DERIVADO 1/2 -- acciones en circulacion
+echo   PASO DERIVADO 1/3 -- acciones en circulacion
 echo ------------------------------------------------------------
 "%PYTHON%" "%ROOT%scripts\refresh_acciones_circulacion.py" 2>&1 | tee -a "%LOGFILE%"
 
 echo.
 echo ------------------------------------------------------------
-echo   PASO DERIVADO 2/2 -- multiplos diarios
+echo   PASO DERIVADO 2/3 -- multiplos diarios
 echo ------------------------------------------------------------
 "%PYTHON%" "%ROOT%scripts\compute_sec_multiplos.py" 2>&1 | tee -a "%LOGFILE%"
+
+echo.
+echo ------------------------------------------------------------
+echo   PASO DERIVADO 3/3 -- avisos de normalizacion
+echo ------------------------------------------------------------
+"%PYTHON%" "%ROOT%scripts\manual\sec_avisos.py" --defectos --alertar 2>&1 | tee -a "%LOGFILE%"
 
 :sin_derivados
 
