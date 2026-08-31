@@ -685,6 +685,40 @@ def main():
         except Exception as e:
             log(f"\nMULTIPLOS *_px: ERROR (no critico): {str(e)[:120]}")
 
+    # MULTIPLOS SEC diarios (fuente PARALELA a la de arriba): market_cap, EV,
+    # PER/P-B/P-S/EV-EBITDA y el percentil "caro vs si misma" sobre la historia
+    # propia del ticker. Depende del precio, por eso es diario y va aca.
+    # Recompute DB->local sin red. --incremental escribe solo la rueda nueva; la
+    # corrida COMPLETA la hace refresh_fundamentales_sec.bat, que es donde
+    # pueden aparecer restatements que cambien un TTM viejo.
+    # El modulo lee el .env por su cuenta y siempre apunta a LOCAL, sin importar
+    # DATABASE_URL: la fuente SEC es LOCAL-only. No critico.
+    if not args.dry_run and args.target == "local":
+        try:
+            from scripts.compute_sec_multiplos import computar as _sec_multiplos
+            from scripts.oneshot.create_fundamentales_tables import _parse_env_file as _pef
+            _r = _sec_multiplos(_pef(os.path.join(ROOT, ".env")), incremental=True)
+            log(f"\nMULTIPLOS SEC: {_r['n_filas']} filas nuevas en "
+                f"{_r['n_ok']} tickers -> fundamentales_sec_multiplos_d")
+        except Exception as e:
+            # "No critico" significa que no aborta el recovery, NO que se pueda
+            # ignorar. Antes esto solo escribia una linea en un log que nadie
+            # lee: si el paso se rompia, la tabla quedaba congelada y el
+            # silencio era indistinguible de que anduviera bien. Es el mismo
+            # modo de falla que dejo a `fundamentales_sec_avisos` sin lectores
+            # durante toda la Fase 2.
+            log(f"\nMULTIPLOS SEC: ERROR (no critico): {str(e)[:120]}")
+            try:
+                from src.pipeline.telegram_notifier import _send
+                _send("*Multiplos SEC: fallo el paso diario*\n\n"
+                      f"`{str(e)[:300]}`\n\n"
+                      "La tabla `fundamentales_sec_multiplos_d` NO tiene la "
+                      "rueda de hoy. Reintento manual:\n"
+                      "`python scripts/compute_sec_multiplos.py --incremental`")
+            except Exception as e2:
+                # Si tambien falla el aviso, que quede en el log y siga.
+                log(f"  (no se pudo avisar por Telegram: {str(e2)[:80]})")
+
     # ── REPORTE FINAL ─────────────────────────────────────────────────────────
     print()
     print(SEP)

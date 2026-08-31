@@ -31,8 +31,24 @@ SET "LOGDIR=%ROOT%logs"
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value 2^>nul') do set DT=%%I
-SET "LOGFILE=%LOGDIR%\compute_perfiles_%DT:~0,8%_%DT:~8,4%.log"
+REM Timestamp del log. Antes salia de `wmic`, que Windows 11 ya no incluye:
+REM el for /f no devuelve nada, DT queda SIN DEFINIR y el nombre del log sale
+REM literal, con la sintaxis de substring adentro. PowerShell siempre esta; y
+REM si aun asi fallara, el fallback garantiza un nombre valido -- perder el
+REM log por no poder fecharlo seria el peor de los dos males.
+for /f "delims=" %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"') do set "DT=%%I"
+if not defined DT set "DT=sin-fecha"
+SET "LOGFILE=%LOGDIR%\compute_perfiles_%DT%.log"
+
+REM `tee` viene con Git y vive en Git\usr\bin, que NO esta en el PATH de cmd
+REM (solo esta Git\cmd). Lanzado desde Git Bash funciona; con doble clic desde
+REM el Explorador no, y entonces el log queda vacio sin avisar. Se agrega esa
+REM carpeta al PATH solo si hace falta.
+REM El `if exist` no es decorativo: `where git` devuelve DOS rutas (Git\cmd y
+REM Git\mingw64\bin) y, sin expansion retardada, %PATH% se expande UNA sola vez
+REM -- la segunda vuelta del for pisaba lo que agrego la primera y dejaba solo
+REM la ruta que no existe.
+where tee >nul 2>&1 || for /f "delims=" %%G in ('where git 2^>nul') do @if exist "%%~dpG..\usr\bin\tee.exe" set "PATH=%PATH%;%%~dpG..\usr\bin"
 
 echo.
 echo ============================================================
