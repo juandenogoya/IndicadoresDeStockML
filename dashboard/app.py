@@ -585,14 +585,20 @@ def main():
 
     modo = st.sidebar.radio("Vista",
                             ["Informe por ticker", "Radar del dia",
-                             "Analisis Financiero", "Reaccion a balances",
-                             "Carteras", "Performance", "Consultas (IA)"],
+                             "Analisis Financiero", "Comparativo Fundamental",
+                             "Reaccion a balances", "Carteras", "Performance",
+                             "Consultas (IA)"],
                             key="modo")
     st.sidebar.divider()
     if modo == "Radar del dia":
         _vista_radar()
     elif modo == "Analisis Financiero":
         _vista_financiera(tickers)
+    elif modo == "Comparativo Fundamental":
+        # Import diferido, como las demas: la vista trae pandas/altair propios
+        # y no hay razon para pagarlos si no se abre.
+        from dashboard.comparativo import construir_comparativo
+        construir_comparativo(tickers)
     elif modo == "Reaccion a balances":
         from dashboard.earnings_reaccion import construir_reaccion
         construir_reaccion(tickers)
