@@ -1773,8 +1773,12 @@ balances de yahooquery, que cubren el universo entero.
 - `acciones_circulacion` -- **el mejor resultado de toda la linea**: las ruedas
   sin market cap pasaron de 11.491 a 2.092 (**-81,8%**), con cero escalones
   artificiales introducidos. Detalle en `docs/arquitectura_fuentes.md` sec. 7.
-- `dashboard/comparativo.py` -- vista "Comparativo Fundamental", el unico
-  consumidor de interfaz que llego a existir.
+- La vista "Comparativo Fundamental" del dashboard fue el unico consumidor de
+  interfaz que llego a existir, y se QUITO al dormir la linea (30/8/2026): una
+  pestana que muestra datos congelados de algo que no se mantiene envejece mal
+  y confunde al que la abre. El codigo esta completo en el historico -- commit
+  fe56dde, `dashboard/comparativo.py` + `tests/test_comparativo.py` --, asi que
+  revivirla es un `git show` y no volver a escribirla.
 - Ingesta Polygon (`scripts/refresh_polygon.py`) -- splits autoritativos y
   conteo total de multiclase.
 

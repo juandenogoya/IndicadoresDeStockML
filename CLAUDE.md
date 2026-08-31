@@ -105,8 +105,9 @@ Documentacion que existe hoy en docs/:
   mergeada a main, con el paso diario APAGADO y sin consumidores en uso.
   Las tablas `fundamentales_sec_*`, `acciones_circulacion` y
   `polygon_*` quedan CONGELADAS en su ultima fecha (no se corrompen).
-  El dashboard conserva la vista "Comparativo Fundamental", que lee
-  ese dato congelado y muestra su fecha.
+  El dashboard NO tiene consumidor: la vista "Comparativo Fundamental"
+  se quito para no dejar una pantalla de algo que no esta en uso. Su
+  codigo vive en el historico (commit fe56dde) si alguna vez se revive.
   Reactivar: `set SEC_MULTIPLOS_DIARIO=1` + una corrida de
   `scripts/manual/refresh_fundamentales_sec.bat` (el incremental no
   rellena el hueco hacia atras).
