@@ -88,11 +88,24 @@ def universo(env, tickers=None):
             return [r[0] for r in cur.fetchall()]
 
 
-# Orden de preferencia de las series SEC, de mas a menos fiel:
+# Orden de preferencia de las series de respaldo, de mas a menos fiel:
 #   portada  -- dei, point-in-time, NO se re-expresa ante un split
 #   balance  -- us-gaap, point-in-time, pero SI se re-expresa
 #   promedio -- promedio ponderado del trimestre: otra magnitud
-PREFERENCIA_FUENTE = ("portada", "balance", "promedio_diluido")
+#   polygon  -- ULTIMO recurso, y a proposito: es la unica que sale de un
+#               tercero en vez de del propio emisor, y la unica que cuesta
+#               pedidos con cupo. Existe porque hay un caso que SEC no puede
+#               cubrir de ninguna manera: los filers multiclase que tagean
+#               cada conteo por clase. companyfacts descarta todo lo
+#               dimensionado, asi que V (Visa) llega con CERO puntos en los
+#               tres niveles -- no es que el nivel elegido sea malo, es que
+#               no hay ninguno. Son 401 ruedas sin market cap.
+PREFERENCIA_FUENTE = ("portada", "balance", "promedio_diluido", "polygon")
+
+# Las de SEC llevan prefijo; polygon se nombra sola.
+def _etiqueta(fuente, rebasada):
+    base = fuente if fuente == "polygon" else "sec_" + fuente
+    return base + ("_rb" if rebasada else "")
 
 
 def series_sec(env):
@@ -123,6 +136,39 @@ def series_sec(env):
                 out.setdefault(tk, {}).setdefault(fuente, []).append(
                     {"fecha": f.isoformat(), "shares": float(sh),
                      "filed": filed.isoformat() if filed else None})
+    return out
+
+
+def series_polygon(env):
+    """
+    {ticker: [{fecha, shares}]} desde polygon_acciones.
+
+    USA `weighted_shares`, NO `share_class_shares`. La distincion es la unica
+    razon por la que esta fuente sirve: `share_class_shares` es UNA clase, y en
+    V da 1.635 MM contra 2.079 MM de yahoo (ratio 0,79) -- justo el error que
+    esta tabla viene a evitar. `weighted_shares` es el total y cruza contra
+    yahoo en 1,0136 y 1,0277 en las dos fechas comunes de V.
+
+    No trae `filed`: el conteo esta fechado "as of" esa fecha, asi que para el
+    rebase `fecha` ES el momento cuya base rige, y el fallback de A.rebasar
+    hace lo correcto sin caso especial.
+
+    Si la tabla no existe devuelve {} y el refresh sigue andando igual que
+    antes: como los splits, es una MEJORA opcional y no un requisito.
+    """
+    out = {}
+    try:
+        with _conn(env) as cx:
+            with cx.cursor() as cur:
+                cur.execute("SELECT ticker, fecha, weighted_shares "
+                            "FROM polygon_acciones "
+                            "WHERE weighted_shares IS NOT NULL "
+                            "ORDER BY ticker, fecha")
+                for tk, f, sh in cur.fetchall():
+                    out.setdefault(tk, []).append(
+                        {"fecha": f.isoformat(), "shares": float(sh)})
+    except Exception:
+        return {}
     return out
 
 
@@ -192,7 +238,7 @@ def construir_mejor(yah, niveles, desde, splits=None):
                              else A.rebasar(base, splits))
             if usar_rebase and not rb:
                 continue          # el rebase no cambio nada: ya se probo
-            etiqueta = "sec_" + fuente + ("_rb" if rb else "")
+            etiqueta = _etiqueta(fuente, bool(rb))
             serie, diag = A.construir(yah, serie_sec, desde=desde,
                                       etiqueta=etiqueta)
             diag["rebase"] = len(rb)
@@ -346,11 +392,19 @@ def main():
     sp = splits_por_ticker(env)
     log(f"splits de Polygon: {sum(len(v) for v in sp.values())} "
         f"en {len(sp)} tickers")
+    pol = series_polygon(env)
+    log(f"acciones de Polygon: {sum(len(v) for v in pol.values())} puntos "
+        f"en {len(pol)} tickers")
     n_filas = n_ext = 0
     sin_datos, no_ext = [], []
     for ticker in lista:
         yah = datos.get(ticker, [])
-        serie, diag = construir_mejor(yah, sec.get(ticker, {}), args.desde,
+        # Polygon entra como un candidato mas del mismo diccionario: se prueba
+        # ultimo y tiene que pasar la MISMA validacion que los niveles de SEC.
+        niveles = dict(sec.get(ticker, {}))
+        if pol.get(ticker):
+            niveles["polygon"] = pol[ticker]
+        serie, diag = construir_mejor(yah, niveles, args.desde,
                                       sp.get(ticker))
         if not serie:
             sin_datos.append(ticker)
