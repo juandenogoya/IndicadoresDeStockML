@@ -44,8 +44,24 @@ Reglas de construccion, y por que
 # Amplio a proposito: los dos conteos estan fechados con semanas de diferencia
 # (Yahoo al cierre fiscal, SEC a la portada del filing) y entre medio hay
 # recompras reales. Lo que tiene que separar es un SPLIT, y el mas chico del
-# universo es 1.5:1 -- 10% deja un margen holgado contra eso.
-TOL_BASE = 0.10
+# universo es 1.5:1 -- o sea 50% de desvio. 12% deja margen de sobra.
+#
+# El 0.12 no es a ojo. Barrido sobre los 200 tickers a 0.10 / 0.12 / 0.15 / 0.20:
+#     0.10 -> 135 extendidos
+#     0.12 -> 137  (+TRIP 10.2%, +RKLB 11.2%; ninguno perdido)
+#     0.15 -> 137  (nada nuevo)
+#     0.20 -> 137  (nada nuevo)
+# Hay una BANDA VACIA entre 11.2% y 20%: los tickers caen o en deriva ordinaria
+# o muy lejos, nunca en el medio. Por eso el valor exacto no es un filo de
+# navaja, y por eso subirlo mas no compra nada -- lo que falta despues de 0.12
+# no falla por tolerancia (HON esta 50% afuera, V no tiene con que solapar).
+#
+# RIESGO QUE QUEDA, dicho explicito: esta guarda NUNCA protegio contra usar una
+# CLASE de acciones en vez del total. Un filer multiclase cuya clase menor pese
+# ~12% del total pasaria; con 0.10 pasaba uno que pesara ~10%. El agujero es el
+# mismo, apenas mas ancho. Lo que lo cierra es que las series salgan de tags sin
+# dimension o de Polygon (weighted_shares_outstanding), no este numero.
+TOL_BASE = 0.12
 
 # Salto entre puntos consecutivos que se considera cambio de base.
 UMBRAL_SALTO = 1.5
