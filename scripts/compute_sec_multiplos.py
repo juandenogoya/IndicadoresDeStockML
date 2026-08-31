@@ -81,7 +81,7 @@ COLS = ["ticker", "fecha", "close", "period_end", "filed_primero", "lag_dias",
         "equity", "net_debt", "shares", "shares_fuente", "market_cap",
         "enterprise_value", "pe_ratio", "pb_ratio", "ps_ratio", "ev_ebitda",
         "fcf_yield", "pe_pct", "pb_pct", "ps_pct", "ev_ebitda_pct", "n_obs_pct",
-        "shares_dias"]
+        "shares_dias", "net_debt_q"]
 PK = ["ticker", "fecha"]
 
 
@@ -210,7 +210,11 @@ def serie_diaria(precios, filas_ttm, serie_acc):
                 # se interpola), y el error de ese escalon crece con los dias:
                 # medido mediana 0,24% pero p99 11,35%. Sin esta columna el
                 # riesgo es invisible en la fila.
-                "shares_dias": None}
+                "shares_dias": None,
+                # Trimestres de antiguedad del componente de deuda mas viejo
+                # que entro en net_debt. 0 = todo del periodo. Misma razon que
+                # shares_dias: el arrastre es legitimo, esconderlo no.
+                "net_debt_q": ttm.get("net_debt_q")}
         if acc.get("fecha"):
             fila["shares_dias"] = (fecha - _fecha(acc["fecha"])).days
         if ttm.get("filed_primero"):

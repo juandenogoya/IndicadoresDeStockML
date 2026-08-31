@@ -213,12 +213,76 @@ def test_enriquecer_deduce_las_deudas_conocidas_de_la_serie_entera():
     """
     La deteccion mira TODA la serie: el trimestre viejo que si tagea la deuda
     larga es lo que delata que el nuevo la tiene y no la declaro.
+
+    Lo que se hace con esa deteccion cambio: antes el trimestre incompleto
+    perdia su net_debt; ahora ARRASTRA el ultimo valor conocido y declara la
+    edad. La regla que NO cambio es la que importa: nunca se asume cero.
     """
     filas = [_q("2025-03-31", debt_short=200.0, debt_long=5000.0, cash=300.0),
              _q("2025-06-30", debt_short=200.0, cash=300.0)]
     out = ttm.enriquecer(filas)
     assert out[0]["net_debt"] == 4900.0
-    assert out[1]["net_debt"] is None
+    assert out[0]["net_debt_q"] == 0
+    assert out[1]["net_debt"] == 4900.0, "arrastra los 5000, no asume 0"
+    assert out[1]["net_debt_q"] == 1
+
+
+def test_el_arrastre_vence_y_no_se_estira_para_siempre():
+    """
+    MAX_ARRASTRE_Q trimestres despues, el valor deja de ser una estimacion y
+    pasa a ser una suposicion. Ahi vuelve el hueco.
+
+    El caso real es DE (17 trimestres sin declarar su deuda larga) y ORCL (16):
+    con el tope quedan afuera, que es lo correcto.
+    """
+    filas = [_q("2021-03-31", debt_short=200.0, debt_long=5000.0, cash=300.0)]
+    for i, fecha in enumerate(("2021-06-30", "2021-09-30", "2021-12-31",
+                               "2022-03-31", "2022-06-30", "2022-09-30")):
+        filas.append(_q(fecha, debt_short=200.0, cash=300.0))
+    out = ttm.enriquecer(filas)
+
+    for fila in out[1:1 + ttm.MAX_ARRASTRE_Q]:
+        assert fila["net_debt"] == 4900.0
+    for fila in out[1 + ttm.MAX_ARRASTRE_Q:]:
+        assert fila["net_debt"] is None, "pasado el tope, hueco visible"
+        assert fila["net_debt_q"] is None
+
+
+def test_el_arrastre_no_va_hacia_atras():
+    """
+    Solo hacia adelante. Meterle a un trimestre viejo una deuda declarada
+    despues seria lookahead -- el mismo error que el modulo evita en el as-of.
+    """
+    filas = [_q("2025-03-31", debt_short=200.0, cash=300.0),
+             _q("2025-06-30", debt_short=200.0, debt_long=5000.0, cash=300.0)]
+    out = ttm.enriquecer(filas)
+    assert out[0]["net_debt"] is None, "en marzo esa deuda todavia no existia"
+    assert out[1]["net_debt"] == 4900.0
+
+
+def test_el_arrastre_no_depende_del_orden_de_entrada():
+    """
+    enriquecer ordena por period_end antes de arrastrar. Si dependiera del
+    orden en que llegan las filas, el resultado cambiaria segun la query.
+    """
+    a = _q("2025-03-31", debt_short=200.0, debt_long=5000.0, cash=300.0)
+    b = _q("2025-06-30", debt_short=200.0, cash=300.0)
+    directo = ttm.enriquecer([a, b])
+    invertido = ttm.enriquecer([b, a])
+    assert directo[1]["net_debt"] == 4900.0
+    assert invertido[0]["net_debt"] == 4900.0, "b sigue siendo el que arrastra"
+    assert invertido[1]["net_debt"] == 4900.0
+
+
+def test_sin_valor_previo_no_se_inventa_nada():
+    """
+    Arrastrar exige tener QUE arrastrar. Una serie que nunca declaro la deuda
+    larga en un periodo anterior no produce net_debt en el primero.
+    """
+    filas = [_q("2025-03-31", debt_short=200.0, cash=300.0),
+             _q("2025-06-30", debt_short=200.0, debt_long=5000.0, cash=300.0)]
+    out = ttm.enriquecer(filas)
+    assert out[0]["net_debt"] is None
 
 
 def test_net_debt_none_sin_cash():

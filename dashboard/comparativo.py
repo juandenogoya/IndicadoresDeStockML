@@ -60,7 +60,8 @@ VISTA = [
 # columnas de la tabla: el motor recibe la fila sin traducir nada.
 CAMPOS = ["fecha", "close", "shares", "net_debt", "equity",
           "net_income_ttm", "revenue_ttm", "ebitda_ttm", "fcf_ttm",
-          "period_end", "filed_primero", "shares_fuente", "shares_dias"]
+          "period_end", "filed_primero", "shares_fuente", "shares_dias",
+          "net_debt_q"]
 
 METRICAS = [m for m, _, _ in VISTA]
 ETIQUETA = {m: et for m, et, _ in VISTA}
@@ -316,3 +317,14 @@ def _pie_de_datos(base):
         partes.append("acciones via `%s`%s" % (base["shares_fuente"], antig))
     if partes:
         st.caption(" | ".join(partes))
+
+    # El arrastre de deuda se avisa SIEMPRE que ocurre. Es la contrapartida de
+    # haberlo permitido: usar el ultimo valor conocido es legitimo, hacerlo sin
+    # decirlo no. Ver MAX_ARRASTRE_Q en src/utils/fundamentales_ttm.py.
+    q = base.get("net_debt_q")
+    if q is not None and not pd.isna(q) and int(q) > 0:
+        st.caption(
+            ":orange[Deuda arrastrada: uno de los dos componentes no viene en "
+            "el ultimo balance y se uso el de hace %d trimestre%s.] El EV "
+            "queda aproximado -- la deuda es un stock, se mueve una mediana "
+            "de 2,7%% por trimestre." % (int(q), "s" if int(q) != 1 else ""))

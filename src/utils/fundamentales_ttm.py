@@ -187,7 +187,28 @@ def _sumar(ventana, concepto):
 # Magnitudes derivadas
 # ---------------------------------------------------------------------------
 
-def derivados(fila, deudas_conocidas=None):
+# Cuantos trimestres se puede arrastrar un componente de deuda ausente antes de
+# considerarlo vencido. La deuda es un STOCK, no un flujo: el ultimo valor
+# conocido sigue siendo la mejor estimacion disponible durante un tiempo. Pero
+# solo durante un tiempo.
+#
+# El 4 (un anio) sale de medir, no de la intuicion. Sobre 2.631 pares de
+# trimestres consecutivos, la deuda total se mueve una mediana de 2,73% de un
+# trimestre al siguiente, con p90 de 20%. Eso sonaria prohibitivo, pero lo que
+# importa no es el error de la deuda sino cuanto llega al EV, y eso lo escala el
+# PESO de la deuda. Midiendo el error del EV al arrastrar SOLO el componente
+# ausente, en los 15 tickers afectados: mediana 0,05% y 11 de 15 por debajo de
+# 0,30%. En seis de ellos (KLAC, LEVI, NEM, ORCL, RIVN, RKLB) el componente que
+# falta vale CERO en su ultimo dato: arrastrarlo no aproxima nada.
+#
+# Los expuestos de verdad son pocos y grandes: TMUS 6,2% (arrastra 86.282 MM de
+# deuda larga), DE 3,1%, CVX 1,9%. Con el tope de 4, DE (17 trimestres de
+# atraso) y ORCL (16) quedan AFUERA, que es lo correcto: un valor de hace
+# cuatro anios no es una estimacion, es una suposicion.
+MAX_ARRASTRE_Q = 4
+
+
+def derivados(fila, deudas_conocidas=None, arrastre=None):
     """
     Magnitudes que no vienen tageadas y hay que armar. Sobre una fila de
     serie_ttm(). Devuelve un dict; cada clave None si le falta un insumo.
@@ -224,11 +245,38 @@ def derivados(fila, deudas_conocidas=None):
 
     ds, dl, cash = _f(fila.get("debt_short")), _f(fila.get("debt_long")), _f(fila.get("cash"))
     conocidas = deudas_conocidas or ()
+
+    # ARRASTRE del componente ausente. Antes, si la empresa tageaba una deuda
+    # en algun periodo pero no en ESTE, el EV se apagaba entero. La guarda es
+    # correcta -- sumar deuda parcial fue el defecto que dio a AT&T caja neta
+    # -- pero era mas dura de lo necesario: en 14 de los 15 tickers afectados
+    # el trimestre actual SI trae uno de los dos componentes, y el que falta
+    # esta publicado uno o dos trimestres antes. Se arrastra ese, no se asume
+    # cero, y la edad viaja en el resultado para que el consumidor la vea.
+    arr = arrastre or {}
+    edad_q = 0
+    for nombre, actual in (("debt_short", ds), ("debt_long", dl)):
+        if actual is not None or nombre not in conocidas:
+            continue
+        prev = arr.get(nombre)
+        if prev is None:
+            continue
+        valor, edad = prev
+        if edad > MAX_ARRASTRE_Q:
+            continue
+        if nombre == "debt_short":
+            ds = valor
+        else:
+            dl = valor
+        edad_q = max(edad_q, edad)
+
     falta_esperada = ((ds is None and "debt_short" in conocidas) or
                       (dl is None and "debt_long" in conocidas))
     net_debt = None
     if cash is not None and (ds is not None or dl is not None) and not falta_esperada:
         net_debt = (ds or 0.0) + (dl or 0.0) - cash
+    else:
+        edad_q = None
 
     shares = _f(fila.get("shares_out"))
     fuente_shares = "shares_out"
@@ -247,6 +295,11 @@ def derivados(fila, deudas_conocidas=None):
         "ebitda_ttm": ebitda,
         "fcf_ttm": fcf,
         "net_debt": net_debt,
+        # Trimestres de antiguedad del componente de deuda mas viejo que se uso.
+        # 0 = todo del periodo; None = no hay net_debt. Se expone en vez de
+        # esconderse: un dato arrastrado sigue siendo un dato, uno arrastrado
+        # EN SILENCIO es una trampa.
+        "net_debt_q": edad_q if net_debt is not None else None,
         "shares": shares,
         "shares_fuente": fuente_shares,
         "book_value_per_share": bvps,
@@ -280,10 +333,26 @@ def enriquecer(filas):
     """
     conocidas = {c for c in ("debt_short", "debt_long")
                  if any(f.get(c) is not None for f in filas)}
+
+    # Se recorre en orden de period_end para poder arrastrar hacia ADELANTE el
+    # ultimo valor conocido de cada componente. Nunca hacia atras: eso seria
+    # lookahead, meterle a un trimestre un dato que todavia no existia.
+    orden = sorted(range(len(filas)),
+                   key=lambda i: _iso(filas[i].get("period_end")) or "")
+    ultimo = {}                      # componente -> (valor, indice en `orden`)
+    derivado_por_i = {}
+    for pos, i in enumerate(orden):
+        f = filas[i]
+        arrastre = {c: (v, pos - p) for c, (v, p) in ultimo.items()}
+        derivado_por_i[i] = derivados(f, conocidas, arrastre)
+        for c in ("debt_short", "debt_long"):
+            if f.get(c) is not None:
+                ultimo[c] = (_f(f[c]), pos)
+
     out = []
-    for f in filas:
+    for i, f in enumerate(filas):
         nueva = dict(f)
-        nueva.update(derivados(f, conocidas))
+        nueva.update(derivado_por_i[i])
         out.append(nueva)
     return out
 
