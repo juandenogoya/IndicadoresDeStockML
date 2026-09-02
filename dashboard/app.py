@@ -26,7 +26,8 @@ from dashboard.sintesis_data import (
     cargar_datos_ticker, listar_tickers, cargar_radar,
     cargar_financiero_ticker, cargar_screener_sector,
     listar_sectores_fundamentales, listar_regiones_fundamentales,
-    cargar_veredictos_universo, fecha_datos, listar_sectores,
+    fecha_datos, listar_sectores,
+    estado_datos, cargar_veredictos_precomputados,
 )
 from dashboard.view import construir_vista
 from dashboard.metricas import construir_papel
@@ -234,11 +235,99 @@ def _nav_a_informe(tk):
     st.rerun()
 
 
-@st.cache_data(show_spinner=False)
-def _veredictos_cache(fecha_key: str):
-    """Veredictos del universo, cacheados por fecha de datos (1 calculo/dia).
-    fecha_key entra solo como clave de cache; el calculo lee la DB local."""
-    return cargar_veredictos_universo()
+@st.cache_data(show_spinner=False, ttl=300)
+def _veredictos_cache():
+    """Veredictos del universo, leidos de veredictos_universo_diario.
+
+    ANTES esto llamaba a cargar_veredictos_universo(), que recorre los ~200
+    tickers en vivo: ~2 minutos la primera vez de cada dia, y el cache vivia en
+    memoria del proceso -> se perdia al reiniciar Streamlit y se volvia a pagar.
+    Los dos minutos eran la razon practica por la que el screener casi no se
+    usaba.
+
+    Ahora el calculo corre una vez de noche (scripts/compute_veredictos_universo.py,
+    encadenado a ft_run_diario.bat) y aca solo se LEE. El TTL corto alcanza:
+    la tabla cambia una vez por rutina.
+    """
+    return cargar_veredictos_precomputados()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _estado_datos_cache():
+    """Frescura cacheada 60s.
+
+    Se dibuja en TODAS las vistas y en cada rerun, pero solo cambia cuando
+    corre la rutina nocturna. No se keyea por fecha de datos como los otros
+    caches porque esa key saldria de la misma consulta que queremos evitar.
+    """
+    return estado_datos()
+
+
+def _enumerar(items: list) -> str:
+    """'A' | 'A y B' | 'A, B y C'. Los mensajes de estado los lee una persona
+    apurada: una lista separada por comas se lee como enumeracion truncada."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} y {items[-1]}"
+
+
+def _banda_frescura():
+    """Estado del dato, visible en todas las vistas.
+
+    Antes el dashboard servia el informe con lo que hubiera en la DB sin decir
+    de cuando era. Como la rutina nocturna es MANUAL, las tablas se
+    desincronizan con normalidad: el 2/9/2026 precios_diarios estaba al 1/9 y
+    opciones_pcr_plazo_diario al 31/8, y el veredicto se computaba igual
+    cruzando dos ruedas distintas, sin avisar.
+
+    Tres estados, en orden de gravedad:
+      rojo    -- precios_diarios atrasado vs el ultimo cierre: falta correr el
+                 recovery. Todo lo que se muestre es viejo.
+      naranja -- precios al dia pero alguna tabla critica quedo atras: lo que
+                 se muestra MEZCLA ruedas. Es el mas traicionero de los tres,
+                 porque cada numero por separado parece correcto.
+      verde   -- alineado.
+    """
+    e = _estado_datos_cache()
+    if not e["ancla"]:
+        st.error("precios_diarios esta vacia: no hay datos que mostrar.")
+        return
+
+    if not e["ancla_al_dia"]:
+        atraso = e["atraso_ancla"]
+        ruedas = "rueda" if atraso == 1 else "ruedas"
+        st.badge("Datos atrasados", color="red")
+        st.caption(
+            f"Precios al {e['ancla']}, {atraso} {ruedas} detras del ultimo "
+            f"cierre ({e['esperado']}). TODO el dashboard esta mostrando esa "
+            f"rueda vieja. Correr scripts/manual/recovery_incremental.bat."
+        )
+    elif e["rezagadas"]:
+        st.badge("Tablas desalineadas", color="orange")
+        st.caption(
+            f"Cierre {e['ancla']}, pero {_enumerar(e['rezagadas'])} "
+            f"{'va' if len(e['rezagadas']) == 1 else 'van'} atras: lo que se "
+            f"muestra cruza ruedas distintas. Correr "
+            f"scripts/manual/ft_run_diario.bat (sincroniza y recomputa opciones)."
+        )
+    else:
+        st.badge(f"Datos al {e['ancla']}", color="green")
+
+    with st.expander("Detalle por tabla", expanded=False):
+        filas = [{
+            "Tabla": t["etiqueta"],
+            "Ultima fecha": t["fecha"] or "-",
+            "vs precios": ("al dia" if t["dias_vs_ancla"] == 0
+                           else (f"{t['dias_vs_ancla']} "
+                                 f"{'rueda' if t['dias_vs_ancla'] == 1 else 'ruedas'} atras"
+                                 if t["dias_vs_ancla"] is not None else "-")),
+            "Entra en el veredicto": "si" if t["critica"] else "no",
+        } for t in e["tablas"]]
+        st.table(pd.DataFrame(filas))
+        st.caption(f"Ultimo dia habil NYSE cerrado: {e['esperado']} "
+                   "(via src/utils/trading_calendar, no aritmetica de fechas).")
 
 
 @st.cache_data(show_spinner=False)
@@ -301,9 +390,8 @@ def _radar_screener():
     """Screener por veredicto. Fragment: cambiar los filtros o seleccionar una
     fila ya no redibuja el bloque de anomalias de arriba."""
     st.subheader("Screener por veredicto")
-    st.caption("Veredicto sintetico (tecnico + opciones + estructura) de cada ticker. "
-               "El primer Buscar del dia calcula el universo (~2 min); luego es instantaneo "
-               "hasta que entren datos nuevos.")
+    st.caption("Veredicto sintetico (tecnico + opciones + estructura) de cada ticker, "
+               "precomputado por la rutina nocturna. La busqueda es instantanea.")
     cs1, cs2 = st.columns(2)
     with cs1:
         sel = st.multiselect("Veredictos", ["ALCISTA", "NEUTRAL", "BAJISTA"],
@@ -319,8 +407,23 @@ def _radar_screener():
     if not sel:
         st.info("Elegi al menos un veredicto.")
         return
-    with st.spinner("Calculando veredictos del universo (~2 min la primera vez)..."):
-        universo = _veredictos_cache(fecha_datos())
+
+    data = _veredictos_cache()
+    universo = data["filas"]
+    if not universo:
+        st.warning("La tabla veredictos_universo_diario esta vacia. "
+                   "La puebla la rutina nocturna (ft_run_diario.bat); "
+                   "para hacerlo ahora a mano:")
+        st.code("python scripts/compute_veredictos_universo.py", language="bash")
+        return
+    # Los veredictos pueden ser de una rueda anterior si la rutina nocturna no
+    # corrio. Decirlo, en vez de presentarlos como de hoy.
+    ancla = _estado_datos_cache().get("ancla")
+    if data["fecha"] and ancla and data["fecha"] != ancla:
+        st.warning(f"Veredictos del {data['fecha']}, pero los precios estan al "
+                   f"{ancla}: falta correr la rutina nocturna. Estan calculados "
+                   "sobre una rueda anterior.")
+
     res = [u for u in universo
            if u["veredicto"] in sel and (not sel_sec or u["sector"] in sel_sec)]
     if not res:
@@ -332,7 +435,7 @@ def _radar_screener():
     dfv = dfv[["Ticker", "Sector", "Veredicto", "Lectura"]]
     _sec_txt = f" | sectores: {', '.join(sel_sec)}" if sel_sec else ""
     st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)}{_sec_txt} "
-               f"(de {len(universo)} evaluados).")
+               f"(de {len(universo)} evaluados al {data['fecha']}).")
     ev = st.dataframe(dfv, hide_index=True, use_container_width=True,
                       on_select="rerun", selection_mode="single-row", key="scr_tbl")
     r2 = ev.selection.rows if ev and getattr(ev, "selection", None) else []
@@ -628,6 +731,7 @@ def main():
     st.title("Informe descriptivo por ticker")
     st.caption("Descriptivo, no predictivo. Complemento de TradingView. "
                "Cruza tecnico + opciones + sector con reglas trazables.")
+    _banda_frescura()
 
     tickers = listar_tickers()
     if not tickers:

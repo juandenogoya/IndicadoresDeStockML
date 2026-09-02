@@ -601,3 +601,134 @@ def cargar_veredictos_universo() -> list:
             "frase":     s.get("frase", ""),
         })
     return filas
+
+
+# ── Frescura de los datos ────────────────────────────────────────────────────
+#
+# Por que existe: el dashboard servia el informe con lo que hubiera en la DB, sin
+# decir de cuando era. La rutina nocturna es MANUAL, asi que las tablas se
+# desincronizan entre si con normalidad -- el 2/9/2026, sin ir mas lejos,
+# precios_diarios estaba al 1/9 y opciones_pcr_plazo_diario al 31/8. El veredicto
+# se computaba igual, cruzando tecnico de una rueda con opciones de otra, y no
+# avisaba. Eso no es incomodidad de UX: es leer mal el mercado en silencio.
+#
+# Se mide en DOS niveles, porque son dos fallas distintas:
+#   1. precios_diarios vs el ultimo dia habil NYSE  -> "no corri el recovery"
+#   2. cada tabla vs precios_diarios (el ancla)     -> "una tabla quedo atras"
+# Un solo nivel no distingue "todo viejo pero coherente" de "mezcla de fechas".
+
+_TABLAS_FRESCURA = [
+    # (tabla, columna de fecha, etiqueta, entra en el veredicto)
+    ("precios_diarios",                  "fecha",      "Precios",        True),
+    ("indicadores_tecnicos",             "fecha",      "Indicadores",    True),
+    ("opciones_pcr_plazo_diario",        "fecha",      "Opciones",       True),
+    ("opciones_sector_pcr_plazo_diario", "fecha",      "Opc. sector",    True),
+    ("alertas_scanner",                  "scan_fecha", "Scanner ML",     False),
+    ("veredictos_universo_diario",       "fecha",      "Veredictos",     False),
+]
+
+
+def _tablas_existentes(nombres: list) -> set:
+    """Filtra por las que realmente estan en la DB: la de veredictos es nueva y
+    puede no existir en una instalacion que todavia no corrio el oneshot."""
+    df = query_df(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema='public' AND table_name = ANY(:n)",
+        {"n": nombres},
+    )
+    return set(df["table_name"]) if not df.empty else set()
+
+
+def estado_datos() -> dict:
+    """
+    Frescura de las tablas que alimentan el informe.
+
+    Returns:
+        {
+          ancla:            'YYYY-MM-DD' | None   (MAX precios_diarios)
+          esperado:         'YYYY-MM-DD'          (ultimo dia habil NYSE cerrado)
+          ancla_al_dia:     bool
+          atraso_ancla:     int   ruedas de atraso de precios_diarios
+          tablas:           [{tabla, etiqueta, fecha, dias_vs_ancla, al_dia, critica}]
+          rezagadas:        [etiqueta, ...]  solo las CRITICAS desalineadas
+        }
+
+    `esperado` sale de src.utils.trading_calendar, nunca de aritmetica de fechas
+    (regla no negociable del proyecto: no asumir si un dia es habil). Se usa
+    prev_trading_day(hoy) -- el ultimo cierre YA ocurrido -- para no marcar como
+    atrasado el dia en curso, cuyo cierre todavia no se puede haber capturado.
+    """
+    from datetime import date
+    from src.utils.trading_calendar import prev_trading_day
+
+    esperado = prev_trading_day(date.today())
+    existentes = _tablas_existentes([t[0] for t in _TABLAS_FRESCURA])
+
+    partes = [f"SELECT '{t}' AS tabla, MAX({col})::date AS fecha FROM {t}"
+              for t, col, _, _ in _TABLAS_FRESCURA if t in existentes]
+    if not partes:
+        return {"ancla": None, "esperado": str(esperado), "ancla_al_dia": False,
+                "atraso_ancla": None, "tablas": [], "rezagadas": []}
+
+    df = query_df(" UNION ALL ".join(partes))
+    maxs = {r["tabla"]: r["fecha"] for _, r in df.iterrows()}
+
+    ancla = maxs.get("precios_diarios")
+    filas, rezagadas = [], []
+    for tabla, _col, etiqueta, critica in _TABLAS_FRESCURA:
+        if tabla not in existentes:
+            continue
+        f = maxs.get(tabla)
+        dias = None
+        if f is not None and ancla is not None:
+            dias = (ancla - f).days
+        al_dia = (dias is not None and dias <= 0)
+        filas.append({"tabla": tabla, "etiqueta": etiqueta,
+                      "fecha": str(f) if f else None,
+                      "dias_vs_ancla": dias, "al_dia": al_dia,
+                      "critica": critica})
+        if critica and not al_dia and tabla != "precios_diarios":
+            rezagadas.append(etiqueta)
+
+    atraso = (esperado - ancla).days if ancla is not None else None
+    return {
+        "ancla": str(ancla) if ancla else None,
+        "esperado": str(esperado),
+        "ancla_al_dia": bool(ancla is not None and ancla >= esperado),
+        "atraso_ancla": atraso,
+        "tablas": filas,
+        "rezagadas": rezagadas,
+    }
+
+
+def cargar_veredictos_precomputados(fecha: str | None = None) -> dict:
+    """
+    Lee veredictos_universo_diario (lo que antes calculaba cargar_veredictos_
+    universo en vivo, ~2 min). Sin fecha, devuelve la ULTIMA disponible.
+
+    Devuelve la fecha junto a las filas a proposito: si la rutina nocturna no
+    corrio, estos veredictos son de una rueda anterior y la vista tiene que
+    poder decirlo en vez de presentarlos como de hoy.
+
+    Returns:
+        {fecha: 'YYYY-MM-DD' | None, filas: [{ticker, sector, veredicto, frase}]}
+    """
+    if "veredictos_universo_diario" not in _tablas_existentes(
+            ["veredictos_universo_diario"]):
+        return {"fecha": None, "filas": []}
+
+    if fecha:
+        df = query_df(
+            "SELECT ticker, sector, veredicto, frase FROM veredictos_universo_diario "
+            "WHERE fecha = :f ORDER BY ticker", {"f": fecha})
+        f_usada = fecha if not df.empty else None
+    else:
+        df = query_df(
+            "SELECT ticker, sector, veredicto, frase FROM veredictos_universo_diario "
+            "WHERE fecha = (SELECT MAX(fecha) FROM veredictos_universo_diario) "
+            "ORDER BY ticker")
+        f_df = query_df("SELECT MAX(fecha)::date AS f FROM veredictos_universo_diario")
+        f_usada = (str(f_df.iloc[0]["f"])
+                   if not f_df.empty and f_df.iloc[0]["f"] is not None else None)
+
+    return {"fecha": f_usada, "filas": df.to_dict("records") if not df.empty else []}

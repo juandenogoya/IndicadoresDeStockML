@@ -262,6 +262,33 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
+
+REM -- PASO FINAL 3 - Precomputar los veredictos del universo -----
+REM  Calcula el veredicto sintetico (ALCISTA/NEUTRAL/BAJISTA) de los ~200
+REM  tickers y lo deja en veredictos_universo_diario (LOCAL). El screener del
+REM  dashboard ANTES calculaba esto en vivo al apretar Buscar: ~2 minutos, y
+REM  el cache vivia en memoria del proceso Streamlit (se perdia al reiniciar).
+REM
+REM  VA DESPUES del paso [0b] (compute_opciones_derivadas), no antes: el
+REM  veredicto vota con opciones_pcr_plazo_diario, y ese paso es el que la
+REM  calcula desde el crudo recien sincronizado.
+REM
+REM  VA DESPUES del push de senales, no antes: tarda ~2 min y es LOCAL-only.
+REM  Los bots Alpaca leen la masticada a las 16:00 UTC; nada que sirva solo al
+REM  dashboard debe demorar ese dato.
+REM
+REM  Si falla no se pierde nada: el dashboard muestra los veredictos de la
+REM  rueda anterior y avisa en pantalla que estan desfasados.
+echo Precomputando veredictos del universo (dashboard)...
+echo. >> "%LOGFILE%"
+echo --- VEREDICTOS DEL UNIVERSO --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\compute_veredictos_universo.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [WARN] compute_veredictos_universo.py fallo - el dashboard usara los previos.
+) ELSE (
+    echo [OK] Veredictos precomputados.
+)
+
 echo.
 echo ============================================================
 echo  Completado. Ver detalle en:
