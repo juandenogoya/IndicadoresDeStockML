@@ -493,7 +493,19 @@ def _purgar_huerfanas(env, tickers_procesados):
     una capa DERIVADA (recomputable); un Q sin income crudo no se puede recomputar
     y no lo consume nadie (todo usa el ultimo Q). Mantiene ratios_q en sync con la
     ventana (limpia el cruft de la migracion v1->v2 y evita su reacumulacion).
-    Scopeado a los tickers procesados -> corridas con --tickers no tocan otros."""
+    Scopeado a los tickers procesados -> corridas con --tickers no tocan otros.
+
+    Tambien borra las filas respaldadas por una fila CASCARON (income con
+    total_revenue Y net_income NULL, tipico del Q recien reportado en earnings
+    season). Sin esto el arreglo de _build_frame quedaba a medias: dejaba de
+    PRODUCIR la fila mala, pero la que ya estaba escrita sobrevivia -- el UPSERT
+    no borra lo que dejo de producirse, y esa fila es justo la de
+    MAX(fiscal_period_end), que es la que consume el dashboard. Verificado el
+    2/9/2026: BAC/AMZN/BA/ABT/AAP/MDLZ mostraban ROE y margenes vacios con la
+    fila vieja intacta (computed_at de 6 dias antes).
+
+    El criterio es el MISMO que el del filtro, a proposito: lo que el computo se
+    niega a producir es exactamente lo que la purga tiene que sacar."""
     if not tickers_procesados:
         return 0
     conn = psycopg2.connect(
@@ -508,7 +520,9 @@ def _purgar_huerfanas(env, tickers_procesados):
             "WHERE r.ticker = ANY(%s) "
             "  AND NOT EXISTS (SELECT 1 FROM fundamentales_income_q i "
             "                  WHERE i.ticker = r.ticker "
-            "                    AND i.fiscal_period_end = r.fiscal_period_end)",
+            "                    AND i.fiscal_period_end = r.fiscal_period_end "
+            "                    AND NOT (i.total_revenue IS NULL "
+            "                             AND i.net_income IS NULL))",
             (list(tickers_procesados),),
         )
         n = cur.rowcount
@@ -576,7 +590,7 @@ def main():
         n = _upsert(env, all_rows)
         log(f"UPSERT local: {n} filas.")
         purgadas = _purgar_huerfanas(env, universo)
-        log(f"Purga huerfanas (sin income de respaldo): {purgadas} filas.")
+        log(f"Purga (sin income de respaldo o fila cascaron): {purgadas} filas.")
 
     print()
     print(SEP)
