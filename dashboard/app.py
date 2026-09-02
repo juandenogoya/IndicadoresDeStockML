@@ -28,10 +28,15 @@ from dashboard.sintesis_data import (
     listar_sectores_fundamentales, listar_regiones_fundamentales,
     fecha_datos, listar_sectores,
     estado_datos, cargar_veredictos_precomputados,
+    cargar_reparto_veredictos, cargar_ft_resumen,
+    cargar_posiciones_ft_abiertas, cargar_earnings_proximos,
 )
 from dashboard.view import construir_vista
 from dashboard.metricas import construir_papel
 from dashboard.radar import construir_radar
+from dashboard.hoy import (
+    construir_clima, construir_inusual, construir_ft, construir_agenda,
+)
 from dashboard.financiero import (
     construir_bloques_ticker, texto_peer_basis, construir_screener,
 )
@@ -447,6 +452,113 @@ def _radar_screener():
         st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
 
 
+@st.cache_data(show_spinner=False)
+def _hoy_cache(fecha_key: str):
+    """Insumos de la vista Hoy, cacheados por fecha de datos.
+
+    Se agrupan en UN cache y no en cuatro porque se consumen juntos y siempre
+    en la misma pantalla: cuatro entradas serian cuatro claves que invalidan a
+    la vez. Los decoradores viven en app.py por la misma razon que los otros
+    (sintesis_data.py no importa Streamlit).
+    """
+    return {
+        "reparto":    cargar_reparto_veredictos(),
+        "radar":      cargar_radar(),
+        "ft":         cargar_ft_resumen(),
+        "posiciones": cargar_posiciones_ft_abiertas(),
+        "earnings":   cargar_earnings_proximos(),
+    }
+
+
+def _vista_hoy():
+    """
+    Pantalla de arranque: que paso y que conviene mirar, sin elegir nada.
+
+    Cada bloque abre con una FRASE que ya trae la conclusion, y recien despues
+    muestra la tabla que la sostiene. Es la inversion del patron anterior del
+    dashboard (tabla primero, interpretacion en un caption al pie): el numero
+    suelto obliga a que el lector haga la cuenta cada vez.
+    """
+    d = _hoy_cache(fecha_datos())
+
+    # -- 1. Clima del universo -------------------------------------------
+    clima = construir_clima(d["reparto"])
+    st.subheader("Clima del universo")
+    st.markdown(clima["frase"])
+    if clima["filas"]:
+        cols = st.columns(len(clima["filas"]))
+        for col, f in zip(cols, clima["filas"]):
+            delta = None
+            if clima["delta"] is not None:
+                dv = clima["delta"].get(f["veredicto"], 0)
+                delta = f"{dv:+d} vs rueda previa" if dv else "sin cambios"
+            with col:
+                st.metric(f["veredicto"].capitalize(),
+                          f"{f['n']}  ({f['pct']}%)", delta=delta,
+                          delta_color=("normal" if f["veredicto"] == "ALCISTA"
+                                       else "inverse" if f["veredicto"] == "BAJISTA"
+                                       else "off"))
+    st.caption(f"Veredicto sintetico al {clima['fecha']} (tecnico + opciones + "
+               "estructura). Detalle y filtros en Radar del dia.")
+
+    st.divider()
+
+    # -- 2. Lo inusual del dia -------------------------------------------
+    inusual = construir_inusual(construir_radar(d["radar"], z=2.0),
+                                d["radar"].get("fecha"))
+    st.subheader("Lo inusual de la rueda")
+    st.markdown(inusual["frase"])
+    if inusual["filas"]:
+        df = pd.DataFrame(inusual["filas"])[
+            ["ticker", "sector", "tipo", "magnitud"]].rename(columns={
+                "ticker": "Ticker", "sector": "Sector",
+                "tipo": "Que se salio de lo normal", "magnitud": "Magnitud (z)"})
+        st.dataframe(df, hide_index=True, width="stretch")
+        c1, _ = st.columns([1, 3])
+        with c1:
+            if st.button("Ver el radar completo", width="stretch", key="hoy_radar"):
+                st.session_state["_ir_radar"] = True
+                st.rerun()
+    st.caption(f"Anomalias de opciones al {inusual['fecha']}. z = desvios "
+               "respecto de la propia historia del ticker.")
+
+    st.divider()
+
+    # -- 3. Forward Testing ----------------------------------------------
+    ft = construir_ft(d["ft"])
+    st.subheader("Forward Testing")
+    st.markdown(ft["frase"])
+    if ft["kpis"]:
+        cols = st.columns(len(ft["kpis"]))
+        for col, k in zip(cols, ft["kpis"]):
+            with col:
+                st.metric(k["label"], k["valor"])
+        with st.expander("Detalle por estrategia", expanded=False):
+            # Altura explicita: dentro de un expander, st.dataframe se virtualiza
+            # y colapsa a 2 filas visibles (verificado en el navegador). Son 10
+            # estrategias fijas y se quieren ver todas de una.
+            st.dataframe(pd.DataFrame(ft["filas"]), hide_index=True,
+                         width="stretch",
+                         height=(len(ft["filas"]) + 1) * 35 + 3)
+            st.caption("Equity MARCADA A MERCADO (ft_equity_diaria): incluye el "
+                       "resultado de las posiciones abiertas, que en la curva a "
+                       "costo de entrada es invisible.")
+    st.caption(f"Al {ft['fecha']}." if ft["fecha"] else "")
+
+    st.divider()
+
+    # -- 4. Agenda --------------------------------------------------------
+    agenda = construir_agenda(d["earnings"], d["posiciones"])
+    st.subheader("Balances que vienen")
+    st.markdown(agenda["frase"])
+    if agenda["filas"]:
+        st.dataframe(pd.DataFrame(agenda["filas"]), hide_index=True,
+                     width="stretch")
+    st.caption("Cruce de earnings_calendar con las posiciones FT abiertas. Un "
+               "balance con posicion abierta es el unico caso de esta pantalla "
+               "que pide una decision antes de que abra el mercado.")
+
+
 def _vista_radar():
     # -- 1. Radar de anomalias de opciones --------------------------------
     st.subheader("Radar del dia - actividad inusual en opciones")
@@ -720,15 +832,17 @@ def _vista_chat():
 
 
 def main():
-    st.set_page_config(page_title="Informe descriptivo por ticker", layout="wide")
+    st.set_page_config(page_title="Panel de analisis", layout="wide")
 
     # Navegacion pendiente desde el radar: se consume ANTES de instanciar el
     # radio de vistas (su key no se puede reescribir una vez creado). El ticker
     # ya no viaja por aca -- lo escribe _nav_a_informe directo en su key unica.
     if st.session_state.pop("_ir_informe", False):
         st.session_state["modo"] = "Informe por ticker"
+    if st.session_state.pop("_ir_radar", False):
+        st.session_state["modo"] = "Radar del dia"
 
-    st.title("Informe descriptivo por ticker")
+    st.title("Panel de analisis")
     st.caption("Descriptivo, no predictivo. Complemento de TradingView. "
                "Cruza tecnico + opciones + sector con reglas trazables.")
     _banda_frescura()
@@ -739,12 +853,14 @@ def main():
         return
 
     modo = st.sidebar.radio("Vista",
-                            ["Informe por ticker", "Radar del dia",
+                            ["Hoy", "Informe por ticker", "Radar del dia",
                              "Analisis Financiero", "Reaccion a balances",
                              "Carteras", "Performance", "Consultas (IA)"],
                             key="modo")
     st.sidebar.divider()
-    if modo == "Radar del dia":
+    if modo == "Informe por ticker":
+        _vista_informe(tickers)
+    elif modo == "Radar del dia":
         _vista_radar()
     elif modo == "Analisis Financiero":
         _vista_financiera(tickers)
@@ -760,7 +876,7 @@ def main():
     elif modo == "Consultas (IA)":
         _vista_chat()
     else:
-        _vista_informe(tickers)
+        _vista_hoy()
 
 
 if __name__ == "__main__":

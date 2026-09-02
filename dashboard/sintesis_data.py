@@ -732,3 +732,122 @@ def cargar_veredictos_precomputados(fecha: str | None = None) -> dict:
                    if not f_df.empty and f_df.iloc[0]["f"] is not None else None)
 
     return {"fecha": f_usada, "filas": df.to_dict("records") if not df.empty else []}
+
+
+# ── Insumos de la vista "Hoy" ────────────────────────────────────────────────
+#
+# La vista Hoy responde "que paso y que mira hoy" en una pantalla, en vez de
+# obligar a elegir vista + ticker antes de ver un solo dato. Todos los loaders
+# de abajo leen tablas que YA existen: no agregan pipeline.
+
+
+def cargar_reparto_veredictos(n_dias: int = 5) -> list:
+    """
+    Reparto ALCISTA/NEUTRAL/BAJISTA del universo, por fecha, ultimas n_dias.
+
+    Formato LARGO (1 fila por fecha x veredicto) porque es lo que sale de la DB
+    y lo que consume el grafico; la vista lo pivotea si lo necesita. Con la
+    serie se puede decir "hoy hay mas alcistas que ayer", que es la lectura
+    util: un numero suelto ("55 alcistas") no dice si el mercado mejoro.
+    """
+    df = query_df("""
+        SELECT fecha::text AS fecha, veredicto, COUNT(*) AS n
+        FROM veredictos_universo_diario
+        WHERE fecha >= (SELECT MAX(fecha) FROM veredictos_universo_diario)
+                       - (:d || ' days')::interval
+        GROUP BY fecha, veredicto
+        ORDER BY fecha, veredicto
+    """, {"d": int(n_dias)})
+    return df.to_dict("records") if not df.empty else []
+
+
+def cargar_ft_resumen() -> dict:
+    """
+    Foto de Forward Testing al ultimo dia con equity calculada.
+
+    Usa ft_equity_diaria (equity MARCADA A MERCADO) y no ft_metricas_diarias:
+    esta ultima esta a COSTO de entrada y solo se mueve al cerrar una operacion
+    -- sobre ella el resultado de las posiciones abiertas es INVISIBLE. Ver
+    CLAUDE.md, tabla ft_equity_diaria.
+
+    Returns:
+        {fecha, estrategias: [...], total: {...}}  |  {} si no hay equity.
+    """
+    f = query_df("SELECT MAX(fecha)::text AS f FROM ft_equity_diaria")
+    if f.empty or f.iloc[0]["f"] is None:
+        return {}
+    fecha = f.iloc[0]["f"]
+
+    df = query_df("""
+        SELECT e.nombre,
+               q.equity, q.retorno_dia_pct, q.retorno_acum_pct,
+               q.n_posiciones, q.exposicion_pct, q.precios_stale
+        FROM ft_equity_diaria q
+        JOIN ft_estrategias e ON e.id = q.estrategia_id
+        WHERE q.fecha = :f
+        ORDER BY q.retorno_acum_pct DESC NULLS LAST
+    """, {"f": fecha})
+    if df.empty:
+        return {}
+
+    filas = df.to_dict("records")
+    equity_total = sum(_f(r["equity"]) or 0 for r in filas)
+    inicial = query_df(
+        "SELECT COALESCE(SUM(capital_inicial), 0) AS c FROM ft_estrategias "
+        "WHERE id IN (SELECT estrategia_id FROM ft_equity_diaria WHERE fecha = :f)",
+        {"f": fecha})
+    cap_ini = _f(inicial.iloc[0]["c"]) if not inicial.empty else None
+
+    return {
+        "fecha": fecha,
+        "estrategias": filas,
+        "total": {
+            "equity": equity_total,
+            "capital_inicial": cap_ini,
+            "retorno_acum_pct": (((equity_total / cap_ini) - 1) * 100
+                                 if cap_ini else None),
+            "n_posiciones": sum(int(r["n_posiciones"] or 0) for r in filas),
+            "stale": any(bool(r["precios_stale"]) for r in filas),
+        },
+    }
+
+
+def cargar_posiciones_ft_abiertas() -> list:
+    """
+    Posiciones FT abiertas, agrupadas por ticker (un mismo ticker puede estar
+    abierto en varias estrategias a la vez).
+
+    Returns:
+        [{ticker, n_estrategias, estrategias: 'A, B', capital}]
+    """
+    df = query_df("""
+        SELECT o.ticker,
+               COUNT(*)                        AS n_estrategias,
+               STRING_AGG(e.nombre, ', ' ORDER BY e.nombre) AS estrategias,
+               SUM(o.capital_entrada)          AS capital
+        FROM ft_operaciones o
+        JOIN ft_estrategias e ON e.id = o.estrategia_id
+        WHERE o.fecha_salida IS NULL
+        GROUP BY o.ticker
+        ORDER BY COUNT(*) DESC, o.ticker
+    """)
+    return df.to_dict("records") if not df.empty else []
+
+
+def cargar_earnings_proximos(dias: int = 7) -> list:
+    """
+    Balances a reportar en los proximos `dias` dias corridos.
+
+    Se cruza con las posiciones FT abiertas en la vista, no aca: este loader
+    devuelve el hecho crudo (quien reporta y cuando) y el cruce es una
+    decision de presentacion.
+    """
+    df = query_df("""
+        SELECT c.ticker, c.earnings_date::text AS fecha, a.sector
+        FROM earnings_calendar c
+        LEFT JOIN activos a ON a.ticker = c.ticker
+        WHERE c.earnings_date >= CURRENT_DATE
+          AND c.earnings_date < CURRENT_DATE + (:d || ' days')::interval
+        ORDER BY c.earnings_date, c.ticker
+    """, {"d": int(dias)})
+    return df.to_dict("records") if not df.empty else []
