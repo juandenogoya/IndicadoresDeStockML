@@ -230,3 +230,84 @@ server (loop agentico: pregunta -> LLM -> tool_calls -> MCP -> LLM -> respuesta)
 - Registro de consumo: cada consulta se guarda en `llm_uso_tokens` (tokens reales
   entrada/salida, por fecha y usuario). La UI muestra el consumo por respuesta y un
   acumulado por dia. Detalle de implementacion: memory/dashboard.md.
+
+## Reestructuracion de UX (2/9/2026, rama feature/dashboard-ux)
+
+Cuatro bloques de trabajo sobre la app existente. NO se cambio de framework:
+se pasaron a usar APIs de Streamlit que el venv ya tenia instaladas (1.57) y que
+app.py no aprovechaba, porque el grueso del archivo se escribio contra 1.41.
+
+### Vista "Hoy" -- pantalla de arranque
+
+Reemplaza al informe por ticker como vista por defecto. El dashboard abria en un
+menu de 7 vistas mas un selector de 200 tickers: dos decisiones antes de ver un
+solo dato, y ninguna se puede tomar bien sin haber visto antes que paso.
+
+Cuatro bloques, de lo general a lo propio: Clima del universo (reparto
+ALCISTA/NEUTRAL/BAJISTA con comparacion contra la rueda anterior) -> Lo inusual
+de la rueda (top 5 del radar) -> Forward Testing (equity a mercado, mejor y peor
+estrategia) -> Balances que vienen (earnings CRUZADOS con las posiciones FT
+abiertas).
+
+Cada bloque abre con la FRASE que ya trae la conclusion y recien despues muestra
+la tabla. El cruce earnings x posiciones es el unico dato de la vista que no
+existe en ninguna otra pantalla.
+
+Motor: `dashboard/hoy.py`, PURO (sin Streamlit ni DB), misma disciplina que
+`view.py`.
+
+### Estado del dato (banda de frescura)
+
+Visible en TODAS las vistas. La rutina nocturna es manual, asi que las tablas se
+desincronizan con normalidad y el veredicto se computaba igual cruzando ruedas
+distintas, sin avisar. Se mide en DOS niveles porque son dos fallas distintas:
+
+1. `precios_diarios` vs el ultimo dia habil NYSE -> "no corri el recovery"
+2. cada tabla vs `precios_diarios`               -> "una tabla quedo atras"
+
+Un solo nivel no distingue "todo viejo pero coherente" de "mezcla de ruedas",
+que es el caso traicionero: cada numero por separado parece correcto.
+
+### Veredictos precomputados
+
+El screener calculaba los ~200 veredictos en vivo: 121 segundos medidos. Ahora
+los precomputa `scripts/compute_veredictos_universo.py` (encadenado a
+`ft_run_diario.bat`) en `veredictos_universo_diario`, y el dashboard SOLO LEE:
+323 ms. La tabla guarda historia por fecha, que es lo que alimenta la
+comparacion contra la rueda anterior del bloque Clima.
+
+### Navegacion, URLs y tema
+
+- `st.navigation` con secciones (Panorama / Analisis / Cartera / Herramientas)
+  en vez del radio plano de 8 items. Cada vista tiene URL propia (`/hoy`,
+  `/informe`, ...) y `st.switch_page` reemplaza el mecanismo de flags diferidos
+  que hacia falta con el radio.
+- Key `ticker` UNICA en informe/financiero/balances + `bind="query-params"`:
+  el ticker viaja en la URL y persiste al cambiar de vista.
+  **`/informe?ticker=NVDA` es un link compartible a un informe concreto.**
+- Export en UN clic: `download_button(data=<callable>)` genera al hacer clic, en
+  otro thread. Antes eran dos clics sostenidos por 9 llaves de session_state.
+- `@st.fragment` en radar y bloques de export: mover el slider z re-filtra solo
+  esa tabla. OJO: un fragment NO puede escribir con el prefijo `st.sidebar.*`,
+  hay que llamarlo dentro de `with st.sidebar:`.
+- Tema oscuro en `.streamlit/config.toml`. El color SIGNIFICA: ambar = accion,
+  verde = a favor, rojo = en contra, gris = neutral (el estado mas frecuente).
+- Percentil sectorial como BARRA (`column_config.ProgressColumn`) en vez de
+  texto: ubicar los extremos ya no exige leer las 20 filas.
+- Captions metodologicos largos -> `st.popover`. Se leen una vez; despues son
+  ruido en cada carga.
+
+### Trampas encontradas (verificadas en el navegador, no deducidas)
+
+- `ft_equity_diaria.exposicion_pct` se guarda como FRACCION pese al nombre
+  (`valor_mercado / equity`). Los `retorno_*_pct` de la MISMA tabla si vienen
+  multiplicados por 100.
+- `st.dataframe` dentro de un `st.expander` se virtualiza y colapsa a 2 filas:
+  hay que darle `height` explicita.
+- `st.segmented_control` no acepta `horizontal` (ya lo es).
+- `.claude/launch.json` apuntaba a `python` del PATH, que en esta maquina es
+  otro interprete (Python311 del sistema, streamlit 1.41.1). **Correr siempre
+  con `venv\Scripts\python.exe`.**
+- `fileWatcherType` estaba en `"none"` por Streamlit Cloud, que fue
+  decomisionado. En `"none"` un cambio en un modulo importado quedaba en
+  `sys.modules` sin avisar, mostrando codigo viejo con aspecto de nuevo.

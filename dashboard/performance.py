@@ -66,7 +66,7 @@ def _grafico(series, label):
         .properties(height=420)
         .interactive()
     )
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
 
 
 def _fmt_pct(v):
@@ -111,7 +111,7 @@ def _tabla_metricas(m, label):
          else f"{m['information_ratio']:.2f}"),
     ]
     st.dataframe(pd.DataFrame(filas, columns=["Metrica", "Valor"]),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
 
 
 def _veredicto(m, label):

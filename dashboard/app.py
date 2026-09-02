@@ -46,7 +46,7 @@ from src.utils.dashboard_sintesis import sintetizar
 
 def _tabla(filas, columnas):
     st.dataframe(pd.DataFrame(filas, columns=columnas),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
 
 
 def _encabezado(enc: dict):
@@ -118,7 +118,7 @@ def _render_papel(papel: list):
     for sec in papel:
         st.subheader(sec["seccion"])
         df = pd.DataFrame(sec["filas"])[list(cols.keys())].rename(columns=cols)
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, width="stretch")
 
 
 def _nombre_descarga(ticker: str, fecha, sufijo: str, ext: str) -> str:
@@ -220,24 +220,6 @@ def _vista_informe(tickers):
 
     with st.sidebar:
         _sidebar_export(ticker, datos, sintesis)
-
-
-def _nav_a_informe(tk):
-    """Navega al informe descriptivo con el ticker tk.
-
-    El TICKER se escribe directo en session_state: su selectbox no se instancio
-    en esta vista, y con la key unificada (`ticker`, bindeada a query-params) es
-    la via soportada para moverlo -- un parametro bindeado no se puede tocar via
-    st.query_params.
-
-    El MODO no se puede escribir asi: su radio YA se creo en main() en esta misma
-    corrida y Streamlit prohibe reescribir la key de un widget ya instanciado.
-    Por eso sigue siendo un flag diferido que main() consume al inicio de la
-    corrida siguiente.
-    """
-    st.session_state["ticker"] = tk
-    st.session_state["_ir_informe"] = True
-    st.rerun()
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -376,7 +358,7 @@ def _radar_anomalias(data):
     df = pd.DataFrame(filas)[list(cols.keys())].rename(columns=cols)
     st.caption(f"{len(df)} tickers con actividad inusual (orden por magnitud). "
                "Tags: Volumen inusual / IV en alza / Sesgo a calls / Cobertura (puts).")
-    event = st.dataframe(df, hide_index=True, use_container_width=True,
+    event = st.dataframe(df, hide_index=True, width="stretch",
                          on_select="rerun", selection_mode="single-row", key="radar_tbl")
     rows = event.selection.rows if event and getattr(event, "selection", None) else []
     if rows:
@@ -441,7 +423,7 @@ def _radar_screener():
     _sec_txt = f" | sectores: {', '.join(sel_sec)}" if sel_sec else ""
     st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)}{_sec_txt} "
                f"(de {len(universo)} evaluados al {data['fecha']}).")
-    ev = st.dataframe(dfv, hide_index=True, use_container_width=True,
+    ev = st.dataframe(dfv, hide_index=True, width="stretch",
                       on_select="rerun", selection_mode="single-row", key="scr_tbl")
     r2 = ev.selection.rows if ev and getattr(ev, "selection", None) else []
     if r2:
@@ -517,8 +499,7 @@ def _vista_hoy():
         c1, _ = st.columns([1, 3])
         with c1:
             if st.button("Ver el radar completo", width="stretch", key="hoy_radar"):
-                st.session_state["_ir_radar"] = True
-                st.rerun()
+                _nav_a("radar")
     st.caption(f"Anomalias de opciones al {inusual['fecha']}. z = desvios "
                "respecto de la propia historia del ticker.")
 
@@ -570,32 +551,50 @@ def _vista_radar():
 
 
 def _tabla_financiera(filas, columnas_orden):
-    """Tabla con coloreo good/bad en la columna vs_mediana."""
+    """Tabla del analisis fundamental.
+
+    Dos cosas que no hacia antes:
+      - El percentil dentro del sector se dibuja como BARRA (column_config.
+        ProgressColumn) y no como texto. Es el numero que se lee de un vistazo
+        -- "esta arriba o abajo de sus pares" -- y como texto obligaba a leer
+        las 20 filas una por una para ubicar los extremos.
+      - Los colores good/bad pasan a los del tema oscuro. Los anteriores
+        (#1a7f37 / #cf222e) estaban elegidos para fondo claro y sobre el fondo
+        actual quedaban casi ilegibles.
+    """
     def _estilo(row):
         color = row.get("_color")
         css = ""
         if color == "good":
-            css = "color: #1a7f37; font-weight: 600;"
+            css = "color: #4ade80; font-weight: 600;"
         elif color == "bad":
-            css = "color: #cf222e; font-weight: 600;"
+            css = "color: #f87171; font-weight: 600;"
         # Styler.apply(axis=1) exige un estilo por CADA columna del DataFrame
-        # (incluye la columna oculta _color) -> iterar sobre row.index, no sobre
-        # columnas_orden (que tiene 5 y el df 6).
+        # (incluye las ocultas) -> iterar sobre row.index, no sobre
+        # columnas_orden.
         return [css if c == "vs Sector" else "" for c in row.index]
 
     df = pd.DataFrame(filas)
-    # Mapear nombres internos -> etiquetas de columna
     df_disp = pd.DataFrame({
-        "Metrica":    df["metrica"],
-        "Valor":      df["valor"],
-        "vs Sector":  df["vs_mediana"],
-        "Mediana":    df["mediana"],
-        "Percentil":  df["percentil"],
-        "_color":     df["color"],
+        "Metrica":   df["metrica"],
+        "Valor":     df["valor"],
+        "vs Sector": df["vs_mediana"],
+        "Mediana":   df["mediana"],
+        "Percentil": df["percentil_num"],
+        "_color":    df["color"],
     })
     styler = df_disp.style.apply(_estilo, axis=1)
-    st.dataframe(styler, hide_index=True, use_container_width=True,
-                 column_config={"_color": None})
+    st.dataframe(
+        styler, hide_index=True, width="stretch",
+        column_config={
+            "_color": None,
+            "Percentil": st.column_config.ProgressColumn(
+                "Percentil en el sector", min_value=0, max_value=100,
+                format="%.0f%%",
+                help="Fraccion de pares de la misma region con un valor menor "
+                     "o igual. 50% = justo en la mediana del sector."),
+        },
+    )
 
 
 @st.fragment
@@ -622,7 +621,7 @@ def _ficha_empresa_boton(tk):
     c1, c2 = st.columns([1, 1])
     with c1:
         if st.button(f"Generar ficha de {tk} (PNG)", key="ficha_emp_btn",
-                     use_container_width=True):
+                     width="stretch"):
             with st.spinner("Generando ficha..."):
                 try:
                     from scripts.reports.make_ficha_empresa import generar_ficha_empresa
@@ -640,8 +639,8 @@ def _ficha_empresa_boton(tk):
                 f"Descargar {st.session_state['ficha_emp_name']}",
                 data=st.session_state["ficha_emp_bytes"],
                 file_name=st.session_state["ficha_emp_name"],
-                mime="image/png", key="ficha_emp_dl", use_container_width=True)
-        st.image(st.session_state["ficha_emp_bytes"], use_container_width=True)
+                mime="image/png", key="ficha_emp_dl", width="stretch")
+        st.image(st.session_state["ficha_emp_bytes"], width="stretch")
     st.caption(f"Ficha de presentacion (PNG, fondo oscuro) SOLO de {tk}: el "
                "ultimo trimestre reportado + variacion interanual, la empresa "
                "contra si misma (sin pares). Descriptivo, no recomienda.")
@@ -653,8 +652,8 @@ def _vista_financiera(tickers):
                "calidad, crecimiento y solvencia, comparada con la mediana de "
                "pares de la misma region. Descriptivo, no recomienda.")
 
-    modo = st.radio("Modo", ["Por ticker", "Screener sectorial"],
-                    horizontal=True, key="fin_modo")
+    modo = st.segmented_control("Modo", ["Por ticker", "Screener sectorial"],
+                                default="Por ticker", key="fin_modo")
 
     if modo == "Por ticker":
         tk = st.selectbox("Ticker", tickers, key="ticker", bind="query-params")
@@ -688,11 +687,18 @@ def _vista_financiera(tickers):
             st.markdown(f"**{b['bloque']}**")
             _tabla_financiera(b["filas"],
                               ["Metrica", "Valor", "vs Sector", "Mediana", "Percentil"])
-        st.caption("vs Sector: distancia a la mediana de pares (verde=mejor, "
-                   "rojo=peor, segun la metrica). Percentil: posicion dentro del "
-                   "sector. Absolutos (BPA, valor libro) en moneda de reporte: no "
-                   "comparables cross-ticker. Bancos: ROIC/margen oper./liquidez "
-                   "pueden ser '-' (sin estructura aplicable).")
+        with st.popover("Como leer esta tabla", icon=":material/help:"):
+            st.markdown("**vs Sector**: distancia a la mediana de pares. "
+                        "Verde = mejor, rojo = peor, segun lo que signifique la "
+                        "metrica (un PER bajo es bueno; un ROE bajo no).")
+            st.markdown("**Percentil**: posicion dentro del sector. "
+                        "50% = justo en la mediana.")
+            st.markdown("Los ABSOLUTOS (BPA, valor libro) van en moneda de "
+                        "reporte: no son comparables entre tickers sin pasar "
+                        "por FX.")
+            st.markdown("En bancos, ROIC / margen operativo / liquidez pueden "
+                        "aparecer como guion: no tienen estructura contable "
+                        "aplicable.")
 
     else:  # Screener sectorial
         sectores = listar_sectores_fundamentales()
@@ -706,7 +712,7 @@ def _vista_financiera(tickers):
         with c2:
             region = st.selectbox("Region", regiones, key="fin_region")
 
-        if st.button("Generar", use_container_width=False):
+        if st.button("Generar", width="content"):
             st.session_state["fin_run"] = True
 
         if st.session_state.get("fin_run"):
@@ -723,7 +729,7 @@ def _vista_financiera(tickers):
             # Anexar fila mediana
             df_med = pd.DataFrame([screener["mediana"]], columns=screener["columnas"])
             df_full = pd.concat([df, df_med], ignore_index=True)
-            st.dataframe(df_full, hide_index=True, use_container_width=True)
+            st.dataframe(df_full, hide_index=True, width="stretch")
             st.caption("Ultima fila = mediana del sector (sobre valores "
                        "disponibles). '-' = metrica no disponible para ese ticker.")
 
@@ -753,7 +759,7 @@ def _render_registro_consumo():
             "entrada": "Entrada", "salida": "Salida", "total": "Total",
         })
         st.dataframe(df[["Fecha", "Consultas", "Entrada", "Salida", "Total"]],
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
         tot = df[["Entrada", "Salida", "Total"]].sum()
         st.caption(f"Ultimos 30 dias: Entrada {int(tot['Entrada'])} | "
                    f"Salida {int(tot['Salida'])} | Total {int(tot['Total'])} tokens.")
@@ -771,7 +777,7 @@ def _vista_chat():
         st.session_state["chat_contents"] = []  # historial para el modelo (podado)
 
     if st.session_state["chat_msgs"]:
-        if st.sidebar.button("Limpiar conversacion", use_container_width=True):
+        if st.sidebar.button("Limpiar conversacion", width="stretch"):
             st.session_state["chat_msgs"] = []
             st.session_state["chat_contents"] = []
             st.rerun()
@@ -831,52 +837,135 @@ def _vista_chat():
     _render_registro_consumo()
 
 
+# -- Navegacion --------------------------------------------------------------
+#
+# st.navigation en vez del st.radio de 8 items planos. Tres ventajas concretas:
+#
+#   1. Agrupa por proposito (Panorama / Analisis / Cartera / Herramientas). Con
+#      8 items sueltos hay que leer la lista entera para ubicarse; con grupos
+#      se salta al que corresponde.
+#   2. Cada vista tiene su URL (/hoy, /informe, ...), asi que se puede marcar
+#      como favorita -- y combinada con ?ticker=NVDA, un informe concreto es un
+#      link compartible.
+#   3. Habilita st.switch_page, que reemplaza el mecanismo de flags diferidos
+#      (_ir_informe / _ir_radar). Ese mecanismo existia SOLO porque la key de un
+#      widget ya instanciado no se puede reescribir: con el radio en pantalla,
+#      mover "modo" desde una vista tiraba excepcion, y habia que dejar una
+#      marca para consumirla al inicio de la corrida siguiente. Con navigation
+#      el salto es directo.
+
+_PAGINAS = {}
+
+
+def _nav_a(clave: str, **estado):
+    """Salta a otra vista, fijando estado antes si hace falta.
+
+    _PAGINAS lo puebla main() en cada corrida ANTES de ejecutar la pagina, asi
+    que siempre esta cargado cuando una vista llama aca.
+    """
+    for k, v in estado.items():
+        st.session_state[k] = v
+    st.switch_page(_PAGINAS[clave])
+
+
+def _nav_a_informe(tk):
+    """Abre el informe descriptivo de tk.
+
+    El ticker se escribe directo en session_state: su selectbox no se instancio
+    en la vista de origen, y con la key unificada (`ticker`, bindeada a
+    query-params) es la via soportada para moverlo -- un parametro bindeado no
+    se puede tocar via st.query_params.
+    """
+    _nav_a("informe", ticker=tk)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _tickers_cache():
+    """El universo se pide en casi todas las vistas y cambia con un alta/baja
+    manual, no durante la sesion."""
+    return listar_tickers()
+
+
+# Envoltorios de pagina: st.Page recibe callables SIN argumentos, y varias
+# vistas necesitan el universo. Cada una lo pide al cache en vez de recibirlo.
+
+def _pg_hoy():
+    _vista_hoy()
+
+
+def _pg_radar():
+    _vista_radar()
+
+
+def _pg_informe():
+    _vista_informe(_tickers_cache())
+
+
+def _pg_financiero():
+    _vista_financiera(_tickers_cache())
+
+
+def _pg_balances():
+    from dashboard.earnings_reaccion import construir_reaccion
+    construir_reaccion(_tickers_cache())
+
+
+def _pg_carteras():
+    from dashboard.carteras import construir_carteras
+    construir_carteras(_tickers_cache())
+
+
+def _pg_performance():
+    from dashboard.performance import construir_performance
+    construir_performance(_tickers_cache())
+
+
 def main():
     st.set_page_config(page_title="Panel de analisis", layout="wide")
 
-    # Navegacion pendiente desde el radar: se consume ANTES de instanciar el
-    # radio de vistas (su key no se puede reescribir una vez creado). El ticker
-    # ya no viaja por aca -- lo escribe _nav_a_informe directo en su key unica.
-    if st.session_state.pop("_ir_informe", False):
-        st.session_state["modo"] = "Informe por ticker"
-    if st.session_state.pop("_ir_radar", False):
-        st.session_state["modo"] = "Radar del dia"
-
+    # Cromo comun a todas las vistas: va ANTES de pg.run(), que es lo que hace
+    # que el entrypoint funcione como marco y no como pagina.
     st.title("Panel de analisis")
     st.caption("Descriptivo, no predictivo. Complemento de TradingView. "
                "Cruza tecnico + opciones + sector con reglas trazables.")
     _banda_frescura()
 
-    tickers = listar_tickers()
-    if not tickers:
+    if not _tickers_cache():
         st.error("No hay tickers en la DB local (precios_diarios vacia).")
         return
 
-    modo = st.sidebar.radio("Vista",
-                            ["Hoy", "Informe por ticker", "Radar del dia",
-                             "Analisis Financiero", "Reaccion a balances",
-                             "Carteras", "Performance", "Consultas (IA)"],
-                            key="modo")
-    st.sidebar.divider()
-    if modo == "Informe por ticker":
-        _vista_informe(tickers)
-    elif modo == "Radar del dia":
-        _vista_radar()
-    elif modo == "Analisis Financiero":
-        _vista_financiera(tickers)
-    elif modo == "Reaccion a balances":
-        from dashboard.earnings_reaccion import construir_reaccion
-        construir_reaccion(tickers)
-    elif modo == "Carteras":
-        from dashboard.carteras import construir_carteras
-        construir_carteras(tickers)
-    elif modo == "Performance":
-        from dashboard.performance import construir_performance
-        construir_performance(tickers)
-    elif modo == "Consultas (IA)":
-        _vista_chat()
-    else:
-        _vista_hoy()
+    paginas = {
+        "hoy": st.Page(_pg_hoy, title="Hoy", url_path="hoy",
+                       icon=":material/today:", default=True),
+        "radar": st.Page(_pg_radar, title="Radar del dia", url_path="radar",
+                         icon=":material/radar:"),
+        "informe": st.Page(_pg_informe, title="Informe por ticker",
+                           url_path="informe", icon=":material/description:"),
+        "financiero": st.Page(_pg_financiero, title="Analisis Financiero",
+                              url_path="financiero",
+                              icon=":material/account_balance:"),
+        "balances": st.Page(_pg_balances, title="Reaccion a balances",
+                            url_path="balances", icon=":material/event:"),
+        "carteras": st.Page(_pg_carteras, title="Carteras", url_path="carteras",
+                            icon=":material/donut_small:"),
+        "performance": st.Page(_pg_performance, title="Performance",
+                               url_path="performance",
+                               icon=":material/trending_up:"),
+        "chat": st.Page(_vista_chat, title="Consultas (IA)",
+                        url_path="consultas", icon=":material/chat:"),
+    }
+    _PAGINAS.clear()
+    _PAGINAS.update(paginas)
+
+    # Los grupos ordenan de lo general a lo propio, igual que la vista Hoy:
+    # que pasa en el mercado -> que pasa con un papel -> que pasa con mi plata.
+    st.navigation({
+        "Panorama": [paginas["hoy"], paginas["radar"]],
+        "Analisis": [paginas["informe"], paginas["financiero"],
+                     paginas["balances"]],
+        "Cartera": [paginas["carteras"], paginas["performance"]],
+        "Herramientas": [paginas["chat"]],
+    }).run()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,66 @@
 [server]
-# Desactiva el watcher de archivos basado en inotify
-# Evita el error "inotify watch limit reached" en Streamlit Cloud
-fileWatcherType = "none"
+# fileWatcherType estaba en "none" por el limite de inotify de Streamlit Cloud.
+# Esa app fue DECOMISIONADA (5/6/2026, Plan C): el dashboard corre solo en
+# Windows local, donde el watcher no tiene ese problema. En "none" habia que
+# reiniciar el proceso a mano despues de cada edicion -- y peor, un cambio en
+# un modulo importado (sintesis_data, hoy, view) quedaba en sys.modules sin
+# avisar, mostrando codigo viejo con aspecto de nuevo.
+fileWatcherType = "auto"
+
+
+# ── Tema ────────────────────────────────────────────────────────────────────
+# Oscuro. Es el modo en que se mira un panel de mercado fuera del horario de
+# rueda, y baja el peso visual de las tablas, que son casi todo el contenido.
+#
+# Criterio de color: el color SIGNIFICA algo, no decora.
+#   - ambar   = accion / atencion (el acento de la marca)
+#   - verde   = a favor / al dia
+#   - rojo    = en contra / atrasado
+#   - gris    = neutral, y es el estado mas frecuente (61% del universo hoy)
+# Todo lo demas es escala de grises: si todo resalta, nada resalta.
+[theme]
+base = "dark"
+
+# Ambar como primario: no es alcista ni bajista, asi que no compite con la
+# semantica verde/rojo de los veredictos ni la contamina.
+primaryColor = "#e0a72e"
+
+backgroundColor = "#0e0f12"
+secondaryBackgroundColor = "#181a1f"
+textColor = "#e6e7ea"
+
+# Texto secundario (captions, ayudas). Contraste ~5.4:1 sobre el fondo:
+# legible, pero claramente por detras del texto principal.
+grayTextColor = "#9497a1"
+
+borderColor = "#2a2d35"
+dataframeBorderColor = "#2a2d35"
+dataframeHeaderBackgroundColor = "#181a1f"
+linkColor = "#e0a72e"
+
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "0.5rem"
+buttonRadius = "0.5rem"
+
+# Verde y rojo de los badges/metricas: los del default sobre fondo oscuro
+# quedan estridentes. Estos bajan la saturacion sin perder la lectura.
+greenColor = "#4ade80"
+redColor = "#f87171"
+orangeColor = "#e0a72e"
+
+font = "sans-serif"
+headingFont = "sans-serif"
+
+# Paleta de los graficos Altair (carteras, performance, reaccion a balances).
+# Arranca en el ambar de la marca y sigue con matices distinguibles tambien en
+# escala de grises, porque los graficos terminan exportados a PNG y compartidos.
+chartCategoricalColors = ["#e0a72e", "#4ade80", "#60a5fa", "#f87171",
+                          "#a78bfa", "#22d3ee", "#fb923c", "#94a3b8"]
+
+# La barra lateral, un punto mas oscura que el contenido: separa la navegacion
+# del contenido sin necesidad de una linea dura.
+[theme.sidebar]
+backgroundColor = "#0a0b0d"
+secondaryBackgroundColor = "#181a1f"
+borderColor = "#22252b"

@@ -77,7 +77,7 @@ st.caption("Análisis técnico para X — infografía (solo datos) o PDF (con na
 
 col_t, col_b = st.columns([3, 1])
 ticker = col_t.text_input("Ticker", placeholder="BAC").strip().upper()
-if col_b.button("Traer datos", use_container_width=True):
+if col_b.button("Traer datos", width="stretch"):
     if not ticker:
         st.warning("Escribí un ticker.")
     else:
@@ -118,7 +118,7 @@ if data:
     col1, col2 = st.columns(2)
 
     # ── Botón: Infografía ──────────────────────────────────────────────────
-    if col1.button("🖼️  Generar Infografía", use_container_width=True):
+    if col1.button("🖼️  Generar Infografía", width="stretch"):
         with st.spinner("Generando infografía…"):
             try:
                 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -135,7 +135,7 @@ if data:
                 st.error(f"Error generando infografía: {exc}")
 
     # ── Botón: PDF ─────────────────────────────────────────────────────────
-    if col2.button("📄  Generar PDF", use_container_width=True):
+    if col2.button("📄  Generar PDF", width="stretch"):
         if not narrativa.strip():
             st.warning("Pegá la narrativa antes de generar el PDF.")
         else:
@@ -158,13 +158,13 @@ if data:
     if st.session_state.get("ig_png"):
         st.divider()
         st.subheader("Infografía")
-        st.image(st.session_state["ig_png"], use_container_width=True)
+        st.image(st.session_state["ig_png"], width="stretch")
         st.download_button(
             "⬇️  Descargar infografía",
             st.session_state["ig_png"],
             file_name=st.session_state["ig_name"],
             mime="image/png",
-            use_container_width=True,
+            width="stretch",
         )
 
     if st.session_state.get("pdf_bytes"):
@@ -175,14 +175,14 @@ if data:
             st.session_state["pdf_bytes"],
             file_name=st.session_state["pdf_name"],
             mime="application/pdf",
-            use_container_width=True,
+            width="stretch",
         )
         st.caption("Páginas como PNG (para subir a X):")
         for nombre, b in st.session_state.get("pdf_pngs", []):
-            st.image(b, caption=nombre, use_container_width=True)
+            st.image(b, caption=nombre, width="stretch")
             st.download_button(
                 f"⬇️  {nombre}", b, file_name=nombre, mime="image/png",
-                key=f"dl_{nombre}", use_container_width=True,
+                key=f"dl_{nombre}", width="stretch",
             )
 else:
     st.info("Escribí un ticker y tocá **Traer datos** para empezar.")

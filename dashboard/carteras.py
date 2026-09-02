@@ -76,7 +76,7 @@ def _mapa(df):
         .properties(height=460)
         .interactive()
     )
-    st.altair_chart(scatter, use_container_width=True)
+    st.altair_chart(scatter, width="stretch")
     if sin_beta:
         st.caption(f"{sin_beta} ticker(s) sin beta/vol suficiente quedan fuera del grafico.")
 
@@ -92,14 +92,14 @@ def _mapa(df):
             tooltip=["perfil", "n"],
         ).properties(height=200)
     )
-    st.altair_chart(barras, use_container_width=True)
+    st.altair_chart(barras, width="stretch")
 
 
 def _tabla_perfil(sub):
     cols = [c for c in _COLS_TABLA if c in sub.columns]
     t = sub.sort_values("rank_en_caja", na_position="last")[cols].copy()
     st.dataframe(
-        t, use_container_width=True, hide_index=True,
+        t, width="stretch", hide_index=True,
         column_config={
             "rank_en_caja": st.column_config.NumberColumn("rank", format="%d"),
             "score_riesgo": st.column_config.NumberColumn("score", format="%.1f"),
@@ -141,7 +141,7 @@ def _validacion(df):
     val = pd.DataFrame(filas)
     n_ok = (val["coincide"] == "OK").sum()
     st.caption(f"Coinciden {n_ok} de {len(val)} anclas.")
-    st.dataframe(val, use_container_width=True, hide_index=True)
+    st.dataframe(val, width="stretch", hide_index=True)
 
 
 def _excepciones(df):
@@ -157,7 +157,7 @@ def _excepciones(df):
         show["caja_base"] = show["caja_base"].map(
             {0: "Conservadora", 1: "Moderada", 2: "Arriesgada", 3: "Especulativa"})
         st.dataframe(
-            show, use_container_width=True, hide_index=True,
+            show, width="stretch", hide_index=True,
             column_config={
                 "industry": st.column_config.TextColumn("industria"),
                 "caja_base": st.column_config.TextColumn("sector base"),
@@ -187,8 +187,10 @@ def construir_carteras(tickers=None):
                "El SECTOR es contexto y marca las excepciones. Descriptivo, no "
                "una recomendacion de compra.")
 
-    modo = st.radio("Vista", ["Mapa", "Por cartera", "Excepciones / Validacion"],
-                    horizontal=True, key="cart_modo")
+    # segmented_control ya es horizontal por definicion: no acepta `horizontal`.
+    modo = st.segmented_control("Vista",
+                                ["Mapa", "Por cartera", "Excepciones / Validacion"],
+                                default="Mapa", key="cart_modo")
     st.divider()
     if modo == "Mapa":
         _mapa(df)

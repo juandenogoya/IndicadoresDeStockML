@@ -228,7 +228,7 @@ def construir_reaccion(tickers: list):
         " | " + ", ".join(f"Q{q}" for q in sorted(q_sel))
     st.subheader(f"{ticker} -- {len(resumen)} balances ({anios_txt}{q_txt}) "
                  f"| +/- {n_r} ruedas")
-    st.dataframe(resumen, use_container_width=True, hide_index=True)
+    st.dataframe(resumen, width="stretch", hide_index=True)
 
     base = alt.Chart(serie).encode(
         x=alt.X("offset:Q",
@@ -249,7 +249,7 @@ def construir_reaccion(tickers: list):
                  alt.Tooltip("vol_rel:Q", format=".2f", title="vol x prom")],
     )
     st.altair_chart((linea_usd + _divisor()).properties(height=320),
-                    use_container_width=True)
+                    width="stretch")
 
     # -- PRECIO (%): acumulado desde el cierre previo al dia 0 ----------------
     st.markdown("**Precio (%)** -- variacion vs el cierre previo al balance "
@@ -264,7 +264,7 @@ def construir_reaccion(tickers: list):
     cero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(
         strokeDash=[4, 4], color="gray").encode(y="y:Q")
     st.altair_chart((linea_px + cero + _divisor()).properties(height=320),
-                    use_container_width=True)
+                    width="stretch")
 
     # -- VOLUMEN: multiplo del promedio previo --------------------------------
     st.markdown(f"**Volumen** -- multiplo del promedio de {VOL_BASE_N} ruedas "
@@ -280,7 +280,7 @@ def construir_reaccion(tickers: list):
         uno = alt.Chart(pd.DataFrame({"y": [1]})).mark_rule(
             strokeDash=[4, 4], color="gray").encode(y="y:Q")
         st.altair_chart((linea_vol + uno + _divisor()).properties(height=280),
-                        use_container_width=True)
+                        width="stretch")
     else:
         st.info("Sin volumen de referencia suficiente para el multiplo.")
 

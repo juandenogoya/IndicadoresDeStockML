@@ -138,7 +138,14 @@ def construir_bloques_ticker(data: dict) -> list:
     """
     data = {ratios: {col: val}, vs_sector: {metric: {peer_median, vs_median_pct,
             percentile, peer_n, peer_basis, low_sample}}, ...}
-    Devuelve [ {bloque, filas:[{metrica, valor, vs_mediana, percentil, color}]} ].
+    Devuelve [ {bloque, filas:[{metrica, valor, vs_mediana, percentil,
+    percentil_num, color}]} ].
+
+    `percentil` sale formateado ("77%") y `percentil_num` va crudo en 0..100.
+    Se devuelven LOS DOS a proposito: el renderer dibuja el percentil como
+    barra, y volver a parsear el string formateado para recuperar el numero es
+    justo el tipo de ida y vuelta que se rompe en silencio el dia que cambia
+    el formato.
     """
     ratios = data.get("ratios") or {}
     vs = data.get("vs_sector") or {}
@@ -158,6 +165,7 @@ def construir_bloques_ticker(data: dict) -> list:
                 "vs_mediana": fmt_vs_median(cmp.get("vs_median_pct")),
                 "mediana":    fmt_valor(m, med),
                 "percentil":  (f"{_f(pct) * 100:.0f}%" if _f(pct) is not None else "-"),
+                "percentil_num": (_f(pct) * 100 if _f(pct) is not None else None),
                 "color":      evaluar_color(m, val, med),
             })
         bloques.append({"bloque": nombre, "filas": filas})
