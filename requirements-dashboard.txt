@@ -1,0 +1,25 @@
+# ============================================================
+#  requirements-dashboard.txt -- dependencias SOLO de las apps
+#  Streamlit LOCALES (dashboard/ y scripts/reports/app.py).
+#
+#  POR QUE ESTA SEPARADO DE requirements.txt:
+#  los 10 workflows de GitHub Actions (3 bots Alpaca, snapshot de
+#  opciones, cron_diario, scanner AR) hacen `pip install -r
+#  requirements.txt` en cada corrida. Nada de eso importa streamlit:
+#  las apps Streamlit corren SOLO en Windows local (Plan C). Tenerlo
+#  en el requirements compartido significaba instalar streamlit +
+#  altair + pyarrow en cada corrida de CI al pedo, y -- peor -- que
+#  subir la version del dashboard obligara a re-resolver el arbol de
+#  dependencias del snapshot de opciones, cuyo dato es IRRECUPERABLE.
+#
+#  Instalar en local:  pip install -r requirements-dashboard.txt
+# ============================================================
+
+# streamlit 1.57 es la version que el dashboard USA, no solo la que
+# tolera: bind="query-params", @st.fragment, download_button(data=callable),
+# badge, segmented_control, dialog. Con 1.41 el dashboard NO levanta.
+streamlit==1.57.0
+
+# Explicito aunque hoy venga como dependencia de streamlit: el dashboard
+# lo importa directo (carteras, earnings_reaccion, performance).
+altair==6.1.0
