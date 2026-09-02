@@ -33,6 +33,7 @@ from decimal import Decimal
 
 from mcp_server.db.pool import get_pool
 from mcp_server.db.queries import SQL_ML_ALERT_HISTORY
+from src.utils.contexto_sectorial import MOTIVO, sin_contexto_sectorial
 
 ALERTS_ANNOTATIONS = {
     "readOnlyHint": True,
@@ -83,6 +84,15 @@ def _clean_alert_row(row) -> dict:
 
     r["verificado"] = bool(r.get("verificado"))
 
+    # Campo DERIVADO del sector, no almacenado: aplica retroactivamente a toda
+    # la historia de alertas_scanner. Va como texto y no como booleano crudo
+    # porque el LLM vuelca los 0/1 sin interpretarlos; asi puede repetir el
+    # motivo tal cual al usuario.
+    r["contexto_sectorial"] = (
+        f"AUSENTE -- {MOTIVO}" if sin_contexto_sectorial(r.get("sector"))
+        else "completo"
+    )
+
     return r
 
 
@@ -98,7 +108,7 @@ async def get_ml_alert_history(
     limit: int = 20,
 ) -> dict:
     """
-    Historial de alertas del scanner ML sobre los 199 tickers.
+    Historial de alertas del scanner ML sobre los 200 tickers.
 
     Cada fila representa una alerta generada por el scanner en una fecha dada,
     con el score ML, nivel, condiciones tecnicas y (si ya paso tiempo suficiente)
@@ -123,6 +133,13 @@ async def get_ml_alert_history(
       ml_prob_ganancia : probabilidad de ganancia segun modelo RF (0.0-1.0)
       condiciones_pa   : condiciones price action cumplidas (0-4)
       estructura_10    : contexto market structure al momento de la alerta
+      contexto_sectorial: "completo" | "AUSENTE -- <motivo>". AUSENTE significa
+                         que el ticker pertenece a un sector demasiado chico
+                         para comparar contra pares (Real Estate, Utilities),
+                         asi que 11 de las 53 features del modelo llegaron
+                         vacias. El modelo usado igual es el correcto (global);
+                         lo que esta incompleto es la entrada. Si aparece
+                         AUSENTE, decirlo al reportar la alerta.
       verificado       : True si ya se cargaron retornos reales
       retorno_1d_real  : retorno % real al dia siguiente (null si no verificado)
       retorno_5d_real  : retorno % real a 5 dias (null si no verificado)

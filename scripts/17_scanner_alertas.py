@@ -47,6 +47,7 @@ from src.pipeline.alert_classifier import clasificar_alerta
 from src.pipeline.telegram_notifier import enviar_resumen
 from src.data.database import get_connection
 from src.indicators.mtf_context import get_contexto_mtf_batch
+from src.utils.contexto_sectorial import marca
 
 
 # ─────────────────────────────────────────────────────────────
@@ -243,7 +244,11 @@ def imprimir_resumen(resultados: list):
 
     for r in ok_results:
         ticker = r["ticker"]
-        sector = (r.get("sector") or "?")[:22]
+        # La marca va pegada al sector y no al nivel: es una propiedad del
+        # sector, y ahi entra sin correr las columnas ("Real Estate [s/ctx]"
+        # son 19 de los 22 disponibles).
+        sector = ((r.get("sector") or "?")
+                  + marca(r.get("sector"), corta=True))[:22]
         nivel  = r.get("alert_nivel", "?")[:14]
         score  = f"{r.get('alert_score', 0):.0f}"
         ml_pct = f"{r.get('ml_prob_ganancia', 0):.0%}"

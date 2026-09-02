@@ -19,6 +19,7 @@ Para cada ticker y fecha calcula su posición relativa dentro del sector:
 import pandas as pd
 import numpy as np
 from src.data.database import query_df, get_connection
+from src.utils.contexto_sectorial import SECTORES_SIN_FEATURES
 import psycopg2.extras
 
 
@@ -51,10 +52,20 @@ def cargar_datos_completos() -> pd.DataFrame:
         JOIN scoring_tecnico      s ON p.ticker = s.ticker AND p.fecha = s.fecha
         -- Tarea 20: sectores diminutos (n<=3) excluidos -> sus z-scores serian ruido.
         -- Decision del usuario: 9 sectores. Real Estate (3) y Utilities (1) afuera.
-        WHERE a.sector NOT IN ('Real Estate', 'Utilities')
+        --
+        -- La lista NO se escribe aca: viene de src/utils/contexto_sectorial, que
+        -- es tambien de donde sale la marca "Sin contexto sectorial" que ven el
+        -- scanner, Telegram y el MCP. Con dos listas, el dia que un sector
+        -- crezca y entre al calculo, la marca seguiria apareciendo sobre
+        -- tickers que ya tienen contexto.
+        --
+        -- `NOT (sector = ANY(...))` mantiene el comportamiento del NOT IN
+        -- anterior ante sector NULL: la comparacion da NULL y la fila queda
+        -- fuera. sin_contexto_sectorial(None) devuelve True por eso mismo.
+        WHERE NOT (a.sector = ANY(:sectores))
         ORDER BY p.ticker, p.fecha
     """
-    df = query_df(sql)
+    df = query_df(sql, params={"sectores": list(SECTORES_SIN_FEATURES)})
     df["fecha"] = pd.to_datetime(df["fecha"])
     return df
 

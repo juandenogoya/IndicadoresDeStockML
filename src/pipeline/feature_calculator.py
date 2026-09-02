@@ -23,6 +23,7 @@ from src.indicators.precio_accion import _calcular_grupo
 from src.ml.trainer import feature_engineering, FEATURE_COLS, _BOOL_COLS
 from src.ml.trainer_v3 import FEATURE_COLS_V3
 from src.data.database import query_df
+from src.utils.contexto_sectorial import FEATURES_SECTORIALES
 
 
 # ─────────────────────────────────────────────────────────────
@@ -41,12 +42,11 @@ PA_COLS_EXTRA = [
 # Z-scores sectoriales desde DB
 # ─────────────────────────────────────────────────────────────
 
-_SECTOR_ZCOLS = [
-    "z_rsi_sector", "z_retorno_1d_sector", "z_retorno_5d_sector",
-    "z_vol_sector", "z_dist_sma50_sector", "z_adx_sector",
-    "pct_long_sector", "rank_retorno_sector",
-    "rsi_sector_avg", "adx_sector_avg", "retorno_1d_sector_avg",
-]
+# Las 11 columnas viven en src/utils/contexto_sectorial junto con la regla de
+# QUIEN se queda sin ellas: son la misma decision mirada de los dos lados (que
+# features faltan / a quien le faltan), y separarlas deja la marca al usuario
+# contando features que ya no son las que se leen aca.
+_SECTOR_ZCOLS = list(FEATURES_SECTORIALES)
 
 
 def _obtener_zscore_sectorial(ticker: str,
@@ -57,11 +57,11 @@ def _obtener_zscore_sectorial(ticker: str,
     """
     empty = {c: np.nan for c in _SECTOR_ZCOLS}
 
-    sql = """
-        SELECT z_rsi_sector, z_retorno_1d_sector, z_retorno_5d_sector,
-               z_vol_sector, z_dist_sma50_sector, z_adx_sector,
-               pct_long_sector, rank_retorno_sector,
-               rsi_sector_avg, adx_sector_avg, retorno_1d_sector_avg
+    # La lista de columnas se arma desde la constante (son nombres propios, no
+    # entrada de usuario): asi la SELECT no puede quedar corrida respecto de las
+    # claves que despues se leen del row.
+    sql = f"""
+        SELECT {", ".join(_SECTOR_ZCOLS)}
         FROM features_sector
         WHERE ticker = :ticker
         ORDER BY fecha DESC

@@ -318,6 +318,32 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - Las escribe `ft_utils.obtener_fecha_datos()` (MAX(fecha) del ticker). Los bots
   no la manejan: `ft_utils` es el UNICO lugar que escribe `ft_operaciones`.
 
+### 4 tickers sin contexto sectorial -- el modelo es el correcto, la entrada no (2/9/2026)
+- Los features sectoriales son z-scores del ticker CONTRA SUS PARES. Con n<=3 no
+  miden nada (con n=1 el ticker es su propio promedio y da 0 por construccion),
+  asi que Real Estate (AMT/EQIX/PLD) y Utilities (VST) quedaron afuera del
+  calculo en la Tarea 20. Son 4 de 200.
+- **Son dos problemas distintos y solo uno estaba resuelto.** (1) QUE MODELO se
+  usa: el global, y esta bien -- con 1 y 3 tickers no hay con que entrenar uno
+  sectorial. (2) QUE DATOS recibe: **11 de las 53 features llegan NaN**. El
+  global fue ENTRENADO con esas 11 presentes. Elegir el modelo global resuelve
+  (1) y no toca (2). Verificado: AAPL recibe 11/11, EQIX 0/11.
+- No es teorico: al 1/9/2026 EQIX estaba en COMPRA_FUERTE, que es el nivel con
+  el que abren posicion `ft_bot_ml_scanner` y el bot_ml de Alpaca.
+- **DECISION (2/9/2026): se marca, no se filtra.** La probabilidad se sigue
+  publicando con la etiqueta "Sin contexto sectorial"; los bots operan esos 4
+  igual que antes. Razon: FT y Alpaca son paper y existen para EVALUAR
+  estrategias -- filtrarlos le sacaria casos al experimento. Revisar si se
+  incorporan tickers a esos sectores.
+- La marca se DERIVA del sector en cada lectura (`src/utils/contexto_sectorial`),
+  no se almacena: sin migracion, sin backfill, y aplica retroactivamente a toda
+  la historia de `alertas_scanner` (que ya tiene la columna `sector`). Cuando un
+  sector crezca y salga de la lista, la marca deja de emitirse sola.
+- La lista de sectores vive en UN lugar y el WHERE del productor se arma desde
+  ahi. Con dos listas, el dia que un sector entre al calculo la marca seguiria
+  apareciendo sobre tickers que ya tienen contexto -- o dejaria de aparecer
+  sobre los que no.
+
 ### Splits -- precios_diarios NO se re-ajusta hacia atras (21/7/2026)
 - El pipeline diario solo trae los dias NUEVOS (ya ajustados por Yahoo). Cuando
   un ticker hace split, la historia previa queda en la escala VIEJA -> la serie
@@ -397,6 +423,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria + precomputo de veredictos del dashboard |
 | `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py` |
+| `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
 | `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos" |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |

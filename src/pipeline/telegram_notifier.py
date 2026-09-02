@@ -14,6 +14,7 @@ from typing import List, Dict
 from datetime import datetime
 
 from src.utils.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from src.utils.contexto_sectorial import marca
 
 
 # ─────────────────────────────────────────────────────────────
@@ -165,17 +166,26 @@ def formatear_mensaje1_scanner(resultados: List[Dict]) -> str:
                 _colores = {"alcista": "\U0001f7e2", "bajista": "\U0001f534", "neutral": "\u26ab"}
                 _nd = "\u26ab"
                 mtf_str = f"{_colores.get(t1w, _nd)}1W {_colores.get(t1m, _nd)}1M"
+                # La marca va al final y con el texto completo: este es el
+                # aviso que se lee en el celular y decide si vale la pena
+                # mirar el ticker. COMPRA_FUERTE es ademas el nivel con el que
+                # abren posicion los bots, asi que es donde mas importa saber
+                # que el score se calculo con 11 features vacias.
                 lines.append(
                     f"  <b>{ticker}</b> score={score:.0f} ml={prob:.0%} "
                     f"${precio:.2f} [{scope}] {mtf_str}"
+                    f"{marca(r.get('sector'))}"
                 )
         else:
             # Compacto: hasta 5 tickers por linea
             CHUNK = 5
             for i in range(0, len(items_sorted), CHUNK):
                 chunk = items_sorted[i:i + CHUNK]
+                # Aca la marca va abreviada: son hasta 5 tickers por linea y la
+                # etiqueta completa partiria el renglon en el celular.
                 parts = [
-                    f"<b>{r['ticker']}</b> s={r.get('alert_score', 0):.0f}"
+                    f"<b>{r['ticker']}</b>{marca(r.get('sector'), corta=True)}"
+                    f" s={r.get('alert_score', 0):.0f}"
                     for r in chunk
                 ]
                 lines.append("  " + " | ".join(parts))
