@@ -250,71 +250,77 @@ def _estado_datos_cache():
     return estado_datos()
 
 
-def _enumerar(items: list) -> str:
-    """'A' | 'A y B' | 'A, B y C'. Los mensajes de estado los lee una persona
-    apurada: una lista separada por comas se lee como enumeracion truncada."""
-    if not items:
-        return ""
-    if len(items) == 1:
-        return items[0]
-    return f"{', '.join(items[:-1])} y {items[-1]}"
-
-
 def _banda_frescura():
     """Estado del dato, visible en todas las vistas.
 
     Antes el dashboard servia el informe con lo que hubiera en la DB sin decir
     de cuando era. Como la rutina nocturna es MANUAL, las tablas se
     desincronizan con normalidad: el 2/9/2026 precios_diarios estaba al 1/9 y
-    opciones_pcr_plazo_diario al 31/8, y el veredicto se computaba igual
-    cruzando dos ruedas distintas, sin avisar.
+    las derivadas de opciones al 31/8, y el veredicto se computaba igual
+    cruzando dos ruedas, sin avisar.
 
-    Tres estados, en orden de gravedad:
-      rojo    -- precios_diarios atrasado vs el ultimo cierre: falta correr el
-                 recovery. Todo lo que se muestre es viejo.
-      naranja -- precios al dia pero alguna tabla critica quedo atras: lo que
-                 se muestra MEZCLA ruedas. Es el mas traicionero de los tres,
-                 porque cada numero por separado parece correcto.
-      verde   -- alineado.
+    CUATRO estados, en orden de gravedad. El diagnostico lo arma
+    src.utils.estado_pipeline (compartido con el guard de ft_run_diario):
+
+      rojo    -- falta el CRUDO de opciones. No es "falta procesar": es que el
+                 snapshot no llego, y Yahoo solo sirve la chain vigente, asi
+                 que apenas abre el mercado siguiente ese dato es
+                 IRRECUPERABLE. Es el unico caso con reloj y con otro comando.
+      naranja -- mezcla de ruedas: los insumos no coinciden entre si. Cada
+                 numero por separado parece correcto; el cruce no lo es.
+      gris    -- todo coherente pero atrasado. NO es un error: operar con el
+                 cierre anterior es la convencion del proyecto (73% de las
+                 operaciones FT). Se informa, no se alarma.
+      verde   -- al dia y alineado.
     """
+    from src.utils.estado_pipeline import resumen
+
     e = _estado_datos_cache()
-    if not e["ancla"]:
+    if e["ancla"] is None:
         st.error("precios_diarios esta vacia: no hay datos que mostrar.")
         return
 
-    if not e["ancla_al_dia"]:
-        atraso = e["atraso_ancla"]
-        ruedas = "rueda" if atraso == 1 else "ruedas"
-        st.badge("Datos atrasados", color="red")
-        st.caption(
-            f"Precios al {e['ancla']}, {atraso} {ruedas} detras del ultimo "
-            f"cierre ({e['esperado']}). TODO el dashboard esta mostrando esa "
-            f"rueda vieja. Correr scripts/manual/recovery_incremental.bat."
-        )
-    elif e["rezagadas"]:
-        st.badge("Tablas desalineadas", color="orange")
-        st.caption(
-            f"Cierre {e['ancla']}, pero {_enumerar(e['rezagadas'])} "
-            f"{'va' if len(e['rezagadas']) == 1 else 'van'} atras: lo que se "
-            f"muestra cruza ruedas distintas. Correr "
-            f"scripts/manual/ft_run_diario.bat (sincroniza y recomputa opciones)."
-        )
+    if e["snapshot_ausente"]:
+        st.badge("Falta el snapshot de opciones", color="red")
+        st.caption(resumen(e) + " Correr scripts/manual/poblar_opciones_yq.bat "
+                   "y despues el sync, ANTES de que abra el mercado (13:30 UTC).")
+    elif e["mezcla"]:
+        st.badge("Ruedas cruzadas", color="orange")
+        st.caption(resumen(e))
+    elif not e["ancla_al_dia"]:
+        st.badge(f"Datos al {e['ancla']}", color="gray")
+        st.caption(resumen(e) + " Coherente entre si: es la convencion del "
+                   "proyecto, no un error.")
     else:
         st.badge(f"Datos al {e['ancla']}", color="green")
 
+    if e["arreglos"]:
+        st.caption("Falta correr: " + " -> ".join(e["arreglos"]))
+
     with st.expander("Detalle por tabla", expanded=False):
-        filas = [{
-            "Tabla": t["etiqueta"],
-            "Ultima fecha": t["fecha"] or "-",
-            "vs precios": ("al dia" if t["dias_vs_ancla"] == 0
-                           else (f"{t['dias_vs_ancla']} "
-                                 f"{'rueda' if t['dias_vs_ancla'] == 1 else 'ruedas'} atras"
-                                 if t["dias_vs_ancla"] is not None else "-")),
-            "Entra en el veredicto": "si" if t["critica"] else "no",
-        } for t in e["tablas"]]
+        filas = []
+        for t in e["tablas"]:
+            d = t["dias_vs_ancla"]
+            if d is None:
+                vs = "-"
+            elif d <= 0:
+                vs = "al dia"
+            else:
+                vs = f"{d} {'rueda' if d == 1 else 'ruedas'} atras"
+            filas.append({
+                "Tabla": t["etiqueta"],
+                "Ultima fecha": str(t["fecha"]) if t["fecha"] else "-",
+                "vs precios": vs,
+                "Insumo de decisiones": "si" if t["critica"] else "no",
+            })
         st.table(pd.DataFrame(filas))
-        st.caption(f"Ultimo dia habil NYSE cerrado: {e['esperado']} "
-                   "(via src/utils/trading_calendar, no aritmetica de fechas).")
+        st.caption(
+            f"Ultimo dia habil NYSE cerrado: {e['esperado']} (via "
+            "src/utils/trading_calendar, no aritmetica de fechas). "
+            "'Insumo' = una desalineacion ahi produce decisiones con datos "
+            "mezclados; las que dicen 'no' son SALIDAS de la rutina y su "
+            "atraso es un sintoma, no una causa.")
+
 
 
 @st.cache_data(show_spinner=False)
@@ -405,8 +411,11 @@ def _radar_screener():
         return
     # Los veredictos pueden ser de una rueda anterior si la rutina nocturna no
     # corrio. Decirlo, en vez de presentarlos como de hoy.
+    # str() en los dos lados: cargar_veredictos_precomputados devuelve la fecha
+    # como TEXTO y estado_pipeline la devuelve como date. Comparados crudos, el
+    # aviso saltaria siempre, incluso con todo alineado.
     ancla = _estado_datos_cache().get("ancla")
-    if data["fecha"] and ancla and data["fecha"] != ancla:
+    if data["fecha"] and ancla and str(data["fecha"]) != str(ancla):
         st.warning(f"Veredictos del {data['fecha']}, pero los precios estan al "
                    f"{ancla}: falta correr la rutina nocturna. Estan calculados "
                    "sobre una rueda anterior.")

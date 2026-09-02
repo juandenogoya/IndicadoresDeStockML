@@ -33,6 +33,8 @@ falla y faltan datos. Actualizado 28/5/2026 al flujo **Plan C**.
 | `poblar_opciones_yq.bat` | Railway | Carga manual del snapshot de opciones US (yahooquery) |
 | `recover_opciones_tickers.py` | Railway | Recovery quirurgico de opciones de tickers puntuales |
 | `sync_local.bat` | Railway -> Local | Sync completo Railway -> local (todas las tablas) |
+| `ft_run_diario.bat` | Local | **Paso 5**: deriva opciones ([0b]) + 10 bots FT + equity + reporte HTML + push senales + veredictos |
+| `chequeo_rutina.py` | Local | Diagnostico: que tablas quedaron atras y que .bat las arregla. Sale != 0 si hay mezcla de ruedas |
 | `sync_to_railway.bat` | Local -> Railway | Subir local -> Railway (raro bajo Plan C) |
 
 ---
@@ -42,11 +44,42 @@ falla y faltan datos. Actualizado 28/5/2026 al flujo **Plan C**.
 Post-cierre NYSE (despues de 21:00 UTC), desde Windows, en orden:
 
 ```
-1. cron_paso1_precios_yq.bat   (precios + futuros + indicadores + z-scores, LOCAL)
-2. cron_paso2_features.bat     (features PA + Market Structure, LOCAL)
-3. cron_paso3_scanner.bat      (scanner ML + alertas + Telegram, LOCAL)
-4. sync_opciones_railway_to_local.bat  (baja las opciones del dia desde Railway)
+1. sync_opciones_railway_to_local.bat  (baja el CRUDO de opciones desde Railway)
+2. cron_paso1_precios_yq.bat   (precios + futuros + indicadores + z-scores, LOCAL)
+3. cron_paso2_features.bat     (features PA + Market Structure, LOCAL)
+4. cron_paso3_scanner.bat      (scanner ML + alertas + Telegram, LOCAL)
+5. ft_run_diario.bat           (deriva opciones + 10 bots FT + equity + reportes)
 ```
+
+**El paso 5 no es opcional y no es "solo los bots"**: su paso [0b] corre
+`compute_opciones_derivadas.py`, que es lo UNICO que computa en local las 5
+tablas derivadas de opciones (resumen, zscore, sector_zscore, pcr_plazo,
+sector_pcr_plazo). Sin el, el crudo baja pero nadie lo procesa: el 2/9/2026 el
+sistema estuvo cruzando tecnico del 1/9 con opciones del 31/8 durante todo el
+dia, sin una sola queja, y 9 tickers tenian el veredicto equivocado.
+
+El paso 1 va primero por costumbre, pero da igual: las opciones NO alimentan
+precios, features ni el scanner. Son dos ramas independientes que recien se
+juntan en el paso 5. Lo que si conviene es correr el .bat de sync **por
+separado** aunque `ft_run_diario` sincronice por dentro: el .bat encadena ademas
+`retencion_opciones_railway.py`, que purga Railway dejando 10 dias y es lo que
+evita que se llene (incidente del 20/7/2026). El sync interno de ft_run no lo hace.
+
+### Guard de coherencia (2/9/2026)
+
+`ft_run_diario.bat` corre `scripts/manual/chequeo_rutina.py` DESPUES del paso
+[0b] y ANTES del primer bot. Si las tablas no estan alineadas entre si, ABORTA
+sin operar y dice que .bat falta correr.
+
+- NO frena por antiguedad: operar con el cierre anterior es la convencion del
+  proyecto (73% de las operaciones FT, ver CLAUDE.md "FT asincronico").
+- SI frena por MEZCLA: tablas con fechas distintas entre si.
+- Forzar igual: `set FT_IGNORAR_FRESCURA=1` antes de correr el .bat.
+- Standalone, para ver el estado sin correr nada:
+  `python scripts/manual/chequeo_rutina.py`
+
+La misma logica alimenta la banda de estado del dashboard (motor puro
+compartido: `src/utils/estado_pipeline.py`).
 
 Con esto los datos crudos quedan completos y frescos en local. El z-score de acciones
 corre solo al final del Paso 1 (ya no es manual). El semanal (RSI/MACD/SMC 1W) se

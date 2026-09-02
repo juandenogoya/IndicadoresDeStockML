@@ -603,102 +603,58 @@ def cargar_veredictos_universo() -> list:
     return filas
 
 
-# ── Frescura de los datos ────────────────────────────────────────────────────
+# -- Frescura de los datos ---------------------------------------------------
 #
-# Por que existe: el dashboard servia el informe con lo que hubiera en la DB, sin
-# decir de cuando era. La rutina nocturna es MANUAL, asi que las tablas se
-# desincronizan entre si con normalidad -- el 2/9/2026, sin ir mas lejos,
-# precios_diarios estaba al 1/9 y opciones_pcr_plazo_diario al 31/8. El veredicto
-# se computaba igual, cruzando tecnico de una rueda con opciones de otra, y no
-# avisaba. Eso no es incomodidad de UX: es leer mal el mercado en silencio.
+# El RAZONAMIENTO (que cuenta como mezcla, que como antiguedad, que .bat arregla
+# cada cosa) vive en src/utils/estado_pipeline.py, que es PURO y lo comparte con
+# scripts/manual/chequeo_rutina.py. Aca solo se consulta la DB y se delega.
 #
-# Se mide en DOS niveles, porque son dos fallas distintas:
-#   1. precios_diarios vs el ultimo dia habil NYSE  -> "no corri el recovery"
-#   2. cada tabla vs precios_diarios (el ancla)     -> "una tabla quedo atras"
-# Un solo nivel no distingue "todo viejo pero coherente" de "mezcla de fechas".
-
-_TABLAS_FRESCURA = [
-    # (tabla, columna de fecha, etiqueta, entra en el veredicto)
-    ("precios_diarios",                  "fecha",      "Precios",        True),
-    ("indicadores_tecnicos",             "fecha",      "Indicadores",    True),
-    ("opciones_pcr_plazo_diario",        "fecha",      "Opciones",       True),
-    ("opciones_sector_pcr_plazo_diario", "fecha",      "Opc. sector",    True),
-    ("alertas_scanner",                  "scan_fecha", "Scanner ML",     False),
-    ("veredictos_universo_diario",       "fecha",      "Veredictos",     False),
-]
+# Estan separados a proposito: tener dos definiciones de "estan alineados los
+# datos" -- una para el dashboard y otra para el guard de la rutina -- termina
+# con las dos diciendo cosas distintas del mismo estado, y ninguna de las dos
+# avisa que se desincronizo.
 
 
 def _tablas_existentes(nombres: list) -> set:
-    """Filtra por las que realmente estan en la DB: la de veredictos es nueva y
-    puede no existir en una instalacion que todavia no corrio el oneshot."""
+    """Filtra por las que realmente estan en la DB: una instalacion puede no
+    tenerlas todas (veredictos_universo_diario es nueva)."""
     df = query_df(
         "SELECT table_name FROM information_schema.tables "
         "WHERE table_schema='public' AND table_name = ANY(:n)",
-        {"n": nombres},
+        {"n": list(nombres)},
     )
     return set(df["table_name"]) if not df.empty else set()
 
 
 def estado_datos() -> dict:
     """
-    Frescura de las tablas que alimentan el informe.
+    Diagnostico de frescura de la rutina diaria.
 
-    Returns:
-        {
-          ancla:            'YYYY-MM-DD' | None   (MAX precios_diarios)
-          esperado:         'YYYY-MM-DD'          (ultimo dia habil NYSE cerrado)
-          ancla_al_dia:     bool
-          atraso_ancla:     int   ruedas de atraso de precios_diarios
-          tablas:           [{tabla, etiqueta, fecha, dias_vs_ancla, al_dia, critica}]
-          rezagadas:        [etiqueta, ...]  solo las CRITICAS desalineadas
-        }
+    Devuelve lo que arma src.utils.estado_pipeline.diagnosticar(): dos ejes
+    (antiguedad del ancla vs mezcla entre tablas), la lista de tablas
+    desalineadas, si falta el CRUDO de opciones (el caso irrecuperable) y que
+    .bat corregiria cada cosa.
 
-    `esperado` sale de src.utils.trading_calendar, nunca de aritmetica de fechas
-    (regla no negociable del proyecto: no asumir si un dia es habil). Se usa
-    prev_trading_day(hoy) -- el ultimo cierre YA ocurrido -- para no marcar como
-    atrasado el dia en curso, cuyo cierre todavia no se puede haber capturado.
+    El dia habil de referencia sale de src.utils.trading_calendar, nunca de
+    aritmetica de fechas (regla no negociable del proyecto).
     """
     from datetime import date
     from src.utils.trading_calendar import prev_trading_day
+    from src.utils.estado_pipeline import TABLAS, diagnosticar
+
+    existentes = _tablas_existentes([t.nombre for t in TABLAS])
+    partes = [f"SELECT '{t.nombre}' AS tabla, MAX({t.columna})::date AS fecha "
+              f"FROM {t.nombre}"
+              for t in TABLAS if t.nombre in existentes]
 
     esperado = prev_trading_day(date.today())
-    existentes = _tablas_existentes([t[0] for t in _TABLAS_FRESCURA])
-
-    partes = [f"SELECT '{t}' AS tabla, MAX({col})::date AS fecha FROM {t}"
-              for t, col, _, _ in _TABLAS_FRESCURA if t in existentes]
     if not partes:
-        return {"ancla": None, "esperado": str(esperado), "ancla_al_dia": False,
-                "atraso_ancla": None, "tablas": [], "rezagadas": []}
+        return diagnosticar({}, esperado=esperado)
 
     df = query_df(" UNION ALL ".join(partes))
-    maxs = {r["tabla"]: r["fecha"] for _, r in df.iterrows()}
+    fechas = {r["tabla"]: r["fecha"] for _, r in df.iterrows()}
+    return diagnosticar(fechas, esperado=esperado)
 
-    ancla = maxs.get("precios_diarios")
-    filas, rezagadas = [], []
-    for tabla, _col, etiqueta, critica in _TABLAS_FRESCURA:
-        if tabla not in existentes:
-            continue
-        f = maxs.get(tabla)
-        dias = None
-        if f is not None and ancla is not None:
-            dias = (ancla - f).days
-        al_dia = (dias is not None and dias <= 0)
-        filas.append({"tabla": tabla, "etiqueta": etiqueta,
-                      "fecha": str(f) if f else None,
-                      "dias_vs_ancla": dias, "al_dia": al_dia,
-                      "critica": critica})
-        if critica and not al_dia and tabla != "precios_diarios":
-            rezagadas.append(etiqueta)
-
-    atraso = (esperado - ancla).days if ancla is not None else None
-    return {
-        "ancla": str(ancla) if ancla else None,
-        "esperado": str(esperado),
-        "ancla_al_dia": bool(ancla is not None and ancla >= esperado),
-        "atraso_ancla": atraso,
-        "tablas": filas,
-        "rezagadas": rezagadas,
-    }
 
 
 def cargar_veredictos_precomputados(fecha: str | None = None) -> dict:

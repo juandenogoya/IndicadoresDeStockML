@@ -74,6 +74,46 @@ echo --- COMPUTE derivadas opciones (local) --- >> "%LOGFILE%"
 IF %ERRORLEVEL% NEQ 0 echo [WARN] compute derivadas opciones fallo - se usaran las derivadas sincronizadas.
 
 
+REM -- GUARD DE COHERENCIA (antes de que opere el primer bot) --
+REM  Verifica que las tablas que alimentan las decisiones esten ALINEADAS
+REM  entre si. La rutina es manual y saltearse un paso no rompe nada visible:
+REM  cada tabla queda con su fecha y todo lo que las cruza sigue andando,
+REM  mezclando ruedas en silencio (paso el 2/9/2026).
+REM
+REM  VA ACA y no al principio: el paso [0b] de arriba es el que deriva las
+REM  opciones, asi que chequear antes frenaria por algo que este mismo script
+REM  esta por arreglar. Y va ANTES del primer bot porque los 10 bots son lo
+REM  unico de la cadena que ACTUA -- abren y cierran posiciones. Lo que viene
+REM  despues (equity, reporte, veredictos) es descriptivo y recomputable.
+REM
+REM  NO frena por antiguedad: operar con el cierre anterior es la convencion
+REM  del proyecto (73% de las operaciones FT). Frena solo por MEZCLA.
+REM
+REM  Para forzar igual:  set FT_IGNORAR_FRESCURA=1  antes de correr el .bat
+echo Chequeando coherencia de la rutina...
+echo. >> "%LOGFILE%"
+echo --- CHEQUEO DE RUTINA --- >> "%LOGFILE%"
+IF "%FT_IGNORAR_FRESCURA%"=="1" (
+    echo [WARN] FT_IGNORAR_FRESCURA=1 - se saltea el chequeo de coherencia.
+    echo [WARN] chequeo salteado por FT_IGNORAR_FRESCURA >> "%LOGFILE%"
+) ELSE (
+    "%PYTHON%" "%ROOT%scripts\manual\chequeo_rutina.py" >> "%LOGFILE%" 2>&1
+    IF ERRORLEVEL 1 (
+        "%PYTHON%" "%ROOT%scripts\manual\chequeo_rutina.py" --solo-avisar
+        echo.
+        echo ============================================================
+        echo  ABORTADO: los datos NO estan alineados entre si.
+        echo  Los bots NO corrieron. Corre lo que falta (arriba) y volve.
+        echo  Para forzar igual: set FT_IGNORAR_FRESCURA=1
+        echo ============================================================
+        echo.
+        pause
+        exit /b 1
+    )
+    echo [OK] Datos alineados.
+)
+
+
 REM ── BOT 1 - ML Scanner ──────────────────────────────────────
 echo [1/10] FT_ML_SCANNER_v1...
 echo. >> "%LOGFILE%"
