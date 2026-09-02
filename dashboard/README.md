@@ -279,9 +279,11 @@ comparacion contra la rueda anterior del bloque Clima.
 ### Navegacion, URLs y tema
 
 - `st.navigation` con secciones (Panorama / Analisis / Cartera / Herramientas)
-  en vez del radio plano de 8 items. Cada vista tiene URL propia (`/hoy`,
-  `/informe`, ...) y `st.switch_page` reemplaza el mecanismo de flags diferidos
-  que hacia falta con el radio.
+  en vez del radio plano de 8 items. Cada vista tiene URL propia (`/informe`,
+  `/radar`, `/financiero`, `/balances`, `/carteras`, `/performance`,
+  `/consultas`); "Hoy" vive en la RAIZ (`/`), porque Streamlit ignora el
+  `url_path` de la pagina marcada como `default`. `st.switch_page` reemplaza el
+  mecanismo de flags diferidos que hacia falta con el radio.
 - Key `ticker` UNICA en informe/financiero/balances + `bind="query-params"`:
   el ticker viaja en la URL y persiste al cambiar de vista.
   **`/informe?ticker=NVDA` es un link compartible a un informe concreto.**

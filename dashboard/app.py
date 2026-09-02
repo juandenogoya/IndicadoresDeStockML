@@ -935,7 +935,11 @@ def main():
         return
 
     paginas = {
-        "hoy": st.Page(_pg_hoy, title="Hoy", url_path="hoy",
+        # SIN url_path: con default=True Streamlit lo IGNORA y sirve la pagina
+        # en la raiz ("/"). Ponerlo igual hacia que "/hoy" fuera un 404 que caia
+        # de vuelta en el default -- se veia el contenido correcto detras de un
+        # toast "Page not found".
+        "hoy": st.Page(_pg_hoy, title="Hoy",
                        icon=":material/today:", default=True),
         "radar": st.Page(_pg_radar, title="Radar del dia", url_path="radar",
                          icon=":material/radar:"),
