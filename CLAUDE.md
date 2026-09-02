@@ -386,7 +386,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
-| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria |
+| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria + precomputo de veredictos del dashboard |
+| `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
 | `src/utils/ft_metricas.py` | Modulo PURO de metricas de riesgo (max DD, Sharpe con IC95%, Sortino, IR, beta) y de trade (expectancy, profit factor, payoff). Sin DB ni config |
@@ -631,6 +632,16 @@ Las criticas:
   (default 'local'; columna pensada para cuotas multiusuario a futuro). LOCAL-only
   (Plan C: log de frontend local). La escribe el dashboard con el engine local normal
   (NO el rol mcp_reader). Creada por scripts/oneshot/create_llm_uso_tokens_table.py.
+- `veredictos_universo_diario` (LOCAL) -- veredicto sintetico (ALCISTA/NEUTRAL/
+  BAJISTA) + frase de cada ticker, precomputado por la rutina nocturna. PK
+  (ticker, fecha). Capa DERIVADA y recomputable (funcion de precios/indicadores/
+  opciones via dashboard.sintesis_data + dashboard_sintesis.sintetizar). OJO:
+  `fecha` es la fecha de DATOS, no la de corrida -- misma convencion que
+  ft_operaciones.fecha_datos; con la de corrida, cruzarla con precios_diarios
+  leeria el dia equivocado en silencio. Guarda historia por fecha (~200 filas/
+  dia) para poder comparar el reparto del universo contra la rueda anterior,
+  que es lo que consume el bloque "Clima" de la vista Hoy del dashboard.
+  La escribe scripts/compute_veredictos_universo.py. LOCAL-only (Plan C).
 - `perfiles_ticker` (LOCAL) -- snapshot del PERFIL DE RIESGO de cada ticker para
   segmentar carteras (Conservadora/Moderada/Arriesgada/Especulativa). Capa DERIVADA
   y recomputable (funcion de precios_diarios + futuros ES + activos via el motor puro
