@@ -181,7 +181,10 @@ def construir_reaccion(tickers: list):
                "cuenta como la primera rueda post. La linea punteada separa el "
                "antes del despues.")
 
-    ticker = st.sidebar.selectbox("Ticker", tickers, key="er_ticker")
+    # key `ticker` UNICA en todo el dashboard + bind a la URL: el ticker elegido
+    # en el informe o en el radar llega ya seleccionado aca (y viceversa).
+    ticker = st.sidebar.selectbox("Ticker", tickers, key="ticker",
+                                  bind="query-params")
 
     ev = _eventos(ticker)
     if ev.empty:

@@ -17,6 +17,8 @@ os.environ.pop("DATABASE_URL", None)
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
@@ -113,81 +115,89 @@ def _render_papel(papel: list):
         st.dataframe(df, hide_index=True, use_container_width=True)
 
 
+def _nombre_descarga(ticker: str, fecha, sufijo: str, ext: str) -> str:
+    """Nombre con el que el navegador guarda la descarga: YYYYMMDD_TICKER[_suf].ext.
+
+    El archivo en disco conserva el nombre que le pone su generador; esto es
+    solo la etiqueta de la bajada. Hace falta calcularlo ANTES de generar
+    porque download_button pide file_name al dibujarse, no al hacer clic.
+    """
+    try:
+        f = fecha.strftime("%Y%m%d")
+    except AttributeError:
+        f = str(fecha or "").replace("-", "")[:8] or date.today().strftime("%Y%m%d")
+    suf = f"_{sufijo}" if sufijo else ""
+    return f"{f}_{ticker.upper()}{suf}.{ext}"
+
+
+def _infografia_simple_bytes(ticker: str) -> bytes:
+    # Import diferido: el modulo trae weasyprint. Solo al pedirlo.
+    from scripts.reports.make_infografia_simple import generar_infografia_simple
+    return generar_infografia_simple(ticker).read_bytes()
+
+
+def _infografia_fundamental_bytes(ticker: str) -> bytes:
+    # Import diferido: el modulo hace os.environ.pop(DATABASE_URL) al cargar
+    # (inocuo en local) y trae weasyprint. Solo al pedirlo.
+    from scripts.reports.make_infografia_fundamental import generar_infografia
+    return generar_infografia(ticker).read_bytes()
+
+
+@st.fragment
 def _sidebar_export(ticker, datos, sintesis):
-    st.sidebar.divider()
-    st.sidebar.markdown("**Exportar**")
+    """Exportaciones del informe.
 
-    if st.sidebar.button("Informe (JPG)", use_container_width=True):
-        with st.spinner("Generando imagen..."):
-            try:
-                path = generar_jpg(ticker, datos, sintesis)
-                with open(path, "rb") as f:
-                    st.session_state["jpg_bytes"] = f.read()
-                st.session_state["jpg_name"] = path.name
-                st.session_state["jpg_ticker"] = ticker
-            except Exception as exc:
-                st.sidebar.error(f"Error generando JPG: {exc}")
+    `download_button(data=<callable>)` genera el archivo AL HACER CLIC, en un
+    thread aparte: UN clic en vez de dos (antes era generar -> rerun -> aparece
+    el boton de descargar) y sin las 9 llaves de session_state que oficiaban de
+    buffer. El @st.fragment aisla el bloque: bajar un archivo ya no re-renderiza
+    el informe entero.
 
-    if st.session_state.get("jpg_ticker") == ticker and st.session_state.get("jpg_bytes"):
-        st.sidebar.download_button(
-            f"Descargar {st.session_state['jpg_name']}",
-            data=st.session_state["jpg_bytes"],
-            file_name=st.session_state["jpg_name"],
-            mime="image/jpeg",
-            use_container_width=True,
-        )
+    OJO con el callable: no recibe argumentos y los comandos de Streamlit que
+    se ejecuten adentro se IGNORAN (limitacion de la API), asi que no puede
+    haber un st.error ahi. Si el generador falla -- tipicamente weasyprint o
+    pymupdf ausentes, es decir el dashboard corriendo FUERA del venv -- lo que
+    falla es la descarga, no la pagina. Es un modo de falla permanente y de
+    entorno, no transitorio: por eso se acepta a cambio de sacar el doble clic.
 
-    if st.sidebar.button("Papel de trabajo (PDF)", use_container_width=True):
-        with st.spinner("Generando PDF..."):
-            try:
-                path = generar_papel_pdf(ticker, datos, sintesis)
-                with open(path, "rb") as f:
-                    st.session_state["pdf_bytes"] = f.read()
-                st.session_state["pdf_name"] = path.name
-                st.session_state["pdf_ticker"] = ticker
-            except Exception as exc:
-                st.sidebar.error(f"Error generando PDF: {exc}")
+    Se llama dentro de un `with st.sidebar:` y usa los comandos SIN prefijo: un
+    fragment no puede escribir via `st.sidebar.*` (StreamlitAPIException).
+    """
+    fecha_cierre = (datos.get("precio") or {}).get("fecha")
+    st.divider()
+    st.markdown("**Exportar**")
 
-    if st.session_state.get("pdf_ticker") == ticker and st.session_state.get("pdf_bytes"):
-        st.sidebar.download_button(
-            f"Descargar {st.session_state['pdf_name']}",
-            data=st.session_state["pdf_bytes"],
-            file_name=st.session_state["pdf_name"],
-            mime="application/pdf",
-            use_container_width=True,
-        )
-
-    if st.sidebar.button("Infografia simple (PNG)", use_container_width=True,
-                         key="ig_simple_btn"):
-        with st.spinner("Generando infografia..."):
-            try:
-                # Import diferido: el modulo trae weasyprint. Solo al pedirlo.
-                from scripts.reports.make_infografia_simple import generar_infografia_simple
-                path = generar_infografia_simple(ticker)
-                with open(path, "rb") as f:
-                    st.session_state["ig_simple_bytes"] = f.read()
-                st.session_state["ig_simple_name"] = path.name
-                st.session_state["ig_simple_ticker"] = ticker
-            except Exception as exc:
-                st.sidebar.error(f"Error generando infografia: {exc}")
-
-    if (st.session_state.get("ig_simple_ticker") == ticker
-            and st.session_state.get("ig_simple_bytes")):
-        st.sidebar.download_button(
-            f"Descargar {st.session_state['ig_simple_name']}",
-            data=st.session_state["ig_simple_bytes"],
-            file_name=st.session_state["ig_simple_name"],
-            mime="image/png",
-            use_container_width=True,
-        )
+    st.download_button(
+        "Informe (JPG)",
+        data=lambda: generar_jpg(ticker, datos, sintesis).read_bytes(),
+        file_name=_nombre_descarga(ticker, fecha_cierre, "", "jpg"),
+        mime="image/jpeg", width="stretch", key="dl_jpg",
+    )
+    st.download_button(
+        "Papel de trabajo (PDF)",
+        data=lambda: generar_papel_pdf(ticker, datos, sintesis).read_bytes(),
+        file_name=_nombre_descarga(ticker, fecha_cierre, "papel", "pdf"),
+        mime="application/pdf", width="stretch", key="dl_pdf",
+    )
+    st.download_button(
+        "Infografia simple (PNG)",
+        data=lambda: _infografia_simple_bytes(ticker),
+        file_name=_nombre_descarga(ticker, fecha_cierre, "simple", "png"),
+        mime="image/png", width="stretch", key="dl_ig_simple",
+    )
 
 
 def _vista_informe(tickers):
     if "ticker" not in st.session_state:
         st.session_state["ticker"] = "AAPL" if "AAPL" in tickers else tickers[0]
-    ticker = st.sidebar.selectbox("Ticker", tickers, key="ticker")
+    # bind="query-params": el ticker viaja en la URL (?ticker=NVDA), asi que el
+    # informe se puede marcar como favorito, compartir y sobrevive a un F5. La
+    # key `ticker` es UNICA en todo el dashboard (informe / financiero /
+    # earnings) -> cambiar de vista ya no obliga a re-elegir el ticker.
+    ticker = st.sidebar.selectbox("Ticker", tickers, key="ticker",
+                                  bind="query-params")
 
-    datos = cargar_datos_ticker(ticker)
+    datos = _datos_ticker_cache(ticker, fecha_datos())
     if not (datos.get("perfil") or datos.get("precio", {}).get("close") is not None):
         st.warning(f"Sin datos suficientes para {ticker}.")
         return
@@ -202,13 +212,25 @@ def _vista_informe(tickers):
     with tab_papel:
         _render_papel(papel)
 
-    _sidebar_export(ticker, datos, sintesis)
+    with st.sidebar:
+        _sidebar_export(ticker, datos, sintesis)
 
 
 def _nav_a_informe(tk):
-    """Marca navegacion pendiente al modo Informe con el ticker tk."""
+    """Navega al informe descriptivo con el ticker tk.
+
+    El TICKER se escribe directo en session_state: su selectbox no se instancio
+    en esta vista, y con la key unificada (`ticker`, bindeada a query-params) es
+    la via soportada para moverlo -- un parametro bindeado no se puede tocar via
+    st.query_params.
+
+    El MODO no se puede escribir asi: su radio YA se creo en main() en esta misma
+    corrida y Streamlit prohibe reescribir la key de un widget ya instanciado.
+    Por eso sigue siendo un flag diferido que main() consume al inicio de la
+    corrida siguiente.
+    """
+    st.session_state["ticker"] = tk
     st.session_state["_ir_informe"] = True
-    st.session_state["_nav_ticker"] = tk
     st.rerun()
 
 
@@ -219,35 +241,65 @@ def _veredictos_cache(fecha_key: str):
     return cargar_veredictos_universo()
 
 
-def _vista_radar():
-    # ── 1. Radar de anomalias de opciones ──────────────────────────────────
-    st.subheader("Radar del dia - actividad inusual en opciones")
-    data = cargar_radar()
+@st.cache_data(show_spinner=False)
+def _radar_cache(fecha_key: str):
+    """cargar_radar() cacheada por fecha de datos.
+
+    El wrapper vive ACA y no en sintesis_data.py a proposito: ese modulo no
+    importa Streamlit -- lo comparten la exportacion a JPG y scripts/reports --
+    y queremos que siga asi. Es el mismo activo que haria barata una eventual
+    migracion de frontend: no ensuciarlo con el framework de turno.
+    """
+    return cargar_radar()
+
+
+@st.cache_data(show_spinner=False)
+def _datos_ticker_cache(ticker: str, fecha_key: str):
+    """cargar_datos_ticker() cacheada por (ticker, fecha de datos). Misma razon
+    que _radar_cache para que el decorador viva aca."""
+    return cargar_datos_ticker(ticker)
+
+
+@st.fragment
+def _radar_anomalias(data):
+    """Bloque de anomalias del radar.
+
+    Fragment: mover el slider z re-filtra SOLO esta tabla. Antes re-ejecutaba
+    la vista entera -- incluida la consulta del radar a la DB, que no estaba
+    cacheada -- y redibujaba el screener de abajo.
+    """
     st.caption(f"Anomalias del {data.get('fecha')}. z = desvios del valor de hoy vs la "
                "historia del propio ticker; filtra ruido por percentil de volumen (>=50).")
     z = st.slider("Umbral z (inusual)", min_value=1.0, max_value=4.0, value=2.0, step=0.5)
     filas = construir_radar(data, z=z)
-    if filas:
-        cols = {"ticker": "Ticker", "sector": "Sector", "tipo": "Tipo",
-                "magnitud": "Magnitud (z)", "vol_z": "vol z", "iv_z": "IV z",
-                "pcr_z": "PCR z", "accion_z": "Accion z", "sector_acompana": "Sector acompana?"}
-        df = pd.DataFrame(filas)[list(cols.keys())].rename(columns=cols)
-        st.caption(f"{len(df)} tickers con actividad inusual (orden por magnitud). "
-                   "Tags: Volumen inusual / IV en alza / Sesgo a calls / Cobertura (puts).")
-        event = st.dataframe(df, hide_index=True, use_container_width=True,
-                             on_select="rerun", selection_mode="single-row", key="radar_tbl")
-        rows = event.selection.rows if event and getattr(event, "selection", None) else []
-        if rows:
-            tk = df.iloc[rows[0]]["Ticker"]
-            if st.button(f"Abrir informe de {tk}", key="radar_abrir"):
-                _nav_a_informe(tk)
-        else:
-            st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
-    else:
+    if not filas:
         st.info("Sin anomalias con el umbral actual.")
+        return
 
-    # ── 2. Screener por veredicto ──────────────────────────────────────────
-    st.divider()
+    cols = {"ticker": "Ticker", "sector": "Sector", "tipo": "Tipo",
+            "magnitud": "Magnitud (z)", "vol_z": "vol z", "iv_z": "IV z",
+            "pcr_z": "PCR z", "accion_z": "Accion z", "sector_acompana": "Sector acompana?"}
+    df = pd.DataFrame(filas)[list(cols.keys())].rename(columns=cols)
+    st.caption(f"{len(df)} tickers con actividad inusual (orden por magnitud). "
+               "Tags: Volumen inusual / IV en alza / Sesgo a calls / Cobertura (puts).")
+    event = st.dataframe(df, hide_index=True, use_container_width=True,
+                         on_select="rerun", selection_mode="single-row", key="radar_tbl")
+    rows = event.selection.rows if event and getattr(event, "selection", None) else []
+    if rows:
+        tk = df.iloc[rows[0]]["Ticker"]
+        if st.button(f"Abrir informe de {tk}", key="radar_abrir"):
+            # st.rerun() dentro de _nav_a_informe usa scope="app" (default),
+            # asi que sale del fragment y recarga la app entera. Es lo que
+            # queremos: estamos cambiando de vista.
+            _nav_a_informe(tk)
+    else:
+        st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
+
+
+@st.fragment
+def _radar_screener():
+    """Screener por veredicto. Fragment: cambiar los filtros o seleccionar una
+    fila ya no redibuja el bloque de anomalias de arriba."""
     st.subheader("Screener por veredicto")
     st.caption("Veredicto sintetico (tecnico + opciones + estructura) de cada ticker. "
                "El primer Buscar del dia calcula el universo (~2 min); luego es instantaneo "
@@ -262,33 +314,44 @@ def _vista_radar():
     if st.button("Buscar", key="scr_buscar"):
         st.session_state["scr_run"] = True
 
-    if st.session_state.get("scr_run"):
-        if not sel:
-            st.info("Elegi al menos un veredicto.")
-            return
-        with st.spinner("Calculando veredictos del universo (~2 min la primera vez)..."):
-            universo = _veredictos_cache(fecha_datos())
-        res = [u for u in universo
-               if u["veredicto"] in sel and (not sel_sec or u["sector"] in sel_sec)]
-        if not res:
-            filtro = ", ".join(sel) + (f" en {', '.join(sel_sec)}" if sel_sec else "")
-            st.info(f"Ningun ticker con veredicto {filtro}.")
-            return
-        dfv = pd.DataFrame(res).rename(columns={
-            "ticker": "Ticker", "sector": "Sector", "veredicto": "Veredicto", "frase": "Lectura"})
-        dfv = dfv[["Ticker", "Sector", "Veredicto", "Lectura"]]
-        _sec_txt = f" | sectores: {', '.join(sel_sec)}" if sel_sec else ""
-        st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)}{_sec_txt} "
-                   f"(de {len(universo)} evaluados).")
-        ev = st.dataframe(dfv, hide_index=True, use_container_width=True,
-                          on_select="rerun", selection_mode="single-row", key="scr_tbl")
-        r2 = ev.selection.rows if ev and getattr(ev, "selection", None) else []
-        if r2:
-            tk2 = dfv.iloc[r2[0]]["Ticker"]
-            if st.button(f"Abrir informe de {tk2}", key="scr_abrir"):
-                _nav_a_informe(tk2)
-        else:
-            st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
+    if not st.session_state.get("scr_run"):
+        return
+    if not sel:
+        st.info("Elegi al menos un veredicto.")
+        return
+    with st.spinner("Calculando veredictos del universo (~2 min la primera vez)..."):
+        universo = _veredictos_cache(fecha_datos())
+    res = [u for u in universo
+           if u["veredicto"] in sel and (not sel_sec or u["sector"] in sel_sec)]
+    if not res:
+        filtro = ", ".join(sel) + (f" en {', '.join(sel_sec)}" if sel_sec else "")
+        st.info(f"Ningun ticker con veredicto {filtro}.")
+        return
+    dfv = pd.DataFrame(res).rename(columns={
+        "ticker": "Ticker", "sector": "Sector", "veredicto": "Veredicto", "frase": "Lectura"})
+    dfv = dfv[["Ticker", "Sector", "Veredicto", "Lectura"]]
+    _sec_txt = f" | sectores: {', '.join(sel_sec)}" if sel_sec else ""
+    st.caption(f"{len(dfv)} tickers con veredicto {', '.join(sel)}{_sec_txt} "
+               f"(de {len(universo)} evaluados).")
+    ev = st.dataframe(dfv, hide_index=True, use_container_width=True,
+                      on_select="rerun", selection_mode="single-row", key="scr_tbl")
+    r2 = ev.selection.rows if ev and getattr(ev, "selection", None) else []
+    if r2:
+        tk2 = dfv.iloc[r2[0]]["Ticker"]
+        if st.button(f"Abrir informe de {tk2}", key="scr_abrir"):
+            _nav_a_informe(tk2)
+    else:
+        st.caption("Tip: seleccionar una fila para abrir su informe descriptivo.")
+
+
+def _vista_radar():
+    # -- 1. Radar de anomalias de opciones --------------------------------
+    st.subheader("Radar del dia - actividad inusual en opciones")
+    _radar_anomalias(_radar_cache(fecha_datos()))
+
+    # -- 2. Screener por veredicto ----------------------------------------
+    st.divider()
+    _radar_screener()
 
 
 def _tabla_financiera(filas, columnas_orden):
@@ -320,36 +383,23 @@ def _tabla_financiera(filas, columnas_orden):
                  column_config={"_color": None})
 
 
+@st.fragment
 def _sidebar_export_infografia(tk):
     """Export de la infografia fundamental en el SIDEBAR (homogeneo con el
-    informe tecnico, que usa _sidebar_export)."""
-    st.sidebar.divider()
-    st.sidebar.markdown("**Exportar**")
-    if st.sidebar.button("Infografia (PNG)", use_container_width=True, key="fin_ig_btn"):
-        with st.spinner("Generando infografia..."):
-            try:
-                # Import diferido: el modulo hace os.environ.pop(DATABASE_URL) al
-                # cargar (inocuo en local) y trae weasyprint. Solo al pedirlo.
-                from scripts.reports.make_infografia_fundamental import generar_infografia
-                path = generar_infografia(tk)
-                with open(path, "rb") as f:
-                    st.session_state["fin_ig_bytes"] = f.read()
-                st.session_state["fin_ig_name"] = path.name
-                st.session_state["fin_ig_ticker"] = tk
-            except Exception as exc:
-                st.sidebar.error(f"Error generando infografia: {exc}")
-
-    if (st.session_state.get("fin_ig_ticker") == tk
-            and st.session_state.get("fin_ig_bytes")):
-        st.sidebar.download_button(
-            f"Descargar {st.session_state['fin_ig_name']}",
-            data=st.session_state["fin_ig_bytes"],
-            file_name=st.session_state["fin_ig_name"],
-            mime="image/png",
-            use_container_width=True,
-        )
+    informe tecnico, que usa _sidebar_export). Mismo patron: un solo clic,
+    generacion diferida al callable. Ver la nota de _sidebar_export -- incluido
+    el `with st.sidebar:` obligatorio en el llamador."""
+    st.divider()
+    st.markdown("**Exportar**")
+    st.download_button(
+        "Infografia (PNG)",
+        data=lambda: _infografia_fundamental_bytes(tk),
+        file_name=_nombre_descarga(tk, fecha_datos(), "fundamental", "png"),
+        mime="image/png", width="stretch", key="fin_ig_btn",
+    )
 
 
+@st.fragment
 def _ficha_empresa_boton(tk):
     """Boton (area principal) para generar la ficha de empresa (PNG) del ticker
     EN PANTALLA: presentacion contra si misma (ultimo Q + variacion interanual).
@@ -392,14 +442,15 @@ def _vista_financiera(tickers):
                     horizontal=True, key="fin_modo")
 
     if modo == "Por ticker":
-        tk = st.selectbox("Ticker", tickers, key="fin_ticker")
+        tk = st.selectbox("Ticker", tickers, key="ticker", bind="query-params")
         data = cargar_financiero_ticker(tk)
         if not data.get("ratios"):
             st.warning(f"Sin datos fundamentales para {tk}. "
                        "Correr scripts/manual/refresh_fundamentales.bat.")
             return
 
-        _sidebar_export_infografia(tk)
+        with st.sidebar:
+            _sidebar_export_infografia(tk)
 
         ratios = data["ratios"]
         cur = data.get("reporting_currency") or "?"
@@ -568,11 +619,11 @@ def _vista_chat():
 def main():
     st.set_page_config(page_title="Informe descriptivo por ticker", layout="wide")
 
-    # Navegacion pendiente desde el radar (antes de instanciar los widgets).
+    # Navegacion pendiente desde el radar: se consume ANTES de instanciar el
+    # radio de vistas (su key no se puede reescribir una vez creado). El ticker
+    # ya no viaja por aca -- lo escribe _nav_a_informe directo en su key unica.
     if st.session_state.pop("_ir_informe", False):
         st.session_state["modo"] = "Informe por ticker"
-        if "_nav_ticker" in st.session_state:
-            st.session_state["ticker"] = st.session_state.pop("_nav_ticker")
 
     st.title("Informe descriptivo por ticker")
     st.caption("Descriptivo, no predictivo. Complemento de TradingView. "
