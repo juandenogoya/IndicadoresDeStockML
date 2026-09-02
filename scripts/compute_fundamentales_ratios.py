@@ -203,6 +203,19 @@ def _build_frame(tk, inc, bal, cf, val):
     di = inc[inc["ticker"] == tk].copy().sort_values("fiscal_period_end")
     if di.empty:
         return None, None
+
+    # Filtrar filas "cascaron": en earnings season Yahoo publica el Q recien
+    # reportado solo con EPS/shares (revenue y net_income NULL) y completa el
+    # resto en dias. Esas filas envenenan el TTM rolling (ROE/margenes NULL en
+    # la fila mas nueva, que es la que consume el dashboard) y distorsionan la
+    # clasificacion de perfil. Se descartan del computo (la tabla raw las
+    # conserva; el proximo refresh las trae completas). Detectado 16/7/2026
+    # con JPM/C/GS/BAC/WFC recien reportados.
+    if "total_revenue" in di.columns and "net_income" in di.columns:
+        di = di[~(di["total_revenue"].isna() & di["net_income"].isna())]
+    if di.empty:
+        return None, None
+
     perfil = clasificar_perfil(tk, di)
 
     db = bal[bal["ticker"] == tk].copy().sort_values("fiscal_period_end")
@@ -289,8 +302,14 @@ def _compute(m, perfil, warnings):
         shares = g("share_issued")
     tangible_bv = g("tangible_bv")
 
-    # NI para ROE: usar common si existe (resta preferentes implicito), si no NI
-    ni_for_roe = ni_common if ni_common is not None else ni
+    # NI para ROE: usar common si existe (resta preferentes implicito), con
+    # fallback por-fila a NI (el Q recien reportado suele venir sin
+    # NetIncomeCommonStockholders unos dias -> sin fallback, la fila NaN
+    # envenena el TTM rolling y ROE queda NULL en el Q mas nuevo).
+    if ni_common is not None and ni is not None:
+        ni_for_roe = pd.Series(ni_common).fillna(pd.Series(ni))
+    else:
+        ni_for_roe = ni_common if ni_common is not None else ni
 
     # EBITDA para TTM: preferir NormalizedEBITDA (excluye one-offs), fallback al
     # reportado donde el normalizado falte. Afecta ev_ebitda y net_debt/ebitda.
