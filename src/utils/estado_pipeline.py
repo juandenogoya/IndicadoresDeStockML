@@ -31,6 +31,27 @@ LOS DOS EJES, QUE SON FALLAS DISTINTAS
     Un solo eje no distingue "todo viejo pero coherente" (esta bien) de
     "mezcla de ruedas" (esta mal). De ahi que sean dos.
 
+FECHA DE DATOS vs FECHA DE REGISTRO (el error que este modulo cometio)
+    El 2/9/2026 este diagnostico dijo "todo al dia y alineado" mientras las
+    alertas del scanner correspondian al cierre del 31/8 y todo lo demas al
+    1/9. Los bots de ese dia decidieron con senal ML de una rueda y tecnico de
+    otra -- exactamente lo que el modulo existe para evitar.
+
+    La causa: `alertas_scanner` se media por `scan_fecha`, que es CUANDO CORRIO
+    el scanner, no a que rueda corresponde lo que calculo. La fecha de datos es
+    `precio_fecha`. Como el scanner corrio ayer sobre datos de anteayer, la
+    fecha de registro estaba fresca y la de datos no.
+
+    Es la misma trampa que CLAUDE.md documenta para FT (`fecha_datos` vs
+    `fecha_entrada`): cruzar tablas de mercado por la fecha de REGISTRO lee el
+    dia equivocado, en silencio.
+
+    Por eso `Tabla.columna` es SIEMPRE la fecha de datos, y el reloj de corrida
+    va aparte en `columna_registro`, que se informa pero NO entra en el
+    diagnostico. Al agregar una tabla al registro, la pregunta a hacerse no es
+    "cual es su columna de fecha" sino "cual de sus fechas dice a que rueda
+    pertenece el contenido".
+
 EL CASO GRAVE, APARTE
     Si el que quedo atras es `opciones_snapshot` (el CRUDO), el problema no es
     que falte procesar: es que el snapshot no se capturo. Yahoo solo sirve la
@@ -46,36 +67,48 @@ from typing import NamedTuple, Optional
 
 class Tabla(NamedTuple):
     nombre: str
-    columna: str      # columna de fecha (no todas se llaman igual)
+    # FECHA DE DATOS: a que rueda corresponde el contenido. Es la unica que
+    # sirve para detectar mezcla. Ver la nota de abajo sobre alertas_scanner.
+    columna: str
     etiqueta: str     # como se muestra
     critica: bool     # una desalineacion aca produce decisiones con datos mezclados
     arreglo: str      # que correr para ponerla al dia
+    # FECHA DE REGISTRO: cuando se escribio la fila. No entra en el
+    # diagnostico -- solo se informa, para responder "corrio hoy?" sin tener
+    # que salir a consultar la DB a mano. None si la tabla no la guarda.
+    columna_registro: Optional[str] = None
 
 
 # El orden es el de la rutina, para que la salida se lea como el circuito.
 # `critica` = es INSUMO de una decision. Los veredictos y la equity son SALIDAS:
 # que esten atrasadas es un sintoma, no una causa, y no deben frenar nada.
+#
+# OJO CON alertas_scanner (incidente 2/9/2026, ver la nota de arriba): su
+# columna de fecha "natural" es `scan_fecha`, y NO es la fecha de datos. La de
+# datos es `precio_fecha`. Es la unica tabla del registro con esa dualidad --
+# en las demas, `fecha` / `fecha_snapshot` es la rueda y el reloj de escritura
+# vive aparte en created_at / computed_at / calculado_en.
 TABLAS = (
     Tabla("precios_diarios", "fecha", "Precios",
-          True, "cron_paso1_precios_yq.bat"),
+          True, "cron_paso1_precios_yq.bat", "created_at"),
     Tabla("indicadores_tecnicos", "fecha", "Indicadores",
-          True, "cron_paso1_precios_yq.bat"),
+          True, "cron_paso1_precios_yq.bat", "created_at"),
     Tabla("features_precio_accion", "fecha", "Features PA",
-          True, "cron_paso2_features.bat"),
+          True, "cron_paso2_features.bat", None),
     Tabla("features_market_structure", "fecha", "Features SMC",
-          True, "cron_paso2_features.bat"),
-    Tabla("alertas_scanner", "scan_fecha", "Scanner ML",
-          True, "cron_paso3_scanner.bat"),
+          True, "cron_paso2_features.bat", None),
+    Tabla("alertas_scanner", "precio_fecha", "Scanner ML",
+          True, "cron_paso3_scanner.bat", "created_at"),
     Tabla("opciones_snapshot", "fecha_snapshot", "Opciones (crudo)",
-          True, "sync_opciones_railway_to_local.bat"),
+          True, "sync_opciones_railway_to_local.bat", "created_at"),
     Tabla("opciones_pcr_plazo_diario", "fecha", "Opciones (PCR plazo)",
-          True, "ft_run_diario.bat  [paso 0b]"),
+          True, "ft_run_diario.bat  [paso 0b]", "created_at"),
     Tabla("opciones_sector_pcr_plazo_diario", "fecha", "Opciones (sector)",
-          True, "ft_run_diario.bat  [paso 0b]"),
+          True, "ft_run_diario.bat  [paso 0b]", "created_at"),
     Tabla("ft_equity_diaria", "fecha", "Equity FT",
-          False, "ft_run_diario.bat"),
+          False, "ft_run_diario.bat", "calculado_en"),
     Tabla("veredictos_universo_diario", "fecha", "Veredictos",
-          False, "ft_run_diario.bat  [paso final]"),
+          False, "ft_run_diario.bat  [paso final]", "computed_at"),
 )
 
 ANCLA = "precios_diarios"
@@ -99,18 +132,26 @@ def _a_fecha(v) -> Optional[date]:
         return None
 
 
-def diagnosticar(fechas: dict, esperado: date, tablas=TABLAS) -> dict:
+def diagnosticar(fechas: dict, esperado: date, tablas=TABLAS,
+                 registros: Optional[dict] = None) -> dict:
     """
-    fechas   : {nombre_tabla: fecha_maxima}. Las tablas ausentes del dict se
+    fechas   : {nombre_tabla: fecha_DE_DATOS}. Las tablas ausentes del dict se
                omiten del diagnostico (una instalacion puede no tenerlas todas).
+               Tiene que ser la fecha de DATOS, no la de corrida: ver la nota
+               del encabezado. El llamador la obtiene de `Tabla.columna`.
     esperado : ultimo dia habil NYSE ya cerrado. Lo calcula el llamador con
                src.utils.trading_calendar -- aca no se deduce, porque adivinar
                si un dia es habil es la regla que el proyecto prohibe romper.
+    registros: {nombre_tabla: timestamp de la ultima escritura}. OPCIONAL y
+               puramente informativo: responde "corrio hoy?" y NO participa de
+               la deteccion de mezcla. Si participara, una corrida reciente
+               sobre datos viejos volveria a dar "todo al dia".
 
     Returns:
         {
           ancla, esperado, atraso_ancla, ancla_al_dia,
-          tablas: [{tabla, etiqueta, fecha, dias_vs_ancla, al_dia, critica, arreglo}],
+          tablas: [{tabla, etiqueta, fecha, registro, dias_vs_ancla, al_dia,
+                    critica, arreglo}],
           desalineadas: [etiqueta, ...],   # solo CRITICAS fuera del ancla
           mezcla: bool,                    # hay al menos una critica desalineada
           snapshot_ausente: bool,          # el crudo de opciones quedo atras
@@ -118,6 +159,7 @@ def diagnosticar(fechas: dict, esperado: date, tablas=TABLAS) -> dict:
         }
     """
     ancla = _a_fecha(fechas.get(ANCLA))
+    registros = registros or {}
 
     filas = []
     desalineadas = []
@@ -134,6 +176,7 @@ def diagnosticar(fechas: dict, esperado: date, tablas=TABLAS) -> dict:
         al_dia = dias is not None and dias <= 0
         filas.append({
             "tabla": t.nombre, "etiqueta": t.etiqueta, "fecha": f,
+            "registro": registros.get(t.nombre),
             "dias_vs_ancla": dias, "al_dia": al_dia,
             "critica": t.critica, "arreglo": t.arreglo,
         })

@@ -318,6 +318,26 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - Las escribe `ft_utils.obtener_fecha_datos()` (MAX(fecha) del ticker). Los bots
   no la manejan: `ft_utils` es el UNICO lugar que escribe `ft_operaciones`.
 
+### alertas_scanner: `scan_fecha` NO es la fecha de datos (incidente 2/9/2026)
+- La fecha de datos de una alerta es **`precio_fecha`** (sobre que cierre se
+  calculo). `scan_fecha` y `created_at` son CUANDO CORRIO el scanner. Es la
+  misma trampa que `fecha_datos` vs `fecha_entrada` en FT: cruzar por la fecha
+  de registro lee el dia equivocado, en silencio.
+- Es la UNICA tabla del pipeline con esa dualidad. En las demas la columna
+  `fecha` / `fecha_snapshot` es la rueda, y el reloj de escritura vive aparte
+  (`created_at` / `computed_at` / `calculado_en`).
+- Como se manifesto: el 2/9 `chequeo_rutina.py` informo "todo al dia y
+  alineado" mientras las alertas eran del cierre del 31/8 y el resto del 1/9
+  -- el scanner habia corrido el 1/9 (registro fresco) sobre datos de anteayer.
+  El ft_run de ese dia y la masticada de los bots usaron senal ML de una rueda
+  y tecnico de otra. El guard fallo en el primer caso real que le toco.
+- Arreglado: `estado_pipeline.TABLAS` mide alertas_scanner por `precio_fecha`;
+  el reloj de corrida se informa en una columna aparte. Hay test de regresion
+  con el caso exacto y un guard de nombres que rechaza usar una columna de
+  reloj como fecha de diagnostico.
+- REGLA al agregar una tabla al registro: la pregunta no es "cual es su columna
+  de fecha" sino **"cual de sus fechas dice a que rueda pertenece el contenido"**.
+
 ### 4 tickers sin contexto sectorial -- el modelo es el correcto, la entrada no (2/9/2026)
 - Los features sectoriales son z-scores del ticker CONTRA SUS PARES. Con n<=3 no
   miden nada (con n=1 el ticker es su propio promedio y da 0 por construccion),
@@ -424,7 +444,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria + precomputo de veredictos del dashboard |
 | `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py` |
 | `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
-| `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos" |
+| `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos". **`Tabla.columna` es SIEMPRE la fecha de DATOS**; el reloj de corrida va aparte en `columna_registro` y se informa pero NO entra en el diagnostico (ver patrones criticos: incidente 2/9/2026) |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |

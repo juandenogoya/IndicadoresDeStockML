@@ -30,7 +30,7 @@ def _todo_en(f):
 def test_a_fecha_acepta_date_datetime_y_texto():
     assert _a_fecha(D1) == D1
     assert _a_fecha("2026-09-01") == D1
-    # alertas_scanner es TIMESTAMP: el datetime no puede volver entero, porque
+    # Si alguna tabla trae TIMESTAMP, el datetime no puede volver entero porque
     # despues se le resta un date. datetime es subclase de date -> el orden de
     # los isinstance importa.
     assert _a_fecha(datetime(2026, 9, 1, 21, 0, 0)) == D1
@@ -111,6 +111,70 @@ def test_el_resumen_prioriza_el_caso_irrecuperable():
     fechas["features_precio_accion"] = D0
     diag = diagnosticar(fechas, esperado=D1)
     assert "IRRECUPERABLE" in resumen(diag)
+
+
+# -- fecha de DATOS vs fecha de REGISTRO (regresion del 2/9/2026) ------------
+
+def test_alertas_scanner_se_mide_por_la_fecha_de_datos():
+    """Se media por `scan_fecha` (cuando corrio el scanner) en vez de
+    `precio_fecha` (a que cierre corresponde lo que calculo). Es la unica tabla
+    del registro cuya columna de fecha "natural" no es la de datos."""
+    t = next(t for t in TABLAS if t.nombre == "alertas_scanner")
+    assert t.columna == "precio_fecha"
+    assert t.columna_registro == "created_at"
+
+
+def test_ninguna_tabla_se_mide_por_una_columna_de_registro():
+    """Guard de nombres para la proxima tabla que se agregue: si la columna de
+    diagnostico se llama como un reloj de escritura, es la fecha equivocada."""
+    relojes = {"created_at", "updated_at", "computed_at", "calculado_en",
+               "scan_fecha", "fetched_at"}
+    culpables = [t.nombre for t in TABLAS if t.columna in relojes]
+    assert culpables == []
+
+
+def test_corrida_reciente_con_datos_viejos_es_mezcla():
+    """EL CASO REAL DEL 2/9/2026. El scanner habia corrido el dia anterior
+    (registro fresco) pero sobre el cierre de anteayer (datos atrasados), y el
+    diagnostico decia "todo al dia y alineado" mientras los bots cruzaban
+    senal ML de una rueda con tecnico de otra."""
+    fechas = _todo_en(D1)
+    fechas["alertas_scanner"] = D0            # datos: rueda anterior
+    registros = {"alertas_scanner": datetime(2026, 9, 1, 16, 41)}  # corrio ayer
+
+    diag = diagnosticar(fechas, esperado=D1, registros=registros)
+
+    assert diag["mezcla"] is True
+    assert "Scanner ML" in diag["desalineadas"]
+    assert diag["arreglos"] == ["cron_paso3_scanner.bat"]
+
+
+def test_el_registro_no_participa_del_diagnostico():
+    """Un registro fresco no puede tapar datos viejos: si entrara al calculo,
+    volveriamos a tener el falso 'todo al dia' del 2/9."""
+    fechas = _todo_en(D1)
+    fechas["alertas_scanner"] = D0
+
+    sin_reg = diagnosticar(fechas, esperado=D1)
+    con_reg = diagnosticar(fechas, esperado=D1,
+                           registros={"alertas_scanner": datetime(2026, 9, 2, 23, 59)})
+
+    assert sin_reg["mezcla"] == con_reg["mezcla"] is True
+    assert sin_reg["desalineadas"] == con_reg["desalineadas"]
+
+
+def test_el_registro_se_expone_para_informar():
+    reg = datetime(2026, 9, 1, 16, 41)
+    diag = diagnosticar(_todo_en(D1), esperado=D1,
+                        registros={"alertas_scanner": reg})
+    fila = next(f for f in diag["tablas"] if f["tabla"] == "alertas_scanner")
+    assert fila["registro"] == reg
+
+
+def test_registro_ausente_no_rompe():
+    """Las tablas de features no guardan reloj de escritura."""
+    diag = diagnosticar(_todo_en(D1), esperado=D1, registros=None)
+    assert all(f["registro"] is None for f in diag["tablas"])
 
 
 # -- salidas vs insumos ------------------------------------------------------
