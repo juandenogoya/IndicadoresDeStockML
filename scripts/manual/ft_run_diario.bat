@@ -90,6 +90,12 @@ REM  NO frena por antiguedad: operar con el cierre anterior es la convencion
 REM  del proyecto (73% de las operaciones FT). Frena solo por MEZCLA.
 REM
 REM  Para forzar igual:  set FT_IGNORAR_FRESCURA=1  antes de correr el .bat
+REM
+REM  OJO al editar los mensajes de abajo: adentro de un bloque ( ... ) un
+REM  parentesis SIN escapar CIERRA el bloque antes de tiempo y cmd aborta
+REM  con "no se esperaba X en este momento", donde X es la palabra que
+REM  seguia al parentesis. Escribir sin parentesis, o escaparlos: ^( ^).
+REM  Paso el 2/9/2026 con "Corre lo que falta (arriba) y volve".
 echo Chequeando coherencia de la rutina...
 echo. >> "%LOGFILE%"
 echo --- CHEQUEO DE RUTINA --- >> "%LOGFILE%"
@@ -103,7 +109,7 @@ IF "%FT_IGNORAR_FRESCURA%"=="1" (
         echo.
         echo ============================================================
         echo  ABORTADO: los datos NO estan alineados entre si.
-        echo  Los bots NO corrieron. Corre lo que falta (arriba) y volve.
+        echo  Los bots NO corrieron. Corre lo que falta, listado arriba, y volve.
         echo  Para forzar igual: set FT_IGNORAR_FRESCURA=1
         echo ============================================================
         echo.

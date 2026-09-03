@@ -419,6 +419,23 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - Bug detectado 14/5: `WHERE p.fecha` cuando el FROM es `stats s` -> alias
   `p` fuera de scope -> `UndefinedTable`. Ver commit 06118a8.
 
+### Batch .bat: parentesis dentro de un bloque IF (2/9/2026)
+- Adentro de `IF ... ( ... )`, un `)` SIN escapar CIERRA el bloque antes de
+  tiempo. `echo Corre lo que falta (arriba) y volve.` dejo ` y volve.` suelto y
+  cmd aborto con "no se esperaba **y** en este momento" -- un error que no
+  nombra ni la linea ni el parentesis, y que en este repo confunde mas porque
+  la ruta del proyecto tiene una "y" ("Indicadores y Machine Learning").
+- Al escribir mensajes adentro de un bloque: sin parentesis, o escapados
+  `^( ^)`.
+- El bloque se parsea ENTERO al llegar al `IF`, asi que falla aunque la rama
+  del error nunca se ejecute. Corolario: un `.bat` que "anduvo siempre" no
+  garantiza nada sobre una rama nueva -- el guard de ft_run_diario nacio roto
+  y no se noto hasta la primera corrida que lo ejercito, 4 horas despues.
+- **Editar .bat con `sed -i` los rompe**: MSYS trabaja en modo texto y se come
+  los CR, dejando el archivo LF-only. Por el mismo motivo `grep -c $'\r'` /
+  `cat -A` MIENTEN sobre los finales de linea de un .bat. Para verificar de
+  verdad: `tr -cd '\r' < f | wc -c`. Para editar: Python en modo binario.
+
 ### Telegram
 - No usar backslash dentro de f-string (Python 3.11). Asignar la variable antes.
 - `src/pipeline/telegram_notifier.py` con `_send()` para enviar mensajes.
