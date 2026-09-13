@@ -34,6 +34,8 @@ Reglas de diseño:
   - moneyness_pct = (strike/precio_subyacente - 1) * 100.
     Positivo = strike sobre precio (OTM call / ITM put).
     Negativo = strike bajo precio (ITM call / OTM put).
+  - precio_subyacente = precio de REFERENCIA (10/9/2026): el close de esa rueda
+    en precios_diarios; el de la captura del snapshot solo si falta el close.
 """
 
 from datetime import date

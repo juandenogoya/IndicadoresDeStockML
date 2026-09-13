@@ -703,6 +703,39 @@ retorno de su benchmark en el encabezado. Parametro `--desde`
 
 ---
 
+## 2026-09
+
+### 2026-09-10 — BUG FIX
+**El put wall de OIEXIT_v1 dependia de un precio que podia venir vacio o rancio**
+
+`obtener_put_walls()` ubicaba el muro con `MAX(precio_subyacente)` del snapshot
+de opciones: el precio que devolvio yahooquery al capturar la chain en la nube.
+Ese precio fallo de dos formas:
+- **Vacio**: el 2026-09-09 la captura trajo precio para 0 de 200 tickers, sin
+  excepcion. Sin precio, `obtener_put_walls` marca `valido: False` para todos ->
+  ese dia ningun SL inicial pudo salir del put wall y cayo al fallback 2x ATR.
+  Paso tambien el 2026-07-22, para 11 tickers.
+- **Rancio**: antes del 26/5 salia de un `precios_diarios` congelado en Railway.
+  En el crudo local, 2.102 de 4.225 pares ticker-fecha de ese periodo difieren
+  mas de 0,5% del close real.
+
+No inventaba salidas: degradaba al fallback. Pero la zona de busqueda depende del
+precio, asi que con precio rancio el strike elegido como muro podia ser otro.
+
+**Solucion**: precio de REFERENCIA (`src/utils/precio_referencia.py`, regla unica
+del proyecto): el close de la rueda del snapshot en `precios_diarios` manda; el
+precio de la captura solo tapa el hueco. Cuando ambos existen coinciden (max
+0,055%), asi que en un dia normal el muro elegido no cambia.
+
+**Efecto esperado**: el SL inicial por put wall deja de caer al fallback en dias
+con captura sin precio. El SL inicial se fija al abrir: las operaciones existentes
+no se tocan.
+**Resultado real**: (completar)
+**Ref**: scripts/forward_testing/ft_bot_tech_sectorial_oiexit_v1.py,
+src/utils/precio_referencia.py
+
+---
+
 ## Template de entrada
 
 ```

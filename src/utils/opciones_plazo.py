@@ -22,6 +22,15 @@ Homogeneidad con las estrategias FT (config y bots oiexit/options):
 Produce la tabla opciones_pcr_plazo_diario (formato largo: 1 fila por
 ticker x fecha x ventana). Se alimenta de opciones_snapshot.
 
+Precio del subyacente (10/9/2026): la zona de busqueda de los muros, el expected
+move y precio_sub usan el PRECIO DE REFERENCIA de src/utils/precio_referencia.py:
+el close de la rueda en precios_diarios manda (llevado a la escala de ese dia si
+hubo un split real despues, segun polygon_splits) y
+opciones_snapshot.precio_subyacente solo tapa el hueco. La fuente usada queda en
+la columna precio_fuente. Antes se
+usaba solo el precio de la captura: el 2026-09-09 vino NULL y los muros del
+universo entero salieron vacios con el close del dia disponible.
+
 Uso diario (desde el snapshot, tras persistir contratos):
     from src.utils.opciones_plazo import calcular_pcr_plazo
     n = calcular_pcr_plazo(fecha_snapshot, engine)
@@ -39,6 +48,7 @@ import psycopg2.extras
 from sqlalchemy import text
 
 from src.data.database import get_engine, get_connection
+from src.utils.precio_referencia import resolver_precio, factores_por_ticker
 
 
 # ── Constantes (homogeneas con config.py y los bots FT) ───────────────────────
@@ -88,6 +98,7 @@ CREATE TABLE IF NOT EXISTS opciones_pcr_plazo_diario (
     veredicto_oi          CHAR(1),                  -- 'A' | 'B' | NULL (sin liquidez)
 
     precio_sub            NUMERIC(12,4),
+    precio_fuente         VARCHAR(16),      -- 'precios_diarios' | 'snapshot' (precio_referencia)
 
     -- Muros de OI v2 (OI combinado; soporte debajo / resistencia arriba del precio)
     soporte_strike        NUMERIC(12,4),
@@ -118,6 +129,7 @@ _ALTER_PCR_PLAZO_V2 = [
     "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS resistencia_fuerza NUMERIC(5,1)",
     "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS expected_move      NUMERIC(12,4)",
     "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS zona_pct           NUMERIC(6,2)",
+    "ALTER TABLE opciones_pcr_plazo_diario ADD COLUMN IF NOT EXISTS precio_fuente      VARCHAR(16)",
 ]
 
 
@@ -190,6 +202,36 @@ def _muro(cands: list, precio: float) -> dict:
     }
 
 
+# ── Escala de split del precio de referencia ─────────────────────────────────
+
+_SQL_SPLITS_POSTERIORES = """
+    SELECT ticker, execution_date, ratio
+    FROM   polygon_splits
+    WHERE  execution_date > :f
+      AND  execution_date <= (SELECT MAX(fecha) FROM precios_diarios)
+"""
+
+
+def cargar_factores_escala(engine, fecha: date) -> dict:
+    """
+    {ticker: factor} para llevar el close de precios_diarios de `fecha` a la
+    escala de ESE dia: splits reales ejecutados despues de `fecha` y hasta la
+    ultima rueda cargada (los ya reflejados). Regla en
+    precio_referencia.factor_escala.
+
+    Conexion propia: si polygon_splits no existe en esta DB, devuelve {} sin
+    dejar abortada la transaccion del llamador. En ese caso el close queda en la
+    escala de hoy y el validador escalas_sin_registro() lo avisa donde haya
+    captura con precio.
+    """
+    try:
+        with engine.connect() as conn:
+            filas = conn.execute(text(_SQL_SPLITS_POSTERIORES), {"f": fecha}).fetchall()
+    except Exception:
+        return {}
+    return factores_por_ticker([(r.ticker, r.execution_date, r.ratio) for r in filas], fecha)
+
+
 # ── SQL de upsert ──────────────────────────────────────────────────────────────
 
 _SQL_UPSERT = """
@@ -197,7 +239,7 @@ _SQL_UPSERT = """
         fecha, ticker, ventana, dte_min, dte_max,
         call_vol, put_vol, pcr_vol,
         call_oi, put_oi, pcr_oi, veredicto_oi,
-        precio_sub,
+        precio_sub, precio_fuente,
         soporte_strike, soporte_oi, soporte_dist_pct, soporte_fuerza,
         resistencia_strike, resistencia_oi, resistencia_dist_pct, resistencia_fuerza,
         expected_move, zona_pct,
@@ -214,6 +256,7 @@ _SQL_UPSERT = """
         pcr_oi               = EXCLUDED.pcr_oi,
         veredicto_oi         = EXCLUDED.veredicto_oi,
         precio_sub           = EXCLUDED.precio_sub,
+        precio_fuente        = EXCLUDED.precio_fuente,
         soporte_strike       = EXCLUDED.soporte_strike,
         soporte_oi           = EXCLUDED.soporte_oi,
         soporte_dist_pct     = EXCLUDED.soporte_dist_pct,
@@ -252,12 +295,21 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
                 SUM(COALESCE(volumen, 0))          AS vol,
                 SUM(COALESCE(open_interest, 0))    AS oi,
                 AVG(iv)                            AS iv,
-                MAX(precio_subyacente)             AS precio
+                MAX(precio_subyacente)             AS precio_snap   -- de la CAPTURA (fallback)
             FROM opciones_snapshot
             WHERE fecha_snapshot = :f
               AND (vencimiento - :f) BETWEEN 1 AND 90
             GROUP BY ticker, strike, tipo, (vencimiento - :f)
         """), {"f": fecha}).fetchall()
+
+        # Precio de referencia (src/utils/precio_referencia.py): el close de la
+        # rueda en precios_diarios manda; el precio de la captura solo tapa el hueco.
+        closes = {r.ticker: r.close for r in conn.execute(text("""
+            SELECT ticker, close FROM precios_diarios WHERE fecha = :f
+        """), {"f": fecha}).fetchall()}
+
+    # Escala de ESE dia: close x splits reales posteriores (polygon_splits).
+    factores = cargar_factores_escala(eng, fecha)
 
     if not rows:
         return 0
@@ -265,7 +317,7 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
     # Estructura: acc[ticker][ventana] = {call_vol, put_vol, call_oi, put_oi,
     #   puts: [(strike, oi)], calls: [(strike, oi)], precio, n}
     acc: dict = {}
-    precio_map: dict = {}
+    snap_map: dict = {}    # precio de la CAPTURA por ticker (solo tapa el hueco)
 
     for r in rows:
         ticker = r.ticker
@@ -275,8 +327,8 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
         vol    = int(r.vol or 0)
         oi     = int(r.oi or 0)
         iv     = float(r.iv) if r.iv is not None else None
-        if r.precio:
-            precio_map[ticker] = float(r.precio)
+        if r.precio_snap:
+            snap_map[ticker] = float(r.precio_snap)
 
         # A que ventana pertenece este DTE
         ventana = None
@@ -312,7 +364,8 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
     # Construir registros
     registros = []
     for ticker, ventanas in acc.items():
-        precio = precio_map.get(ticker)
+        precio, precio_fuente = resolver_precio(closes.get(ticker), snap_map.get(ticker),
+                                                factores.get(ticker, 1.0))
         for ventana, slot in ventanas.items():
             lo, hi = VENTANAS[ventana]
             call_vol = slot["call_vol"]
@@ -356,6 +409,7 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
                 call_vol, put_vol, pcr_vol,
                 call_oi, put_oi, pcr_oi, veredicto,
                 _safe_round(precio, 4) if precio else None,
+                precio_fuente,
                 sop.get("strike"), sop.get("oi"), sop.get("dist_pct"), sop.get("fuerza"),
                 res.get("strike"), res.get("oi"), res.get("dist_pct"), res.get("fuerza"),
                 _safe_round(em, 4) if em else None,

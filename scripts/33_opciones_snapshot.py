@@ -713,6 +713,19 @@ def cmd_run(tickers: list[str], dry_run: bool = False,
     log(f"  Precios  : {len(precios)} tickers")
     log(f"  HV_20d   : {len(hvs)} tickers")
 
+    # Cobertura del precio de la captura (incidente 2026-09-09: yahooquery .price
+    # devolvio 0 de 200 SIN excepcion y el crudo quedo sin precio, en silencio).
+    # NO aborta: la chain es lo irrecuperable, y en local los calculos usan el
+    # close de precios_diarios como precio de referencia (precio_referencia.py).
+    # Se avisa para que el hueco de la fuente no pase desapercibido.
+    if not dry_run:
+        try:
+            from src.utils.precio_referencia import cobertura_baja
+            if cobertura_baja(len(precios), len(tickers)):
+                _alerta_precio_captura(fecha_hoy, len(precios), len(tickers), intento)
+        except ImportError:
+            pass  # backward-compat si el modulo no existe en cierta version
+
     total_filas  = 0
     sin_opciones = 0
     errores      = 0
@@ -884,6 +897,32 @@ def _alerta_spool_pendiente(fecha, path, filas, db_fallos, intento):
             f"DATO A SALVO en disco: {filas:,} contratos{nl}"
             f"<code>{os.path.basename(path)}</code>{nl}"
             f"Revisar la DB y correr replay_opciones_spool.py."
+        )
+    except Exception as tg_err:
+        log(f"  [WARN] Telegram no disponible: {tg_err}")
+
+
+def _alerta_precio_captura(fecha, n_precios, n_tickers, intento):
+    """
+    Avisa que yahooquery no devolvio el precio del subyacente para buena parte del
+    universo. La chain se captura igual y en local las derivadas usan el close de
+    precios_diarios. El 2026-09-09 paso con 0 de 200 y el unico rastro fue una
+    linea del log ("Precios : 0 tickers"), que nadie mira.
+    """
+    log(f"  [WARN] precio del subyacente solo para {n_precios}/{n_tickers} tickers "
+        f"(la chain se captura igual; en local manda precios_diarios)")
+    if os.getenv("OPCIONES_SKIP_TELEGRAM", "0") == "1":
+        return
+    try:
+        from src.pipeline.telegram_notifier import _send as _tg_send
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+        nl = "\n"
+        _tg_send(
+            f"WARN Opciones snapshot -- precio del subyacente incompleto{nl}"
+            f"<i>{fecha} | {ts}</i>{nl}"
+            f"Intento {intento}/4: yahooquery dio precio para {n_precios} de {n_tickers} tickers.{nl}"
+            f"La chain se captura igual. En local las derivadas usan el close de "
+            f"precios_diarios: correr el recovery de precios antes de ft_run_diario."
         )
     except Exception as tg_err:
         log(f"  [WARN] Telegram no disponible: {tg_err}")

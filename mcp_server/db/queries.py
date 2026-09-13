@@ -298,9 +298,19 @@ SQL_OPTIONS_ACUMULACION_OI = """
             s.strike,
             s.open_interest                                                     AS oi_fin,
             s.iv                                                                AS iv_actual,
-            s.precio_subyacente
+            -- Precio de referencia: el close de la rueda manda, la captura solo
+            -- tapa el hueco (misma regla que src/utils/precio_referencia.py).
+            -- Sin factor de escala por split (precio_referencia.factor_escala):
+            -- esta query mira el ULTIMO snapshot, que no tiene splits posteriores
+            -- salvo que venga atrasado respecto de precios_diarios.
+            CASE WHEN p.close > 0             THEN p.close
+                 WHEN s.precio_subyacente > 0 THEN s.precio_subyacente
+            END                                                                 AS precio_subyacente
         FROM   opciones_snapshot s
         CROSS  JOIN date_bounds d
+        LEFT   JOIN precios_diarios p
+               ON  p.ticker = s.ticker
+               AND p.fecha  = s.fecha_snapshot
         WHERE  s.ticker         = $1
           AND  s.fecha_snapshot = d.fecha_fin
           AND  s.vencimiento    > d.fecha_fin
@@ -345,6 +355,8 @@ SQL_OPTIONS_ACUMULACION_OI = """
 # snap_ini: LEFT JOIN = contratos nuevos en el periodo tienen oi_inicio=0
 # delta_oi positivo = acumulacion de posiciones, negativo = cierre
 # moneyness_pct = (strike/precio_sub - 1)*100  (positivo = strike sobre precio)
+# precio_subyacente = precio de REFERENCIA: close de precios_diarios; el de la
+# captura del snapshot solo si falta el close (10/9/2026)
 
 
 # ── Opciones: OI/volumen por strike en el ultimo snapshot ─────────────────────
@@ -361,9 +373,16 @@ SQL_OPTIONS_STRIKE_OI = """
         (s.vencimiento - u.fecha_fin)::int  AS dias_a_venc,
         s.open_interest,
         s.volumen,
-        s.precio_subyacente
+        -- Precio de referencia (ver precio_referencia.py): close de la rueda manda.
+        -- Ultimo snapshot: sin factor de escala por split (ver precio_referencia).
+        CASE WHEN p.close > 0             THEN p.close
+             WHEN s.precio_subyacente > 0 THEN s.precio_subyacente
+        END                                  AS precio_subyacente
     FROM   opciones_snapshot s
     CROSS  JOIN ultimo u
+    LEFT   JOIN precios_diarios p
+           ON  p.ticker = s.ticker
+           AND p.fecha  = s.fecha_snapshot
     WHERE  s.ticker         = $1
       AND  s.fecha_snapshot = u.fecha_fin
       AND  s.vencimiento    > u.fecha_fin
@@ -521,11 +540,17 @@ SQL_OVERVIEW_OPCIONES_TOP_OI = """
         s.vencimiento,
         s.open_interest,
         s.iv,
+        -- Precio de referencia (ver precio_referencia.py): close de la rueda manda.
+        -- Ultimo snapshot: sin factor de escala por split (ver precio_referencia).
         ROUND(
-            ((s.strike / NULLIF(s.precio_subyacente, 0)) - 1) * 100, 2
+            ((s.strike / NULLIF(CASE WHEN p.close > 0 THEN p.close
+                                     ELSE s.precio_subyacente END, 0)) - 1) * 100, 2
         )                   AS moneyness_pct
     FROM   opciones_snapshot s
     CROSS  JOIN latest l
+    LEFT   JOIN precios_diarios p
+           ON  p.ticker = s.ticker
+           AND p.fecha  = s.fecha_snapshot
     WHERE  s.ticker         = $1
       AND  s.fecha_snapshot = l.max_fecha
       AND  s.vencimiento    > l.max_fecha

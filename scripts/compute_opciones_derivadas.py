@@ -5,17 +5,31 @@ Computa las tablas DERIVADAS de opciones en LOCAL desde el crudo (opciones_snaps
 Parte de la migracion "snapshot nube solo-crudo" (AGENDA Tarea 17): la nube captura
 solo el crudo (opciones_snapshot); este script computa en LOCAL todo lo derivado para
 una fecha, desde el crudo ya synced:
+  0. Precio de referencia     resuelve el precio por ticker y lo DIAGNOSTICA: cuantos
+                              toman el close de precios_diarios (y cuantos llevados a la
+                              escala del dia por un split posterior), cuantos caen al
+                              precio de la captura, cuantos quedan sin precio, y si los
+                              dos divergen (> 1%). Lo aplica el paso 2
   1. HV (hv_20d)              desde precios_diarios LOCAL -> UPDATE opciones_snapshot
-  2. opciones_resumen_diario  (recompute desde el crudo, SQL agregado)
+  2. opciones_resumen_diario  (recompute desde el crudo; precio_sub = precio de referencia)
   3. opciones_zscore_diario + opciones_sector_zscore_diario   (src.utils.zscore_pipeline)
-  4. opciones_pcr_plazo_diario + opciones_sector_pcr_plazo_diario (src.utils.opciones_plazo)
+  4. opciones_pcr_plazo_diario + opciones_sector_pcr_plazo_diario (src.utils.opciones_plazo;
+     zona de los muros y expected move sobre el precio de referencia)
+
+Precio de referencia (10/9/2026, src/utils/precio_referencia.py): el close de la rueda en
+precios_diarios manda, llevado a la escala de ESE dia con los splits reales posteriores
+(polygon_splits); opciones_snapshot.precio_subyacente solo tapa el hueco. La fuente
+usada queda en `precio_fuente` de opciones_resumen_diario y opciones_pcr_plazo_diario.
+El paso 0 es ademas un detector de huecos de precios_diarios: si la rueda no esta
+cargada, sus tickers caen al precio de la captura y se avisa.
 
 Target SIEMPRE local: NO carga .env.local, usa get_local_engine() (lee .env directo).
 Todas las funciones reciben el engine local explicito. Idempotente (UPSERT / UPDATE).
 
 Uso:
-    python scripts/compute_opciones_derivadas.py                 # ultima fecha en snapshot local
+    python scripts/compute_opciones_derivadas.py                     # ultima fecha en snapshot local
     python scripts/compute_opciones_derivadas.py --fecha 2026-06-05
+    python scripts/compute_opciones_derivadas.py --desde 2026-04-18  # todas las fechas >= desde, en orden
 """
 
 import sys
@@ -32,6 +46,7 @@ from sqlalchemy import text
 # get_local_engine arma el engine LOCAL leyendo .env directo, sin tocar os.environ
 # (no carga .env.local -> DATABASE_URL queda sin setear -> todo apunta a local).
 from scripts.migrations.sync_railway_to_local import get_local_engine
+from src.utils import precio_referencia as pr
 
 SEP = "=" * 64
 
@@ -95,6 +110,10 @@ def computar_hv(engine, fecha: date) -> tuple[int, int]:
 # ── 2. resumen_diario (recompute desde el crudo) ───────────────────────────────
 
 # Mismo agregado que cmd_backfill_resumen() de 33_opciones_snapshot.py, por :fecha.
+# precio_sub entra con el precio de la CAPTURA y precio_fuente en NULL: los fija
+# despues computar_resumen() con precio_referencia.resolver_precio. Asi la regla
+# (incluida la excepcion de escala de split) vive en Python en un solo lugar y no
+# en una replica SQL que se desincronice.
 SQL_RESUMEN = """
     WITH oi_per_key AS (
         SELECT fecha_snapshot, ticker, strike, vencimiento,
@@ -125,52 +144,138 @@ SQL_RESUMEN = """
                        / SUM(CASE WHEN tipo='put' AND iv IS NOT NULL THEN COALESCE(open_interest,0) ELSE 0 END)::NUMERIC, 6)
                  ELSE NULL END AS iv_put_avg,
             COUNT(*)               AS n_contratos,
-            MAX(precio_subyacente) AS precio_sub
+            MAX(precio_subyacente) AS precio_snap   -- de la CAPTURA (fallback)
         FROM opciones_snapshot
         WHERE fecha_snapshot = :fecha
         GROUP BY fecha_snapshot, ticker
     )
     INSERT INTO opciones_resumen_diario (
         fecha, ticker, call_vol, put_vol, pcr_vol, call_oi, put_oi, pcr_oi,
-        iv_call_avg, iv_put_avg, n_contratos, max_oi_strike, max_oi_venc, precio_sub
+        iv_call_avg, iv_put_avg, n_contratos, max_oi_strike, max_oi_venc, precio_sub,
+        precio_fuente
     )
     SELECT a.fecha, a.ticker, a.call_vol, a.put_vol,
            CASE WHEN a.call_vol > 0 THEN ROUND(a.put_vol::NUMERIC/a.call_vol, 4) ELSE NULL END,
            a.call_oi, a.put_oi,
            CASE WHEN a.call_oi > 0 THEN ROUND(a.put_oi::NUMERIC/a.call_oi, 4) ELSE NULL END,
-           a.iv_call_avg, a.iv_put_avg, a.n_contratos, t.max_oi_strike, t.max_oi_venc, a.precio_sub
+           a.iv_call_avg, a.iv_put_avg, a.n_contratos, t.max_oi_strike, t.max_oi_venc,
+           a.precio_snap, NULL
     FROM agg a LEFT JOIN top_strike t USING (ticker)
     ON CONFLICT (fecha, ticker) DO UPDATE SET
         call_vol=EXCLUDED.call_vol, put_vol=EXCLUDED.put_vol, pcr_vol=EXCLUDED.pcr_vol,
         call_oi=EXCLUDED.call_oi, put_oi=EXCLUDED.put_oi, pcr_oi=EXCLUDED.pcr_oi,
         iv_call_avg=EXCLUDED.iv_call_avg, iv_put_avg=EXCLUDED.iv_put_avg,
         n_contratos=EXCLUDED.n_contratos, max_oi_strike=EXCLUDED.max_oi_strike,
-        max_oi_venc=EXCLUDED.max_oi_venc, precio_sub=EXCLUDED.precio_sub
+        max_oi_venc=EXCLUDED.max_oi_venc, precio_sub=EXCLUDED.precio_sub,
+        precio_fuente=EXCLUDED.precio_fuente
 """
 
 
-def computar_resumen(engine, fecha: date) -> int:
+def computar_resumen(engine, fecha: date, resueltos: dict) -> int:
+    """
+    Recompute del resumen y, en la misma transaccion, el precio de referencia.
+    `resueltos` = {ticker: (precio, fuente)} de chequear_precio_referencia(): la
+    misma regla que usan los muros en opciones_plazo.
+    """
     with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE opciones_resumen_diario ADD COLUMN IF NOT EXISTS precio_fuente VARCHAR(16)"))
         r = conn.execute(text(SQL_RESUMEN), {"fecha": fecha})
-        return r.rowcount or 0
+        n = r.rowcount or 0
+        if resueltos:
+            conn.execute(
+                text("UPDATE opciones_resumen_diario SET precio_sub = :p, precio_fuente = :fu "
+                     "WHERE fecha = :fecha AND ticker = :t"),
+                [{"p": p, "fu": fu, "fecha": fecha, "t": t} for t, (p, fu) in resueltos.items()])
+        return n
+
+
+# ── 0. Precio de referencia (diagnostico) ──────────────────────────────────────
+
+def chequear_precio_referencia(engine, fecha: date) -> dict:
+    """
+    Aplica la regla de src/utils/precio_referencia.py a los tickers del snapshot
+    de `fecha` y devuelve los precios resueltos, el reparto por fuente y las
+    divergencias. NO escribe: el paso 2 persiste `resueltos` y el paso 4 aplica
+    la misma funcion por su cuenta.
+
+    Sirve ademas de detector de huecos de precios_diarios: si una rueda no esta
+    cargada, sus tickers caen al precio de la captura (caso 2026-08-28: 157 de
+    200 tickers sin close).
+    """
+    with engine.connect() as conn:
+        snaps = {t: px for t, px in conn.execute(text(
+            "SELECT ticker, MAX(precio_subyacente) FROM opciones_snapshot "
+            "WHERE fecha_snapshot = :f GROUP BY ticker"), {"f": fecha}).fetchall()}
+        closes = {}
+        if snaps:
+            closes = {t: c for t, c in conn.execute(text(
+                "SELECT ticker, close FROM precios_diarios "
+                "WHERE fecha = :f AND ticker = ANY(:tks)"),
+                {"f": fecha, "tks": list(snaps)}).fetchall()}
+    from src.utils.opciones_plazo import cargar_factores_escala
+    factores = {t: fa for t, fa in cargar_factores_escala(engine, fecha).items() if t in snaps}
+    resueltos = pr.resolver_mapa(closes, snaps, tickers=list(snaps), factores=factores)
+    return {
+        "n": len(snaps),
+        "resueltos": resueltos,
+        "factores": factores,
+        "fuentes": pr.contar_fuentes(resueltos),
+        "captura_sin_precio": sum(1 for v in snaps.values()
+                                  if pr.resolver_precio(None, v)[0] is None),
+        "divergencias": pr.medir_divergencias(closes, snaps, factores=factores),
+        "sin_registro": pr.escalas_sin_registro(closes, snaps, factores=factores),
+    }
+
+
+def _log_precio_referencia(chk: dict, fecha: date):
+    f = chk["fuentes"]
+    n_dueno = f[pr.FUENTE_DIARIO] + f[pr.FUENTE_DIARIO_ESCALA]
+    log(f"  precio referencia : {chk['n']} tickers | precios_diarios {n_dueno}"
+        f" (en escala de split: {f[pr.FUENTE_DIARIO_ESCALA]}) | captura (hueco) {f[pr.FUENTE_SNAPSHOT]}"
+        f" | sin precio {f['sin_precio']}")
+    if chk["captura_sin_precio"]:
+        log(f"  [INFO] la captura vino sin precio en {chk['captura_sin_precio']}/{chk['n']} tickers"
+            f" (no afecta a los que tienen close en precios_diarios)")
+    if f[pr.FUENTE_DIARIO_ESCALA]:
+        muestra = ", ".join(f"{t} x{fa:g}" for t, fa in sorted(chk["factores"].items()))
+        log(f"  [INFO] {f[pr.FUENTE_DIARIO_ESCALA]} tickers con split posterior: el close se lleva a la"
+            f" escala de ese dia (la de los strikes): {muestra}")
+    if f[pr.FUENTE_SNAPSHOT]:
+        log(f"  [WARN] {f[pr.FUENTE_SNAPSHOT]} tickers sin close en precios_diarios para {fecha}:"
+            f" usan el precio de la captura. Si la rueda deberia estar cargada, falta el recovery de precios.")
+    if f["sin_precio"]:
+        log(f"  [WARN] {f['sin_precio']} tickers sin ningun precio para {fecha}:"
+            f" quedan sin muros ni expected move.")
+    div = chk["divergencias"]
+    if div:
+        muestra = ", ".join(f"{t} {c:.2f} vs {s:.2f} ({d * 100:.1f}%)" for t, c, s, d in div[:5])
+        log(f"  [WARN] {len(div)} tickers con close y captura divergentes"
+            f" (>{pr.TOL_DIVERGENCIA * 100:.0f}%): {muestra}")
+    sr = chk["sin_registro"]
+    if sr:
+        muestra = ", ".join(f"{t} {c:.2f} vs {s:.2f} (x{k:g})" for t, c, s, k in sr[:5])
+        log(f"  [WARN] {len(sr)} tickers donde captura y close difieren por un split EXACTO que"
+            f" polygon_splits no explica (split sin registrar, o sin corregir en precios_diarios): {muestra}")
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────
 
-def run(fecha: date = None):
-    engine = get_local_engine()
-
-    if fecha is None:
-        with engine.connect() as conn:
-            fecha = conn.execute(text("SELECT MAX(fecha_snapshot) FROM opciones_snapshot")).scalar()
-    if fecha is None:
-        log("No hay datos en opciones_snapshot local. Nada que computar.")
-        return
-
+def computar_fecha(engine, fecha: date):
+    """Corre los pasos 0-4 para UNA fecha. Cada paso aisla su error (no corta los demas)."""
     print()
     print(SEP)
     print(f"  COMPUTE OPCIONES DERIVADAS (LOCAL)  |  fecha = {fecha}")
     print(SEP)
+
+    # 0. Precio de referencia (resuelve y diagnostica; lo persiste el paso 2)
+    resueltos = {}
+    try:
+        chk = chequear_precio_referencia(engine, fecha)
+        resueltos = chk["resueltos"]
+        _log_precio_referencia(chk, fecha)
+    except Exception as e:
+        log(f"  [ERROR] precio referencia: {e}")
 
     # 1. HV
     try:
@@ -181,7 +286,7 @@ def run(fecha: date = None):
 
     # 2. resumen
     try:
-        n_res = computar_resumen(engine, fecha)
+        n_res = computar_resumen(engine, fecha, resueltos)
         log(f"  resumen_diario    : {n_res} tickers")
     except Exception as e:
         log(f"  [ERROR] resumen: {e}")
@@ -218,12 +323,46 @@ def run(fecha: date = None):
     print()
 
 
+def fechas_desde(engine, desde: date) -> list:
+    """Fechas del snapshot local >= desde, ASCENDENTES (los z-scores usan la historia previa)."""
+    with engine.connect() as conn:
+        return [r[0] for r in conn.execute(text(
+            "SELECT DISTINCT fecha_snapshot FROM opciones_snapshot "
+            "WHERE fecha_snapshot >= :d ORDER BY fecha_snapshot"), {"d": desde}).fetchall()]
+
+
+def run(fecha: date = None, desde: date = None):
+    engine = get_local_engine()
+
+    if desde is not None:
+        fechas = fechas_desde(engine, desde)
+        if not fechas:
+            log(f"No hay fechas en opciones_snapshot local >= {desde}. Nada que computar.")
+            return
+        log(f"Recalculo de {len(fechas)} fechas ({fechas[0]} .. {fechas[-1]}), en orden.")
+        for f in fechas:
+            computar_fecha(engine, f)
+        return
+
+    if fecha is None:
+        with engine.connect() as conn:
+            fecha = conn.execute(text("SELECT MAX(fecha_snapshot) FROM opciones_snapshot")).scalar()
+    if fecha is None:
+        log("No hay datos en opciones_snapshot local. Nada que computar.")
+        return
+    computar_fecha(engine, fecha)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Computa derivadas de opciones en LOCAL desde el crudo")
-    parser.add_argument("--fecha", help="YYYY-MM-DD (default: ultima fecha en opciones_snapshot local)")
+    grupo = parser.add_mutually_exclusive_group()
+    grupo.add_argument("--fecha", help="YYYY-MM-DD (default: ultima fecha en opciones_snapshot local)")
+    grupo.add_argument("--desde", help="YYYY-MM-DD: recalcula TODAS las fechas >= desde, en orden "
+                                       "(los z-scores usan la historia previa)")
     args = parser.parse_args()
     fecha = date.fromisoformat(args.fecha) if args.fecha else None
-    run(fecha)
+    desde = date.fromisoformat(args.desde) if args.desde else None
+    run(fecha, desde)
 
 
 if __name__ == "__main__":

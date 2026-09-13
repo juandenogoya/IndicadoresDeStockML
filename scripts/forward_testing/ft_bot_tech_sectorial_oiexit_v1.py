@@ -53,6 +53,8 @@ configurar_entorno_local()
 
 from sqlalchemy import text
 from src.data.database import get_engine
+from src.utils.precio_referencia import resolver_precio
+from src.utils.opciones_plazo import cargar_factores_escala
 from src.indicators.earnings_filter import tickers_a_cerrar_hoy, tickers_a_bloquear_entrada
 from scripts.forward_testing.ft_scoring import calcular_score_tecnico, obtener_candle_score_5d
 from scripts.forward_testing.ft_utils import (
@@ -190,18 +192,30 @@ def obtener_put_walls(tickers: list[str]) -> dict[str, dict]:
             "vmin": WALL_VENTANA_MIN, "vmax": WALL_VENTANA_MAX,
         }).fetchall()
 
+        # Precio de referencia (src/utils/precio_referencia.py, 10/9/2026): el
+        # close de la rueda del snapshot en precios_diarios manda, en la escala de
+        # ese dia; el precio de la captura solo tapa el hueco. Antes se usaba solo
+        # el de la captura: el 2026-09-09 vino NULL y ningun put wall resulto
+        # valido ese dia.
+        closes = {r.ticker: r.close for r in conn.execute(text("""
+            SELECT ticker, close FROM precios_diarios
+            WHERE ticker = ANY(:tickers) AND fecha = :fecha_snap
+        """), {"tickers": tickers, "fecha_snap": fecha_snap}).fetchall()}
+
+    factores = cargar_factores_escala(engine, fecha_snap)
+
     por_ticker: dict[str, list] = {}
-    precio_map: dict[str, float] = {}
+    snap_map: dict[str, float] = {}
     for r in rows:
         if r.precio:
-            precio_map[r.ticker] = float(r.precio)
+            snap_map[r.ticker] = float(r.precio)
         por_ticker.setdefault(r.ticker, []).append(
             (float(r.strike), int(r.put_oi or 0))
         )
 
     resultado = {}
     for t in tickers:
-        precio = precio_map.get(t)
+        precio, _fuente = resolver_precio(closes.get(t), snap_map.get(t), factores.get(t, 1.0))
         if not precio:
             resultado[t] = {"valido": False}
             continue

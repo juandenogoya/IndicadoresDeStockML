@@ -57,6 +57,9 @@ Estado: TENTATIVO -- el 0.05 fue elegido sin validar; candidato a re-tunear.
 
 Clasifica un strike segun `moneyness_pct = (strike/precio_subyacente - 1)*100`,
 relativo al precio del subyacente DE HOY (no es prediccion del precio futuro).
+`precio_subyacente` es el PRECIO DE REFERENCIA (10/9/2026): el close de esa rueda
+en `precios_diarios`; el precio de la captura del snapshot solo si falta el close
+(regla en `src/utils/precio_referencia.py`, replicada en SQL en `db/queries.py`).
 
 | Condicion            | Etiqueta |
 |----------------------|----------|

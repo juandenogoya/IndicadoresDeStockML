@@ -293,6 +293,35 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   (regularMarketPrice si mercado cerrado, regularMarketPreviousClose si abierto),
   que coincide con el close de precios_diarios LOCAL.
 - **NO asumir** que precio_subyacente sale de precios_diarios: sale de yahooquery.
+  Eso vale para la CAPTURA (en la nube no hay precios_diarios). Para CALCULAR en
+  local manda otra cosa, ver el punto siguiente.
+- **PRECIO DE REFERENCIA (10/9/2026)**: todo calculo en LOCAL que necesita "el
+  precio del subyacente en la rueda D" (muros de OI, expected move, resumen,
+  moneyness del MCP, put wall de FT oiexit) usa el **close de `precios_diarios`**;
+  `precio_subyacente` de la captura solo TAPA EL HUECO si falta el close. Regla en
+  UN lugar: `src/utils/precio_referencia.py` (replicada en SQL solo en
+  `mcp_server/db/queries.py`, ver abajo). La fuente usada
+  viaja en `precio_fuente` de opciones_resumen_diario y opciones_pcr_plazo_diario.
+  Motivo: el 2026-09-09 yahooquery `.price` devolvio 0 de 200 SIN excepcion ->
+  crudo sin precio -> muros vacios en todo el universo con el close disponible; y
+  el crudo previo al 26/5 tiene precios de Railway congelado (2.102 de 4.225 pares
+  ticker-fecha >0,5%). Cuando ambos existen coinciden (max 0,055%). **ESCALA DE
+  SPLIT**: splits.py corrige precios_diarios HACIA ATRAS, pero los strikes de una
+  cadena vieja estan en la escala de SU dia -> el close se lleva a esa escala
+  multiplicando por los splits REALES (ratio >=1,5) ejecutados despues de la rueda,
+  segun `polygon_splits` (`precio_fuente='precios_x_split'`). Validado: captura /
+  (close x factor) = 1,0000 exacto en 81 ruedas frescas de KLAC y 81 de CRWD. El
+  factor sale del REGISTRO y no de la captura: con captura rancia (pre-11/5) el
+  ratio observado no es exacto (KLAC x9,17..x10,70) y el primer diseno, que lo
+  deducia de ahi, lo dejaba pasar. Los ajustes chicos de polygon (SCCO 1,01/1,012,
+  spinoffs tipo HON 1,061) NO se aplican: con ellos el cruce empeora (SCCO 0,988).
+  Si captura y close difieren por un split EXACTO que el registro no explica, el
+  paso 0 avisa. Mantener el registro: `refresh_polygon.py --splits`. Las queries
+  del MCP replican la regla en SQL sin factor: solo miran el ULTIMO snapshot. El snapshot
+  ALERTA por Telegram si trae precio para <90% del universo, y el paso 0 de
+  `compute_opciones_derivadas.py` avisa cuantos tickers caen al precio de la
+  captura: funciona como detector de huecos de precios_diarios (asi aparecio el
+  2026-08-28 con 157 de 200 tickers sin close).
 - **SPOOL en disco (20/6/2026, incidente Railway)**: Railway se detuvo por limite de
   consumo y el snapshot perdia el dato: `persistir_filas()` escribia por ticker y,
   con la DB caida, cada ticker levantaba excepcion y la chain YA DESCARGADA se
@@ -451,6 +480,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/replay_opciones_spool.py` | Reinyecta a la DB los snapshots de opciones que quedaron en disco por DB caida (`--list` / `--dry-run` / `--target local\|railway`). Upsert idempotente |
 | `scripts/manual/retencion_opciones_railway.py` | Purga opciones_snapshot en RAILWAY dejando los ultimos 10 dias (causa raiz incidente 20/7: +580 MB/mes sin retencion). SOLO borra fechas verificadas replicadas en local (compara COUNT por fecha). Incluye VACUUM FULL (DELETE solo no devuelve disco). Encadenado al final de sync_opciones_railway_to_local.bat |
 | `src/utils/opciones_spool.py` | Red de seguridad en disco del snapshot de opciones (modulo puro, .csv.gz en streaming) |
+| `src/utils/precio_referencia.py` | Modulo PURO (stdlib): regla del precio de REFERENCIA del subyacente para calcular en local -- el close de `precios_diarios` manda, `precio_subyacente` de la captura solo tapa el hueco. `resolver_precio` / `factor_escala` (escala de split desde polygon_splits) / `medir_divergencias` / `escalas_sin_registro` / `cobertura_baja`. Lo usan opciones_plazo, compute_opciones_derivadas, FT oiexit y el snapshot (alerta de cobertura) |
+| `scripts/compute_opciones_derivadas.py` | Derivadas de opciones en LOCAL desde el crudo (HV, resumen, z-scores, PCR+muros por plazo). Paso 0 = diagnostico del precio de referencia (cuantos tickers caen al precio de la captura = huecos de precios_diarios). `--fecha` / `--desde` (recalcula en orden: los z-scores usan la historia previa). Paso [0b] de ft_run_diario.bat |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
 | `scripts/manual/universo.py` (+ `.bat`) | Alta/baja de tickers del universo (Tarea 14). `add` (backfill 2a + indicadores/features/z-scores/fundamentales + dual-write activos local+Railway + log), `remove` (soft delete + guard posiciones FT), `list`. Solo acciones. Ver docs/gestion_universo.md |
@@ -527,7 +558,10 @@ Las criticas:
   limite de consumo (incidente 20/7).
 - `opciones_sector_zscore_diario` (PCR_vol+vol agregados por sector, z-score)
 - `opciones_pcr_plazo_diario` (PCR vol/OI + muros S/R por ventana corto/medio/largo,
-  por ticker; fuente src/utils/opciones_plazo.py)
+  por ticker; fuente src/utils/opciones_plazo.py). `precio_sub` = precio de
+  REFERENCIA y `precio_fuente` dice de donde salio ('precios_diarios' |
+  'precios_x_split' | 'snapshot');
+  idem en `opciones_resumen_diario` (10/9/2026)
 - `opciones_sector_pcr_plazo_diario` (PCR sectorial por ventana + z-score)
 - `indicadores_tecnicos_1w` (RSI/MACD semanal) -- CONGELADA 2026-04-02: pipeline
   semanal (scripts 23-30) deprecado 28/5/2026 (Plan C), movido a scripts/legacy_1w/.
