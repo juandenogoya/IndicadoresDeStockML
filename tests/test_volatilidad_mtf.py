@@ -81,12 +81,16 @@ def test_resample_excluye_mes_en_curso():
 
 
 def test_resample_excluye_semana_en_curso():
+    # La barra en curso es el periodo W-FRI (sabado a viernes) que contiene HOY.
+    # Antes el test usaba el lunes de la semana calendario: un sabado o domingo
+    # ese lunes cae en la semana que YA cerro el viernes, que el modulo incluye
+    # con razon, y el test fallaba solo los fines de semana.
     hoy = date.today()
-    lunes_actual = hoy - timedelta(days=hoy.weekday())
     filas = _ohlc_diario(60)
-    filas.append({"fecha": lunes_actual, "open": 1, "high": 1, "low": 1, "close": 1})
+    filas.append({"fecha": hoy, "open": 1, "high": 1, "low": 1, "close": 1})
     b = volatilidad_mtf.resample_ohlc(pd.DataFrame(filas), "W-FRI")
-    assert all(f < lunes_actual for f in b["fecha"])
+    periodo_actual = pd.Timestamp(hoy).to_period("W-FRI")
+    assert all(pd.Timestamp(f).to_period("W-FRI") < periodo_actual for f in b["fecha"])
 
 
 def test_resample_vacio():
