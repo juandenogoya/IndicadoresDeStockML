@@ -40,6 +40,7 @@ from src.data.database import get_engine
 from src.utils.ft_metricas import (
     resumen_riesgo, retornos_desde_equity, metricas_trade, RF_ANUAL_DEFAULT,
 )
+from src.utils import ft_tramos
 
 OUTPUT_DEFAULT = os.path.join(ROOT, "reportes", "ft_reporte.html")
 MAX_CERRADAS_TABLA = 20   # operaciones cerradas a mostrar por estrategia
@@ -112,6 +113,7 @@ def cargar_datos():
                    COALESCE(o.fecha_datos_salida, o.fecha_salida)
                      - COALESCE(o.fecha_datos, o.fecha_entrada) AS dias,
                    COALESCE(o.fecha_datos_salida, o.fecha_salida) AS f_salida_datos,
+                   COALESCE(o.fecha_datos, o.fecha_entrada) AS f_entrada_datos,
                    p.close AS precio_actual
             FROM ft_operaciones o
             LEFT JOIN (
@@ -175,6 +177,69 @@ def serie_benchmark(df_bch):
     s = df_bch.copy()
     s["fecha"] = pd.to_datetime(s["fecha"])
     return s.set_index("fecha")["idx"].astype(float)
+
+
+# ── Cambios registrados (ft_cambios) y adaptadores para ft_tramos ─────────────
+
+def cargar_cambios():
+    """
+    Cambios registrados en ft_cambios, por fecha efectiva. None si la tabla no
+    existe: el reporte sigue, sin la seccion de antes y despues.
+    """
+    engine = get_engine()
+    with engine.connect() as conn:
+        if conn.execute(text("SELECT to_regclass('public.ft_cambios')")).scalar() is None:
+            return None
+        rows = conn.execute(text("""
+            SELECT clave, fecha_efectiva, tipo, estrategias, cambia_decisiones,
+                   titulo, detalle, ref
+            FROM ft_cambios
+            ORDER BY fecha_efectiva, id
+        """)).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def _a_fecha(v):
+    if v is None or pd.isna(v):
+        return None
+    return pd.Timestamp(v).date()
+
+
+def series_tramos(df_met):
+    """ft_equity_diaria -> {estrategia_id: [(fecha, equity)]}, forma de ft_tramos."""
+    if df_met is None or df_met.empty:
+        return {}
+    out = {}
+    for eid, g in df_met.sort_values("fecha").groupby("estrategia_id"):
+        out[int(eid)] = [(_a_fecha(f), float(v)) for f, v in zip(g["fecha"], g["equity"])]
+    return out
+
+
+def benchmark_tramos(bench):
+    """Serie del benchmark -> [(fecha, indice)]."""
+    if bench is None:
+        return None
+    return [(_a_fecha(f), float(v)) for f, v in bench.items() if pd.notna(v)]
+
+
+def operaciones_tramos(df_ops):
+    """
+    ft_operaciones -> dicts de ft_tramos, con las fechas del DATO: un corte se
+    ubica por la rueda con la que se decidio, no por el dia de registro.
+    """
+    if df_ops is None or df_ops.empty:
+        return []
+    out = []
+    for r in df_ops.to_dict("records"):
+        out.append({
+            "estrategia_id": int(r["estrategia_id"]),
+            "f_entrada":     _a_fecha(r.get("f_entrada_datos")),
+            "f_salida":      _a_fecha(r.get("f_salida_datos")),
+            "pnl":           None if pd.isna(r.get("pnl")) else float(r["pnl"]),
+            "pnl_pct":       None if pd.isna(r.get("pnl_pct")) else float(r["pnl_pct"]),
+            "motivo_salida": r.get("motivo_salida"),
+        })
+    return out
 
 
 def calcular_riesgo(df_met_e, bench, desde=None):
@@ -335,6 +400,8 @@ tr:hover td { background: #f0f4f8; }
          font-size: 12.5px; color: #4a3c10; line-height: 1.55; }
 .aviso b { color: #2c2408; }
 .riesgo td.ic { color: #6b7280; font-size: 12px; }
+h3 { font-size: 15px; margin: 2px 0 8px 0; }
+td.izq, th.izq { text-align: left; }
 """
 
 
@@ -513,10 +580,182 @@ def tabla_cerradas(cerradas):
     return f"<table>{th}{''.join(trs)}</table>{nota}"
 
 
-def render_html(ests, df_ops, df_met, df_bch=None, desde=VENTANA_COMPARABLE):
+def _comparacion_html(res, dec=1):
+    """
+    (celda con numero e IC95, celda con veredicto). INSUFICIENTE no muestra
+    numero, solo las muestras: METRICAS.md seccion 12.
+    """
+    if res is None:
+        return "<span class='nc'>sin control</span>", ""
+    v = res["veredicto"]
+    if v == ft_tramos.INSUFICIENTE:
+        ctrl = (f", control {res['n_antes_control']} / {res['n_despues_control']}"
+                if "n_antes_control" in res else "")
+        return (f"<span class='nc'>n {res['n_antes']} / {res['n_despues']}{ctrl} "
+                f"(min {res['minimo']})</span>", f"<span class='nc'>{v}</span>")
+    num = (f"{res['diferencia']:+.{dec}f} <span class='nc'>"
+           f"[{res['ic95_lo']:+.{dec}f}, {res['ic95_hi']:+.{dec}f}]</span>")
+    cls = {ft_tramos.MEJORA: "pos", ft_tramos.EMPEORA: "neg"}.get(v, "nc")
+    return num, f"<span class='{cls}'>{v}</span>"
+
+
+def tabla_cambio(res, nombres):
+    """Antes contra despues de un cambio, una fila por estrategia afectada."""
+    th = ("<tr><th>Estrategia</th><th>Ruedas antes / despues</th>"
+          "<th>Retorno antes</th><th>Retorno despues</th>"
+          "<th>vs control (pp/mes) [IC95]</th><th></th>"
+          "<th>vs universo (pp/mes) [IC95]</th>"
+          "<th>Oper. antes / despues</th><th>Expectancy vs control (pp) [IC95]</th>"
+          "<th></th></tr>")
+
+    def retorno(lado):
+        if lado["retorno_pct"] is None:
+            return "-"
+        b = lado["benchmark_pct"]
+        b_txt = f" <span class='nc'>univ {fmt_pct(b)}</span>" if b is not None else ""
+        return (f"<span class='{clase_signo(lado['retorno_pct'])}'>"
+                f"{fmt_pct(lado['retorno_pct'])}</span>{b_txt}")
+
+    trs = []
+    for f in res["filas"]:
+        a, dsp = f["antes"], f["despues"]
+        vc, vc_ver = _comparacion_html(f["vs_control"])
+        vu, _ = _comparacion_html(f["vs_universo"])
+        ex, ex_ver = _comparacion_html(f["expectancy_vs_control"], dec=2)
+        # La expectancy propia sin control, como referencia: mezcla regla y mercado.
+        ea, ed = a["trade"].get("expectancy_pct"), dsp["trade"].get("expectancy_pct")
+        if ea is not None and ed is not None:
+            ex += f"<br><span class='nc'>propia {ea:+.2f} &rarr; {ed:+.2f}</span>"
+        cruzan = (f" <span class='nc'>({f['n_cruzan']} cruzan)</span>"
+                  if f["n_cruzan"] else "")
+        trs.append(
+            f"<tr><td>{esc(nombres.get(f['estrategia_id'], f['estrategia_id']))}</td>"
+            f"<td>{a['n_ruedas']} / {dsp['n_ruedas']}</td>"
+            f"<td>{retorno(a)}</td><td>{retorno(dsp)}</td>"
+            f"<td>{vc}</td><td>{vc_ver}</td><td>{vu}</td>"
+            f"<td>{a['trade'].get('n', 0)} / {dsp['trade'].get('n', 0)}{cruzan}</td>"
+            f"<td>{ex}</td><td>{ex_ver}</td></tr>"
+        )
+    return f"<table class='riesgo'>{th}{''.join(trs)}</table>"
+
+
+def seccion_cambios(ests, cambios, df_met, df_ops, bench):
+    """
+    Seccion "Antes y despues de cada cambio": un bloque por cambio que corta
+    tramos, el tramo vigente de cada estrategia y las marcas que no cortan.
+    Toda la logica de medicion vive en src/utils/ft_tramos.py.
+    """
+    if cambios is None:
+        return ("<div class='vacio'>No existe la tabla ft_cambios: correr "
+                "scripts/oneshot/create_ft_cambios.py --apply.</div>")
+
+    nombres = {e["id"]: e["nombre"].replace("FT_", "") for e in ests}
+    activas = set(nombres)
+    series = {k: v for k, v in series_tramos(df_met).items() if k in activas}
+    bench_t = benchmark_tramos(bench)
+    ops = operaciones_tramos(df_ops)
+
+    def lista(ids):
+        ids = sorted(ids)
+        if activas and set(ids) >= activas:
+            return "todas"
+        return ", ".join(esc(nombres.get(i, str(i))) for i in ids) or "ninguna"
+
+    bloques = []
+    cortan = sorted((c for c in cambios if c["cambia_decisiones"]),
+                    key=lambda c: c["fecha_efectiva"], reverse=True)
+    for c in cortan:
+        res = ft_tramos.evaluar_cambio(c, cambios, series, bench_t, ops)
+        notas = [f"Afecta: <b>{lista(c['estrategias'])}</b>",
+                 "Control: <b>" + (lista(res["control"]) if res["control"]
+                                   else "sin control") + "</b>"]
+        if res["control_excluidas"]:
+            notas.append("fuera del control por un cambio propio en la ventana: "
+                         + lista(res["control_excluidas"]))
+        if res["nacidas_con_el_cambio"]:
+            notas.append("nacieron con el cambio: " + lista(res["nacidas_con_el_cambio"]))
+        tabla = (tabla_cambio(res, nombres) if res["filas"] else
+                 "<div class='vacio'>Ninguna estrategia afectada tiene historia "
+                 "de los dos lados del corte.</div>")
+        ref = f"<div class='sub'>Ref: {esc(c['ref'])}</div>" if c.get("ref") else ""
+        bloques.append(
+            f"<div class='card'><h3>Rueda {c['fecha_efectiva']} &mdash; {esc(c['titulo'])}"
+            f" <span class='tag'>{esc(c['tipo'])}</span></h3>"
+            f"<div class='metricas'>{' &nbsp;|&nbsp; '.join(notas)}</div>{tabla}{ref}</div>"
+        )
+    if not bloques:
+        bloques.append("<div class='vacio'>No hay cambios registrados que cambien "
+                       "decisiones.</div>")
+
+    trs_v = []
+    for e in ests:
+        v = ft_tramos.tramo_vigente(e["id"], cambios, series.get(e["id"]), ops)
+        if not v:
+            continue
+        if v["corte"] is None:
+            estado = "<span class='nc'>sin cambios que corten</span>"
+        elif not v["faltan_ruedas"] and not v["faltan_ops"]:
+            estado = "<span class='pos'>ya se puede comparar</span>"
+        else:
+            estado = (f"<span class='nc'>faltan {v['faltan_ruedas']} ruedas / "
+                      f"{v['faltan_ops']} oper.</span>")
+        desde_txt = str(v["desde"]) + ("" if v["corte"] else " <span class='nc'>(inicio)</span>")
+        trs_v.append(f"<tr><td>{esc(nombres[e['id']])}</td><td>{desde_txt}</td>"
+                     f"<td>{v['n_ruedas']}</td><td>{v['n_ops']}</td><td>{estado}</td></tr>")
+    vigente = ("<table><tr><th>Estrategia</th><th>Tramo desde</th><th>Ruedas</th>"
+               "<th>Oper. cerradas</th><th>Estado</th></tr>" + "".join(trs_v) + "</table>")
+
+    marcas = sorted((c for c in cambios if not c["cambia_decisiones"]),
+                    key=lambda c: c["fecha_efectiva"], reverse=True)
+    trs_m = [f"<tr><td>{c['fecha_efectiva']}</td><td class='izq'>{esc(c['tipo'])}</td>"
+             f"<td class='izq'>{esc(c['titulo'])}</td>"
+             f"<td class='izq'>{lista(c['estrategias'])}</td></tr>" for c in marcas]
+    tabla_m = ("<table><tr><th>Rueda</th><th class='izq'>Tipo</th><th class='izq'>Cambio</th>"
+               "<th class='izq'>Estrategias</th></tr>" + "".join(trs_m) + "</table>"
+               if marcas else "<div class='vacio'>Sin marcas registradas.</div>")
+
+    min_r, min_o = ft_tramos.MIN_RUEDAS_TRAMO, ft_tramos.MIN_OPS_TRAMO
+    return f"""
+  <div class="aviso">
+    <b>Que mide.</b> Cada cambio registrado en <code>ft_cambios</code> que altera la
+    logica, los parametros o el modelo de una estrategia parte su historia en dos
+    tramos: antes y despues de la primera rueda de datos con la que decidio ya con
+    el cambio.<br>
+    <b>vs control</b> es la comparacion principal: cuanto cambio la diferencia entre
+    el retorno diario de la estrategia y el promedio de las estrategias NO afectadas,
+    en los mismos dias, expresado en puntos por mes. El control comparte el mercado y
+    el hecho de tener caja; el universo equiponderado no, y en una caida cualquier
+    estrategia con caja parece mejorar contra el. Por eso <b>vs universo</b> queda
+    como referencia.<br>
+    La <b>expectancy</b> (resultado medio por operacion) tambien se compara contra el
+    control: depende del mercado del tramo tanto como de la regla, y sin restar lo
+    que le paso al control un tramo alcista antes del corte hace empeorar cualquier
+    cambio. Debajo, en gris, la propia sin control.<br>
+    Entre corchetes, el IC95. <b>INSUFICIENTE</b>: algun lado tiene menos de {min_r}
+    ruedas o {min_o} operaciones cerradas, y el numero no se muestra.
+    <b>NO CONCLUYENTE</b>: el intervalo incluye el cero. Las operaciones que abrieron
+    antes del corte y cerraron despues no cuentan de ningun lado, y las marcadas
+    <code>_SPLIT_FIX</code> tampoco.
+  </div>
+  {''.join(bloques)}
+  <h3>Tramo vigente por estrategia</h3>
+  <div class="sub">Desde el ultimo cambio que corta. Para comparar hacen falta
+    {min_r} ruedas y {min_o} operaciones cerradas del lado de despues.</div>
+  {vigente}
+  <h3 style="margin-top:18px">Cambios registrados que no cortan tramos</h3>
+  <div class="sub">Correcciones de datos, medicion, refactors e infraestructura. No
+    parten la historia, pero conviene tenerlos a la vista al leer un tramo que los
+    contiene.</div>
+  {tabla_m}
+"""
+
+
+def render_html(ests, df_ops, df_met, df_bch=None, desde=VENTANA_COMPARABLE,
+                cambios=None):
     """Construye el documento HTML completo."""
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
     bench = serie_benchmark(df_bch)
+    cambios_html = seccion_cambios(ests, cambios, df_met, df_ops, bench)
 
     # Stats por estrategia
     filas = []
@@ -687,6 +926,9 @@ def render_html(ests, df_ops, df_met, df_bch=None, desde=VENTANA_COMPARABLE):
   </div>
   {tabla_trade(filas, "trade")}
 
+  <h2>Antes y despues de cada cambio</h2>
+  {cambios_html}
+
   <h2>Detalle por estrategia</h2>
   {''.join(bloques)}
 </body>
@@ -706,7 +948,12 @@ def run(output, desde=VENTANA_COMPARABLE):
         print("[ft_reporte_html] [WARN] ft_equity_diaria vacia: sin metricas de "
               "riesgo ni grafico. Correr ft_compute_equity.py primero.")
 
-    html = render_html(ests, df_ops, df_met, df_bch, desde=desde)
+    cambios = cargar_cambios()
+    if cambios is None:
+        print("[ft_reporte_html] [WARN] ft_cambios no existe: el reporte sale sin la "
+              "seccion de antes y despues. Correr scripts/oneshot/create_ft_cambios.py --apply.")
+
+    html = render_html(ests, df_ops, df_met, df_bch, desde=desde, cambios=cambios)
 
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w", encoding="utf-8") as fh:

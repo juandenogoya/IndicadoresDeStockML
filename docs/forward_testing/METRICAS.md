@@ -1,6 +1,7 @@
 # Metricas de Riesgo y Rendimiento — Forward Testing
 
 **Estado**: IMPLEMENTADO (2026-07-21). Tabla, motor y modulo puro en produccion local.
+Seccion 12 (medir un cambio: `ft_cambios`, tramos y grupo de control) IMPLEMENTADA 2026-09-13.
 **Alcance**: como se mide el rendimiento y el riesgo de las 10 estrategias FT.
 **Rama**: `feature/ft-metricas-riesgo`
 
@@ -566,3 +567,138 @@ JOIN splits_aplicados s
 
 Para `ft_posiciones_diarias` y las tablas de los bots (`operaciones_bot*`, en
 Railway), el mismo criterio con sus columnas de entrada y salida.
+
+---
+
+## 12. Medir un cambio: `ft_cambios`, tramos y grupo de control (2026-09-13)
+
+La pregunta es "este cambio, ¿mejoro o empeoro la estrategia?". Mirar la ventana
+posterior contra la anterior tiene tres trampas, y las tres ya aparecieron en
+este proyecto:
+
+1. **La fecha.** El commit no es el dia en que el cambio entra en las decisiones.
+   El sistema es asincronico y la rutina es manual: el fix del score se commiteo
+   a las 11.08 del 30/5 y la corrida de las 11.25 decidio con el dato del 29/5.
+2. **El mercado.** Antes y despues de un corte son regimenes distintos. En el fix
+   del 29/5, el universo subio +6,7% en las 24 ruedas previas y +0,7% en las 72
+   posteriores: cualquier estrategia "empeora".
+3. **La caja.** Con 55-80% de exposicion, contra un indice al 100% cualquier caida
+   parece una mejora (seccion 7 y JOURNAL 2026-07-21 RESULTADO).
+
+### 12.1 Registro `ft_cambios` (LOCAL)
+
+Una fila por cambio: `clave` (UNIQUE), `fecha_efectiva`, `tipo` (BUG_FIX,
+PARAMETRO, MODELO, DATOS, MEDICION, REFACTOR, INFRA), `estrategias` (INTEGER[]),
+`cambia_decisiones`, `titulo`, `detalle`, `ref`.
+
+- **`fecha_efectiva`** = la primera rueda de DATOS con la que la estrategia decidio
+  ya con el cambio (el `fecha_datos` de la primera corrida que lo tuvo).
+- **`cambia_decisiones`** = TRUE solo si cambia la LOGICA, los PARAMETROS o el
+  MODELO. Esos cortan tramos. Una correccion de datos puntual va en FALSE aunque
+  mueva alguna decision: queda como marca visible en el reporte, sin partir la
+  historia en pedazos que nunca llegan a la muestra minima.
+- Alta: `scripts/forward_testing/ft_cambios.py add` (valida dia habil, estrategias
+  y clave; avisa si ya hubo corridas con ese dato y si el cambio se queda sin
+  grupo de control). Consulta: `ft_cambios.py list`.
+- Carga inicial: `scripts/oneshot/create_ft_cambios.py`, 10 cambios. Cada fecha se
+  fecho con **evidencia**: la hora del commit, del archivo o de las filas escritas
+  contra `ft_operaciones.creado_en` de cada corrida. Ejemplos: el relleno del 28/8
+  se inserto a las 21.47 del 12/9, despues de la corrida de las 19.22, asi que rige
+  desde la rueda del 14/9; el put wall de OIEXIT se verifico en las operaciones (la
+  corrida del 10/9 abrio 5 con SL por ATR, la del 12/9 ya abrio 2 por put wall).
+  Solo uno corta tramos: el fix del score (rueda 29/5, estrategias 4/6/8/9).
+
+### 12.2 Tramos: la convencion de fechas
+
+Un tramo que va de `desde` a `hasta` contiene:
+
+| | Regla | Por que |
+|---|---|---|
+| Retornos diarios | `desde < fecha <= hasta` | la decision tomada con el dato de `desde` se ejecuta al cierre de ese dia: su primer retorno es el del dia siguiente |
+| Operaciones | entrada Y salida con `desde <= fecha_datos < hasta` | una decision con el dato del corte ya es regla nueva |
+
+- Una operacion que abrio antes del corte y cerro despues vivio bajo las dos reglas:
+  **no cuenta de ningun lado** (el reporte informa cuantas cruzan).
+- Las `_SPLIT_FIX` quedan afuera: su salida es contrafactual.
+- Las abiertas no tienen resultado y no cuentan.
+
+### 12.3 Las comparaciones
+
+Por cada estrategia afectada, el tramo de antes va desde su corte previo (o su
+inicio) hasta el cambio, y el de despues desde el cambio hasta su corte siguiente
+(o hoy). Modulo PURO: `src/utils/ft_tramos.py`.
+
+| Comparacion | Que es | Rol |
+|---|---|---|
+| **vs control** | diferencia diaria entre la estrategia y la cartera de control (promedio diario de las NO afectadas), antes contra despues. En puntos por mes (x21) | **PRINCIPAL** |
+| vs universo | lo mismo contra el universo equiponderado | referencia: incluye el efecto de la caja |
+| **expectancy vs control** | pnl_pct medio por operacion, diferencia-en-diferencias contra las operaciones del control en los mismos tramos | la de operaciones |
+| expectancy propia | la misma sin control | descriptiva, en gris |
+
+- **Grupo de control**: las estrategias no afectadas **sin un corte propio dentro de
+  la ventana** (una que cambio sus reglas ya no mide solo el mercado). Si un cambio
+  afecta a todas, no hay control y la comparacion principal queda vacia.
+- **IC95** con t de Student y grados de libertad de Welch-Satterthwaite (dos grupos
+  en vs control; cuatro en la expectancy).
+- **Minimos por lado**: 20 ruedas y 10 operaciones, y en la expectancy tambien las
+  del control. Por debajo el veredicto es **INSUFICIENTE y no se muestra el
+  numero**. Con 14 ruedas el IC de la diferencia diaria mide decenas de puntos por
+  mes: el numero existiria y no diria nada.
+- **Veredicto**: MEJORA / EMPEORA solo si el IC95 excluye el cero; si no, NO
+  CONCLUYENTE.
+
+**Por que la expectancy necesita control** (el caso que lo motivo): sin control,
+TECH_SECTOR_v1 daba EMPEORA por operacion en el fix del 29/5, -1,17 pp con IC
+[-1,95; -0,39]. Las operaciones del control cayeron igual en los mismos tramos
+(COMBO_v1 +1,41% -> -0,59% por operacion, TECH_v1 +1,74% -> -0,55%). Descontado
+eso: +0,50 pp [-1,37; +2,38], NO CONCLUYENTE. Se descarto antes que fuera el churn
+del bug: sin las 93 operaciones de duracion cero el crudo sigue en EMPEORA.
+
+**Limites que hay que tener presentes al leer**:
+- El control no es un experimento aleatorizado: son otras estrategias, con otra
+  logica. Descuenta mercado y estructura, no todo.
+- Los retornos diarios se tratan como independientes (autocorrelacion chica en
+  carteras diarias; el IC queda algo angosto si no lo fuera).
+- Con 4 estrategias x 3 comparaciones, alguna puede salir concluyente por azar (5%
+  cada una). Se decide con la comparacion principal, no con la que mas convenga.
+- `VENTANA_COMPARABLE` del reporte es `2026-05-30` (`fecha >= 30/5`, primer punto
+  el 1/6) y la fecha efectiva del fix es el 29/5: la ventana comparable deja afuera
+  el retorno del 1/6, que ya es post-fix. Un dia; no se cambio para no mover los
+  numeros ya publicados en el JOURNAL.
+
+### 12.4 Foto de base
+
+`scripts/forward_testing/ft_foto_base.py` -> `reportes/ft_foto_base_<rueda>.{json,md}`.
+Por estrategia y en las dos ventanas: retorno, benchmark, max DD, **Sortino con IC95
+por bootstrap** (`ft_tramos.ic95_bootstrap`, remuestreo iid, 2000 remuestras,
+semilla fija), Sharpe con IC95 de Lo, metricas por operacion, tramo vigente y los
+cambios registrados. Nunca pisa una foto existente salvo `--forzar`.
+
+Existe porque el reporte se regenera y la historia se RECOMPUTA: corregido un dato,
+la version anterior deja de existir. Primera foto: rueda **2026-09-11**, antes de
+la Fase 5. OJO: `reportes/` esta gitignoreado; la respalda OneDrive.
+
+### 12.5 Primer resultado: fix del score=0.0 (rueda 29/5)
+
+| Estrategia | Ruedas antes / despues | vs control (pp/mes) | Expectancy vs control (pp) |
+|---|---|---|---|
+| TECH_SECTOR_v1 | 24 / 72 | -0,1 [-12,6; +12,3] NO CONCL. | +0,50 [-1,37; +2,38] NO CONCL. |
+| TECH_SECTOR_v2 | 18 / 72 | INSUFICIENTE | +1,77 [-0,63; +4,18] NO CONCL. |
+| TECH_SECTOR_OPTIONS_v1 | 14 / 72 | INSUFICIENTE | +3,09 [-3,77; +9,95] NO CONCL. |
+| TECH_SECTOR_OPTIONS_v2 | 14 / 72 | INSUFICIENTE | -2,84 [-9,29; +3,61] NO CONCL. |
+
+Control: ML_SCANNER_v1, TECH_v1, SMC_v1, COMBO_v1, SMC_v2, OIEXIT_v1. Tres de las
+cuatro nacieron menos de 20 ruedas antes del corte: su comparacion diaria **nunca**
+va a ser posible. El fix se justifica por correccion (el score era 0 por un bug),
+no por resultado.
+
+### 12.6 Procedimiento para un cambio nuevo
+
+1. Antes de desplegar, decidir que estrategias toca y si cambia decisiones.
+2. Fecha efectiva = la rueda con la que va a decidir la proxima corrida (la ultima
+   rueda cargada cuando corra `ft_run_diario.bat`).
+3. `ft_cambios.py add ... --dry-run`, revisar los avisos, y sin `--dry-run`.
+4. Entrada en el JOURNAL con la linea `**Registro**: ft_cambios <clave>`.
+5. Una estrategia NUEVA en paralelo (ej. ML_SCANNER_v2) no es un corte de la vieja:
+   se comparan en el mismo periodo. Si el despliegue toca algo que la vieja usa (el
+   scanner), se registra como marca sobre la vieja.

@@ -354,6 +354,20 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   `ft_utils.registrar_estado_posiciones()`; la historia se backfilleo con
   `scripts/oneshot/add_fecha_datos_ft_posiciones.py`.
 
+### FT: todo cambio que toque decisiones se REGISTRA en `ft_cambios` (13/9/2026)
+- Antes de desplegar algo que cambie logica, parametros, modelo, un dato o infra
+  con los que decide alguna estrategia FT: `ft_cambios.py add --dry-run`, revisar
+  avisos, registrar, y la linea `**Registro**` en el JOURNAL. Sin registro, el
+  cambio no se puede medir despues.
+- La fecha efectiva se razona como `fecha_datos`: la rueda con la que va a decidir
+  la proxima corrida. La del commit lee el tramo equivocado, en silencio.
+- Se mide CONTRA EL GRUPO DE CONTROL (estrategias no afectadas, mismos dias), no
+  contra cero ni solo contra el universo: en el fix del 29/5 la expectancy cruda de
+  TECH_SECTOR_v1 daba EMPEORA con IC que excluia el cero y era el mercado del tramo
+  (contra el control, NO CONCLUYENTE). Un cambio que afecta a TODAS no tiene control.
+- Una estrategia nueva en paralelo (ej. ML_SCANNER_v2) no corta a la vieja: se
+  comparan en el mismo periodo.
+
 ### alertas_scanner: `scan_fecha` NO es la fecha de datos (incidente 2/9/2026)
 - La fecha de datos de una alerta es **`precio_fecha`** (sobre que cierre se
   calculo). `scan_fecha` y `created_at` son CUANDO CORRIO el scanner. Es la
@@ -519,11 +533,14 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor, REGISTRA el split en `splits_aplicados` (misma transaccion, fecha real de Yahoo o `--fecha-ejecucion`) y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
 | `src/utils/ft_metricas.py` | Modulo PURO de metricas de riesgo (max DD, Sharpe con IC95%, Sortino, IR, beta) y de trade (expectancy, profit factor, payoff). Sin DB ni config |
+| `src/utils/ft_tramos.py` | Modulo PURO para MEDIR UN CAMBIO: corta la historia de cada estrategia en tramos por `ft_cambios` y compara antes/despues contra un GRUPO DE CONTROL (las no afectadas, mismos dias) y contra el universo, con IC95 de Welch; expectancy en diferencia-en-diferencias. INSUFICIENTE sin numero por debajo de 20 ruedas / 10 ops por lado. Tambien `ic95_bootstrap` (Sortino). Ver docs/forward_testing/METRICAS.md sec. 12 |
+| `scripts/forward_testing/ft_cambios.py` | CLI del registro `ft_cambios`: `add` (valida dia habil/estrategias/clave; avisa si ya hubo corridas con ese dato o si queda sin control; `--dry-run`) y `list`. Registrar ANTES de desplegar cualquier cambio que toque decisiones de FT |
+| `scripts/forward_testing/ft_foto_base.py` | Foto de BASE congelada por rueda (`reportes/ft_foto_base_<rueda>.json/.md`): riesgo con Sortino IC95 por bootstrap y Sharpe IC95, metricas de operacion, tramo vigente y cambios. No pisa salvo `--forzar`. Primera: rueda 2026-09-11 |
 | `scripts/push_senales_bot.py` | SIN USO desde el 13/9/2026 (bots Alpaca apagados; se conserva por si se reactivan). Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
 | `scripts/alpaca/bot_ml.py` / `bot_tech_sector.py` / `bot_options.py` | Los 3 bots Alpaca Plan B, APAGADOS el 13/9/2026 (workflows deshabilitados). Leen la masticada, deciden con el cerebro src/strategies/, ejecutan via src/trading/ejecucion_bot. `--dry-run` / `--ignore-frescura`. Ver docs/bots_alpaca.md |
 | `src/strategies/` | Cerebro de decision COMPARTIDO FT<->Alpaca (PURO): scoring (calcular_score_tecnico), sectorial (v1/v2), ml_scanner |
 | `src/trading/senales_adapter.py` / `ejecucion_bot.py` | Adapters Alpaca: data (masticada->cerebro) + ejecucion (alpaca_client + posiciones_bot*/operaciones_bot*) |
-| `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
+| `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html). Incluye la seccion "Antes y despues de cada cambio" (lee `ft_cambios`, calcula con `ft_tramos`): un bloque por cambio que corta, tramo vigente por estrategia y marcas |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/refresh_earnings_historico.py` | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` (llena faltantes+desactualizados, <=20/corrida), sin flags = incremental, `--ticker X` (alta), `--status`, `--target local\|railway`. Backfill inicial corre en Oracle->Railway (cron temporal); incremental en Windows (target local). Ver docs/earnings_reaccion.md |
 | `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market |
@@ -759,6 +776,14 @@ Las criticas:
   manual y le faltaba el 34% de los dias). **Las metricas de riesgo se calculan
   SOLO desde aca.** `ft_metricas_diarias` queda intacta como log operativo.
   La escribe `ft_compute_equity.py`. Ver docs/forward_testing/METRICAS.md
+- `ft_cambios` (LOCAL, 13/9/2026) -- registro de los cambios que afectan a las
+  estrategias FT (UNIQUE clave; `fecha_efectiva`, `tipo`, `estrategias` INTEGER[],
+  `cambia_decisiones`, titulo/detalle/ref). `fecha_efectiva` = primera rueda de
+  DATOS con la que la estrategia decidio ya con el cambio, NO la del commit ni la
+  de la corrida. Solo `cambia_decisiones=TRUE` (logica/parametros/modelo) corta
+  tramos; datos, medicion, refactor e infra quedan como marca. La lee el reporte
+  (`ft_tramos`). Alta con `ft_cambios.py add`; carga inicial fechada con evidencia
+  en `scripts/oneshot/create_ft_cambios.py`. Ver METRICAS.md sec. 12
 - `senales_bot_diaria` (RAILWAY) -- SIN PRODUCTOR desde el 13/9/2026 (bots Alpaca apagados). Tabla MASTICADA Plan B para los 3 bots Alpaca
   (Tarea 16). 1 fila por (ticker, fecha), ~18 cols, PK (ticker, fecha). El bot
   "solo opera": lee senales pre-computadas, no las crudas. Columnas: close, sector,

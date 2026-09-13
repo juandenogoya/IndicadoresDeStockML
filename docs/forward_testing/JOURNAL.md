@@ -733,6 +733,63 @@ no se tocan.
 **Resultado real**: (completar)
 **Ref**: scripts/forward_testing/ft_bot_tech_sectorial_oiexit_v1.py,
 src/utils/precio_referencia.py
+**Registro**: ft_cambios `precio_referencia_put_wall` (rueda 11/9, marca)
+
+---
+
+### 2026-09-13 — DISENO
+**Medir un cambio: registro ft_cambios, tramos con grupo de control y foto de base**
+
+Antes de sumar ML_SCANNER_v2 (Fase 5 del reentrenamiento) y de seguir tocando
+modelos, hacia falta poder responder "este cambio mejoro o empeoro la estrategia"
+sin tres trampas que ya habian aparecido:
+1. **La fecha**: el commit no es el dia en que el cambio entra en las decisiones
+   (sistema asincronico, rutina manual).
+2. **El mercado**: antes y despues de un corte son regimenes distintos.
+3. **La caja**: con 55-80% de exposicion, contra el universo cualquier caida
+   parece una mejora.
+
+**Decision**:
+- Tabla `ft_cambios` (LOCAL) y CLI `ft_cambios.py add|list`. Solo los cambios de
+  logica, parametros o modelo cortan tramos; correcciones de datos, medicion,
+  refactors e infra quedan como marca.
+- Comparacion principal **contra un grupo de control**: las estrategias no
+  afectadas, en los mismos dias (diferencia-en-diferencias). El universo queda
+  como referencia. La expectancy por operacion, tambien contra el control.
+- IC95 siempre; INSUFICIENTE y sin numero por debajo de 20 ruedas o 10
+  operaciones por lado.
+- Foto de base congelada: `reportes/ft_foto_base_2026-09-11.{json,md}`.
+
+**Carga inicial**: 10 cambios, fechados con evidencia (hora del commit, del
+archivo o de las filas contra `ft_operaciones.creado_en` de cada corrida). Solo
+el fix del score (rueda 29/5) corta tramos.
+
+**Primer resultado, fix del score=0.0 (rueda 29/5)**:
+
+| Estrategia | Ruedas A / D | vs control (pp/mes) | Expectancy vs control (pp) |
+|---|---|---|---|
+| TECH_SECTOR_v1 | 24 / 72 | -0.1 [-12.6, +12.3] NO CONCL. | +0.50 [-1.37, +2.38] NO CONCL. |
+| TECH_SECTOR_v2 | 18 / 72 | INSUFICIENTE | +1.77 [-0.63, +4.18] NO CONCL. |
+| TECH_SECTOR_OPTIONS_v1 | 14 / 72 | INSUFICIENTE | +3.09 [-3.77, +9.95] NO CONCL. |
+| TECH_SECTOR_OPTIONS_v2 | 14 / 72 | INSUFICIENTE | -2.84 [-9.29, +3.61] NO CONCL. |
+
+**El hallazgo que justifica el control**: sin el, TECH_SECTOR_v1 daba EMPEORA por
+operacion (-1.17 pp, IC [-1.95, -0.39]). Las 24 ruedas previas al fix fueron un
+rally (universo +6.7%) y las 72 posteriores no (+0.7%), y las operaciones del
+control cayeron igual (COMBO_v1 +1.41% -> -0.59%, TECH_v1 +1.74% -> -0.55%).
+Descontado el mercado, NO CONCLUYENTE. Se descarto que fuera el churn del bug:
+sin las 93 operaciones de duracion cero el veredicto crudo no cambia.
+
+**Lo que NO se puede afirmar**: que el fix haya mejorado o empeorado las 4
+estrategias. Tres nacieron menos de 20 ruedas antes del corte y esa comparacion
+nunca va a ser posible. El fix se justifica por correccion, no por resultado.
+
+**Efecto esperado**: todo cambio futuro, empezando por ML_SCANNER_v2, se registra
+antes de desplegarse y tiene lectura con IC95 desde que junta muestra.
+**Resultado real**: (completar en la Etapa 4, ML_SCANNER v1 vs v2)
+**Ref**: docs/forward_testing/METRICAS.md seccion 12; src/utils/ft_tramos.py;
+scripts/forward_testing/ft_cambios.py y ft_foto_base.py;
+scripts/oneshot/create_ft_cambios.py
 
 ---
 
@@ -746,4 +803,6 @@ Descripcion de que ocurrio o que decidimos.
 **Efecto esperado**: que esperamos que cambie.
 **Resultado real**: (completar cuando tengamos datos)
 **Ref**: archivo o commit relacionado
+**Registro**: ft_cambios <clave> (obligatorio si toca logica, parametros, modelo,
+datos o infra con los que decide alguna estrategia; ver METRICAS.md seccion 12.6)
 ```
