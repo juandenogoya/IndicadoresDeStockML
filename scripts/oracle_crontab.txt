@@ -13,9 +13,12 @@ HOME=/home/ubuntu
 #  Log del pull: /tmp/cron_git_pull.log
 # =============================================================
 
-# ── Pipeline diario secuencial (precios -> features -> scanner) ───
-# L-V 22:00 UTC = 19:00 ART  |  wrapper verifica dia habil + abort-on-fail
-0 22 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull.log || true; } && /home/ubuntu/IndicadoresDeStockML/scripts/oracle_pipeline_diario.sh
+# NOTA: el pipeline diario de las 22:00 UTC (scripts/oracle_pipeline_diario.sh:
+# precios -> features -> scanner) se QUITO el 13/9/2026. Cron lo disparaba todos
+# los dias habiles pero fallaba en silencio desde el 7/5: el wrapper no tiene
+# permiso de ejecucion y el error no quedaba en ningun log. Bajo Plan C no
+# corresponde: escribiria en Railway, donde ya no hay precios. Precios, features y
+# scanner corren en LOCAL (scripts/manual/cron_paso1/2/3).
 
 # ── Opciones US (Yahoo Finance) ───────────────────────────────
 # Intento 1 -- 23:00 UTC L-V  |  Intento 2 -- 02:00 UTC Ma-Sa  |  Intento 4 -- 06:00 UTC Ma-Sa

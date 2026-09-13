@@ -1,6 +1,9 @@
 # Bots Alpaca — arquitectura Plan B
 
-Estado: ACTIVO en paper desde 2026-06-04 (Tarea 16, Pasos 1-5).
+Estado: APAGADO el 2026-09-13 por decision del usuario (paper, sin valor frente a
+las estrategias FT locales): workflows deshabilitados y push de senales_bot_diaria
+fuera de ft_run_diario.bat. El codigo y este documento quedan por si se reactivan.
+Estuvo ACTIVO en paper desde 2026-06-04 (Tarea 16, Pasos 1-5).
 Estado operativo vivo y pendientes: `memory/bots_trading.md`.
 
 Este documento describe la arquitectura de produccion de los 3 bots Alpaca

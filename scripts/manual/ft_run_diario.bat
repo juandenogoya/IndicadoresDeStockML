@@ -4,8 +4,8 @@ REM  ft_run_diario.bat
 REM  Ejecuta todos los bots de Forward Testing en secuencia.
 REM
 REM  Uso: doble click o desde consola
-REM       Correr DESPUES de que finalice el Oracle pipeline (~00:00 UTC / 21:00 ART)
-REM       El pipeline Oracle corre a las 22:00 UTC y tarda ~95 min.
+REM       Correr DESPUES de la rutina local de datos, en este orden:
+REM       cron_paso1_precios_yq.bat, cron_paso2_features.bat, cron_paso3_scanner.bat
 REM
 REM  Para agregar una nueva estrategia:
 REM       Copiar el bloque "BOT N" al final de la lista
@@ -292,21 +292,10 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
-REM ── PASO FINAL 2 - Push senales_bot_diaria (Plan B, bots Alpaca) ──
-REM  Productor HERMANO de FT: arma la tabla masticada desde la data
-REM  local fresca (incluido opciones que el paso [0] sincronizo) y la
-REM  sube a Railway. El bot Alpaca lee esa tabla, no las crudas.
-REM  Lee LOCAL y escribe RAILWAY (maneja su propia conexion dual).
-echo Push senales_bot_diaria (local -^> Railway)...
-echo. >> "%LOGFILE%"
-echo --- PUSH senales_bot_diaria --- >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\push_senales_bot.py" >> "%LOGFILE%" 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo [WARN] push_senales_bot.py fallo - bots Alpaca usarian senales previas.
-) ELSE (
-    echo [OK] senales_bot_diaria actualizada en Railway.
-)
-
+REM -- PASO FINAL 2 - RETIRADO 13/9/2026 -----------------------
+REM  Subia senales_bot_diaria a Railway para los bots Alpaca. Los bots se
+REM  APAGARON por decision del usuario: paper, sin valor frente a las
+REM  estrategias FT. scripts/push_senales_bot.py queda por si se reactivan.
 
 
 REM -- PASO FINAL 3 - Precomputar los veredictos del universo -----
@@ -318,10 +307,6 @@ REM
 REM  VA DESPUES del paso [0b] (compute_opciones_derivadas), no antes: el
 REM  veredicto vota con opciones_pcr_plazo_diario, y ese paso es el que la
 REM  calcula desde el crudo recien sincronizado.
-REM
-REM  VA DESPUES del push de senales, no antes: tarda ~2 min y es LOCAL-only.
-REM  Los bots Alpaca leen la masticada a las 16:00 UTC; nada que sirva solo al
-REM  dashboard debe demorar ese dato.
 REM
 REM  Si falla no se pierde nada: el dashboard muestra los veredictos de la
 REM  rueda anterior y avisa en pantalla que estan desfasados.

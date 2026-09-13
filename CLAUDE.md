@@ -11,15 +11,16 @@ pipeline diario, scanner ML, snapshot de opciones US/AR y backtest historico.
   mercado siguiente, justifica almacenamiento remoto siempre disponible).
 - **Oracle Cloud VM** = cron de snapshot opciones US (3 intentos) + opciones AR.
 - **GitHub Actions** = intento 3 (backup IP distinta) del snapshot opciones US.
-  Bots Alpaca (3): rediseñados Plan B y ACTIVOS desde 4/6/2026 (Pasos 1-5 hechos).
-  Workflows repuntados a scripts/alpaca/ y habilitados. Ver memory/bots_trading.md.
+  Bots Alpaca (3): APAGADOS el 13/9/2026 por decision del usuario (paper, sin valor
+  frente a las estrategias FT): workflows deshabilitados y push de la masticada
+  fuera de ft_run_diario. El codigo queda. Ver memory/bots_trading.md.
 - **Windows** = recovery local manual post-cierre (recovery_incremental.bat).
 - **Streamlit** = la app Cloud vieja (app/, indicadoresat) DECOMISIONADA (5/6/2026,
   Paso 7): directorio app/ eliminado del repo; pendiente borrar la app en
   share.streamlit.io (manual). Quedan SOLO apps Streamlit LOCALES: dashboard/
   (informe por ticker) y scripts/reports/app.py (reportes/infografia).
 
-### Bots Alpaca -- rediseño Plan B (4/6/2026, ACTIVO; Pasos 1-5 hechos)
+### Bots Alpaca -- rediseño Plan B (4/6/2026; APAGADOS el 13/9/2026)
 Los 3 bots leian tablas de mercado CONGELADAS en Railway (Plan C apago el pipeline
 que las alimentaba ~12/5) -> operaban con señales viejas. Reset a cero + rediseño,
 ya implementado y en produccion (paper):
@@ -510,7 +511,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
-| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + push senales_bot_diaria + precomputo de veredictos del dashboard |
+| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + precomputo de veredictos del dashboard. El push de senales_bot_diaria se saco el 13/9/2026 (bots Alpaca apagados) |
 | `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py` |
 | `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
 | `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos". **`Tabla.columna` es SIEMPRE la fecha de DATOS**; el reloj de corrida va aparte en `columna_registro` y se informa pero NO entra en el diagnostico (ver patrones criticos: incidente 2/9/2026) |
@@ -518,8 +519,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor, REGISTRA el split en `splits_aplicados` (misma transaccion, fecha real de Yahoo o `--fecha-ejecucion`) y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
 | `src/utils/ft_metricas.py` | Modulo PURO de metricas de riesgo (max DD, Sharpe con IC95%, Sortino, IR, beta) y de trade (expectancy, profit factor, payoff). Sin DB ni config |
-| `scripts/push_senales_bot.py` | Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
-| `scripts/alpaca/bot_ml.py` / `bot_tech_sector.py` / `bot_options.py` | Los 3 bots Alpaca Plan B (entrypoints GH Actions). Leen la masticada, deciden con el cerebro src/strategies/, ejecutan via src/trading/ejecucion_bot. `--dry-run` / `--ignore-frescura`. Ver docs/bots_alpaca.md |
+| `scripts/push_senales_bot.py` | SIN USO desde el 13/9/2026 (bots Alpaca apagados; se conserva por si se reactivan). Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
+| `scripts/alpaca/bot_ml.py` / `bot_tech_sector.py` / `bot_options.py` | Los 3 bots Alpaca Plan B, APAGADOS el 13/9/2026 (workflows deshabilitados). Leen la masticada, deciden con el cerebro src/strategies/, ejecutan via src/trading/ejecucion_bot. `--dry-run` / `--ignore-frescura`. Ver docs/bots_alpaca.md |
 | `src/strategies/` | Cerebro de decision COMPARTIDO FT<->Alpaca (PURO): scoring (calcular_score_tecnico), sectorial (v1/v2), ml_scanner |
 | `src/trading/senales_adapter.py` / `ejecucion_bot.py` | Adapters Alpaca: data (masticada->cerebro) + ejecucion (alpaca_client + posiciones_bot*/operaciones_bot*) |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html) |
@@ -758,7 +759,7 @@ Las criticas:
   manual y le faltaba el 34% de los dias). **Las metricas de riesgo se calculan
   SOLO desde aca.** `ft_metricas_diarias` queda intacta como log operativo.
   La escribe `ft_compute_equity.py`. Ver docs/forward_testing/METRICAS.md
-- `senales_bot_diaria` (RAILWAY) -- tabla MASTICADA Plan B para los 3 bots Alpaca
+- `senales_bot_diaria` (RAILWAY) -- SIN PRODUCTOR desde el 13/9/2026 (bots Alpaca apagados). Tabla MASTICADA Plan B para los 3 bots Alpaca
   (Tarea 16). 1 fila por (ticker, fecha), ~18 cols, PK (ticker, fecha). El bot
   "solo opera": lee senales pre-computadas, no las crudas. Columnas: close, sector,
   alert_nivel/alert_score (ML), sma21/50/200/rsi14/macd/macd_signal/atr14 (tecnico),
