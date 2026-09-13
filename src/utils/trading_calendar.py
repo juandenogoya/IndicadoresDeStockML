@@ -3,7 +3,14 @@ trading_calendar.py
 Calendario de dias habiles NYSE (2025-2027).
 
 Cubre: New Year, MLK, Presidents Day, Good Friday, Memorial Day,
-       Juneteenth, Independence Day, Labor Day, Thanksgiving, Christmas.
+       Juneteenth, Independence Day, Labor Day, Thanksgiving, Christmas,
+       y los cierres EXTRAORDINARIOS (no estan en ninguna regla fija):
+       2025-01-09, duelo nacional por Jimmy Carter.
+
+Cierres extraordinarios: faltaba el de Carter y lo destapo la auditoria de
+huecos de precios_diarios del 12/9/2026 (los 200 tickers sin barra ese dia).
+Si vuelve a pasar, la señal es la misma: un dia "habil" sin datos para TODO
+el universo.
 
 Funciones publicas:
     is_trading_day(d)           -> bool
@@ -25,6 +32,7 @@ NYSE_HOLIDAYS: dict[date, str] = {
 
     # ── 2025 ─────────────────────────────────────────────────────────────
     date(2025, 1,  1):  "New Year's Day",
+    date(2025, 1,  9):  "National Day of Mourning (Carter)",   # cierre extraordinario
     date(2025, 1, 20):  "MLK Day",
     date(2025, 2, 17):  "Presidents Day",
     date(2025, 4, 18):  "Good Friday",
