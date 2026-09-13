@@ -347,6 +347,11 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   usar `fecha_datos`**; con la de registro se lee el dia equivocado, en silencio.
 - Las escribe `ft_utils.obtener_fecha_datos()` (MAX(fecha) del ticker). Los bots
   no la manejan: `ft_utils` es el UNICO lugar que escribe `ft_operaciones`.
+- **`ft_posiciones_diarias.fecha_datos`** (12/9/2026): misma trampa. `fecha` es el
+  dia en que corrio el bot y `precio_cierre` es el ultimo close disponible (18,8%
+  del mismo dia, 79,6% de la rueda anterior). La escribe
+  `ft_utils.registrar_estado_posiciones()`; la historia se backfilleo con
+  `scripts/oneshot/add_fecha_datos_ft_posiciones.py`.
 
 ### alertas_scanner: `scan_fecha` NO es la fecha de datos (incidente 2/9/2026)
 - La fecha de datos de una alerta es **`precio_fecha`** (sobre que cierre se

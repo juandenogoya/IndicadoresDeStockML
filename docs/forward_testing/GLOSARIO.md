@@ -248,6 +248,7 @@ posiciones, no son inputs directos de las estrategias (aun).
 | vol_price_diverge | Divergencia precio-volumen del dia |
 | dias_abierta | Dias habiles desde la entrada hasta la fecha |
 | retorno_pct | Retorno % vs precio de entrada |
+| fecha_datos | Fecha del close usado como precio_cierre. `fecha` es la de REGISTRO (cuando corrio el bot): para cruzar con precios_diarios o indicadores_tecnicos usar `fecha_datos` |
 
 ---
 

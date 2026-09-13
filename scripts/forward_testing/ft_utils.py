@@ -565,6 +565,11 @@ def registrar_estado_posiciones(
     Los estados post_Nd permiten evaluar si el cierre fue oportuno:
     si el precio sube despues de cerrar, el exit fue prematuro.
 
+    `fecha` es el dia de REGISTRO (cuando corre el bot); `fecha_datos` es la del
+    close usado como precio_cierre, el ultimo disponible (MAX(fecha) del ticker).
+    Para cruzar con precios_diarios o indicadores_tecnicos usar fecha_datos
+    (docs/forward_testing/METRICAS.md).
+
     Idempotente via ON CONFLICT (operacion_id, fecha) DO NOTHING.
     """
     from src.utils.trading_calendar import trading_days_between
@@ -654,6 +659,15 @@ def registrar_estado_posiciones(
         """), {"tickers": tickers_list}).fetchall()
         fms_map = {r.ticker: dict(r._mapping) for r in fms_rows}
 
+        # Fecha del close que se usa como precio_cierre: el ultimo disponible
+        # (mismo criterio que obtener_fecha_datos). `fecha` es la de REGISTRO.
+        fecha_datos_map = {r.ticker: r.fecha for r in conn.execute(text("""
+            SELECT ticker, MAX(fecha) AS fecha
+            FROM precios_diarios
+            WHERE ticker = ANY(:tickers)
+            GROUP BY ticker
+        """), {"tickers": tickers_list}).fetchall()}
+
     # ── Scores de velas y tecnicos (queries batch) ────────────────────────────
     candle_scores   = obtener_candle_score_5d()
     indicadores_lst = obtener_indicadores_hoy()
@@ -705,6 +719,7 @@ def registrar_estado_posiciones(
             "operacion_id":       op.id,
             "ticker":             ticker,
             "fecha":              fecha,
+            "fecha_datos":        fecha_datos_map.get(ticker) if precio_cierre else None,
             "estado":             estado,
             "precio_cierre":      precio_cierre,
             "precio_entrada_ref": precio_entrada,
@@ -738,14 +753,14 @@ def registrar_estado_posiciones(
         for f in filas:
             conn.execute(text("""
                 INSERT INTO ft_posiciones_diarias (
-                    estrategia_id, operacion_id, ticker, fecha, estado,
+                    estrategia_id, operacion_id, ticker, fecha, fecha_datos, estado,
                     precio_cierre, precio_entrada_ref, retorno_pct,
                     dias_abierta, tech_score, candle_score_5d,
                     rango_5d_pct, atr14, lateral_ratio,
                     vol_price_confirm, vol_price_diverge, up_vol_5d,
                     motivo_salida
                 ) VALUES (
-                    :estrategia_id, :operacion_id, :ticker, :fecha, :estado,
+                    :estrategia_id, :operacion_id, :ticker, :fecha, :fecha_datos, :estado,
                     :precio_cierre, :precio_entrada_ref, :retorno_pct,
                     :dias_abierta, :tech_score, :candle_score_5d,
                     :rango_5d_pct, :atr14, :lateral_ratio,

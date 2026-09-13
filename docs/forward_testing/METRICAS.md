@@ -492,6 +492,22 @@ rutina nocturna es manual.
 `ft_compute_equity` usa `COALESCE(fecha_datos, fecha_entrada)`: si alguna
 quedara sin resolver se degrada a la fecha de registro en vez de perderla.
 
+**`ft_posiciones_diarias` tiene la misma trampa** (agregado 2026-09-12): `fecha` es
+el dia en que corrio el bot, pero `precio_cierre` -- y con el retorno, rango, ATR y
+scores de la fila -- es el ultimo close disponible. Columna `fecha_datos`:
+- Hacia adelante la escribe `ft_utils.registrar_estado_posiciones()` con el
+  `MAX(fecha)` del ticker, el mismo criterio que `obtener_fecha_datos()`.
+- La historia se backfilleo con `scripts/oneshot/add_fecha_datos_ft_posiciones.py`:
+  match EXACTO y UNICO del precio contra el close; si no hay match, o hay dos ruedas
+  con el mismo close, la moda de la corrida. Resolvio el 100% de 23.541 filas
+  (22.972 por match, 569 por moda). Desfase: 18,8% del mismo dia, 79,6% de la rueda
+  anterior. Control contra `ft_operaciones` el dia de entrada y de cierre: 99,3% y
+  99,96% coinciden; las 19 diferencias son todas de UNA noche (2026-06-02).
+- OJO con la tolerancia: un centavo (la de `add_fecha_datos_ft_operaciones.py`, que
+  funciona porque aplica la moda a TODA la corrida) no sirve para matchear filas
+  sueltas. En tickers baratos dos ruedas seguidas difieren en un centavo y el match
+  elegia la mas reciente (LAC 3,14 el 13/7 y 3,15 el 14/7).
+
 **Efecto medido** (volatilidad anualizada, antes -> despues):
 
 | Estrategia | antes | despues |
