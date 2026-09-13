@@ -508,3 +508,45 @@ churn (584 operaciones) y por lo tanto la mas expuesta al artefacto. Coherente.
 `precios_diarios`, `indicadores_tecnicos` o cualquier tabla de mercado hay que
 usar `fecha_datos`, **no** `fecha_entrada`. Con la fecha de registro se lee el
 dia equivocado — silencioso y sistematico.
+
+### Splits: se REGISTRAN, no se corrigen (decision 2026-09-12)
+
+Un split con una posicion abierta rompe la operacion: el precio post-split llega
+contra el precio de entrada y la cantidad pre-split, el stop se dispara sobre un
+derrumbe que no existio y la salida queda con una perdida ficticia (incidente
+KLAC/CRWD, JOURNAL 2026-07-21: -12.709 USD y dos estrategias que cambiaban de
+signo). A los bots de Alpaca les pasa lo mismo: guardan precio de entrada y stop
+en su propia tabla.
+
+**Decision**: FT y Alpaca son estrategias en paper para EVALUAR. Un split es un
+suceso excepcional: la operacion **no se corrige**, el split **se registra** y los
+analisis lo tienen en cuenta. El registro es la tabla `splits_aplicados` (LOCAL),
+que escribe `scripts/manual/splits.py corregir` al corregir `precios_diarios`.
+
+- La correccion del 21/7 (`fix_ft_ops_split.py`) queda como estaba: esas 8
+  operaciones ya llevan `_SPLIT_FIX` en `motivo_salida`.
+- `ft_posiciones_diarias` conserva 39 filas contaminadas de KLAC/CRWD (retorno
+  -70%..-89%, ATR x9) que NO se corrigen.
+
+**Uso en un analisis**: una operacion quedo expuesta si entro con un dato previo a
+la frontera y seguia abierta cuando el sistema ya veia la escala nueva. La
+frontera es `fecha_corte_db` (la primera rueda que precios_diarios tuvo en la
+escala nueva, que depende de cuando se bajo la data) y NO `execution_date`: KLAC
+ejecuto el 12/6, pero la rueda del 11/6 ya llego ajustada y la op 820 cerro con
+ella. Sin correccion registrada, la frontera es la ejecucion.
+
+```sql
+SELECT o.id, o.estrategia_id, o.ticker, o.motivo_salida,
+       s.execution_date AS split_fecha, s.ratio AS split_ratio
+FROM ft_operaciones o
+JOIN splits_aplicados s
+  ON s.ticker = o.ticker
+ AND COALESCE(o.fecha_datos, o.fecha_entrada)
+       < COALESCE(s.fecha_corte_db, s.execution_date)
+ AND (o.fecha_salida IS NULL
+      OR COALESCE(o.fecha_datos_salida, o.fecha_salida)
+           >= COALESCE(s.fecha_corte_db, s.execution_date))
+```
+
+Para `ft_posiciones_diarias` y las tablas de los bots (`operaciones_bot*`, en
+Railway), el mismo criterio con sus columnas de entrada y salida.

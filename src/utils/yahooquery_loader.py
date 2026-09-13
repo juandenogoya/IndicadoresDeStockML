@@ -184,3 +184,59 @@ def _to_yf_shape(sub: pd.DataFrame) -> pd.DataFrame:
         "Volume":    sub["volume"].fillna(0).astype("int64"),
     }, index=sub.index)
     return out.dropna(subset=["Close"])
+
+
+def eventos_split(tickers: list, start: date, end: date) -> dict:
+    """
+    Splits informados por Yahoo, por ticker: {ticker: [(fecha, ratio), ...]}.
+
+    fecha = rueda de EJECUCION (la primera que cotiza en la escala nueva).
+    ratio = acciones nuevas por cada vieja: 10.0 es un split 10:1 y 0.5 un
+    inverso 1:2. Mismo sentido que polygon_splits.ratio.
+
+    Verificado el 12/9/2026 contra polygon_splits: KLAC 2026-06-12 x10,
+    CRWD 2026-07-02 x4, NFLX 2025-11-17 x10, NOW 2025-12-18 x5 y AZN
+    2026-02-02 x0,5 -- misma fecha y mismo ratio en los 5.
+
+    Funcion aparte porque download_batch() normaliza a OHLCV y descarta la
+    columna `splits` que yahooquery trae en history(). No se toca ese contrato:
+    lo consume recovery_incremental.
+
+    Raises:
+        RateLimitDetected: si yahooquery devuelve mensajes de throttle.
+    """
+    from yahooquery import Ticker
+
+    end_exclusive = end + timedelta(days=1)
+    try:
+        df = Ticker(tickers, asynchronous=True).history(
+            start=start.strftime("%Y-%m-%d"),
+            end=end_exclusive.strftime("%Y-%m-%d"),
+            interval="1d",
+            adj_ohlc=False,
+        )
+    except Exception as e:
+        msg = str(e)
+        if _is_ratelimit_msg(msg):
+            raise RateLimitDetected(msg)
+        return {}
+
+    if isinstance(df, dict):
+        joined_msgs = " | ".join(str(v) for v in df.values())
+        if _is_ratelimit_msg(joined_msgs):
+            raise RateLimitDetected(joined_msgs[:200])
+        return {}
+    if df is None or df.empty or "splits" not in df.columns:
+        return {}
+
+    ev = df[pd.to_numeric(df["splits"], errors="coerce").fillna(0) > 0]
+    result = {}
+    for idx, fila in ev.iterrows():
+        sym, fecha = idx if isinstance(idx, tuple) else (tickers[0], idx)
+        ts = pd.Timestamp(fecha)
+        if ts.tz is not None:
+            ts = ts.tz_localize(None)
+        result.setdefault(sym, []).append((ts.date(), float(fila["splits"])))
+    for sym in result:
+        result[sym].sort()
+    return result

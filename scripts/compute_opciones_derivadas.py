@@ -18,7 +18,8 @@ una fecha, desde el crudo ya synced:
 
 Precio de referencia (10/9/2026, src/utils/precio_referencia.py): el close de la rueda en
 precios_diarios manda, llevado a la escala de ESE dia con los splits reales posteriores
-(polygon_splits); opciones_snapshot.precio_subyacente solo tapa el hueco. La fuente
+(registro splits_aplicados, lo escribe scripts/manual/splits.py corregir);
+opciones_snapshot.precio_subyacente solo tapa el hueco. La fuente
 usada queda en `precio_fuente` de opciones_resumen_diario y opciones_pcr_plazo_diario.
 El paso 0 es ademas un detector de huecos de precios_diarios: si la rueda no esta
 cargada, sus tickers caen al precio de la captura y se avisa.
@@ -256,7 +257,8 @@ def _log_precio_referencia(chk: dict, fecha: date):
     if sr:
         muestra = ", ".join(f"{t} {c:.2f} vs {s:.2f} (x{k:g})" for t, c, s, k in sr[:5])
         log(f"  [WARN] {len(sr)} tickers donde captura y close difieren por un split EXACTO que"
-            f" polygon_splits no explica (split sin registrar, o sin corregir en precios_diarios): {muestra}")
+            f" splits_aplicados no explica (split sin corregir con splits.py, o corregido a mano"
+            f" sin registrar): {muestra}")
 
 
 # ── Main ────────────────────────────────────────────────────────────────────────

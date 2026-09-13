@@ -29,25 +29,35 @@ ESCALA DE SPLIT
   con la fuente FUENTE_DIARIO_ESCALA. El valor sigue saliendo del duenio; solo
   cambia la escala.
 
-  El factor sale del REGISTRO (`polygon_splits`), no de la captura. Primer
+  El factor sale del REGISTRO `splits_aplicados`, no de la captura. Primer
   intento, descartado: deducir la escala del ratio captura/close cuando es un
   split exacto. Funcionaba con captura fresca y fallaba con captura RANCIA (antes
   del 11/5 KLAC daba x9,17..x10,70 y quedaba sin reconocer). Validado con el
   registro: captura / (close x factor) = 1,0000 exacto en 81 ruedas frescas de
   KLAC (10:1, 12/6) y 81 de CRWD (4:1, 2/7).
 
-  Solo cuentan ratios >= SPLIT_RATIO_MIN (o su inverso). polygon mezcla splits
-  con ajustes chicos que precios_diarios NO refleja: con los dividendos en
-  acciones de SCCO (1,01 y 1,012) aplicados, el cruce empeora a 0,988; y los
-  ajustes por spinoff (HON 1,061) no son splits de precio.
+  Una fila del registro = "la historia de ese ticker en precios_diarios ya esta en
+  la escala posterior a ese split". La escribe `scripts/manual/splits.py corregir`
+  en la MISMA transaccion que la correccion, con la fecha de EJECUCION que informa
+  Yahoo (elegir_evento_split), no la del corte en la DB. Por eso el factor es
+  coherente en todo momento: antes de corregir, la historia sigue en la escala
+  vieja (igual que los strikes) y no lleva factor; despues lo aporta el registro;
+  y no puede aplicarse dos veces. Hasta el 12/9/2026 salia de `polygon_splits`,
+  congelado desde el 30/8: el proximo split no habria entrado, y un split listado
+  pero todavia sin corregir se habria escalado dos veces.
+
+  Solo cuentan ratios >= SPLIT_RATIO_MIN (o su inverso). Las listas de splits
+  mezclan ajustes chicos que precios_diarios NO refleja: con los dividendos en
+  acciones de SCCO (1,01 y 1,012) de polygon aplicados, el cruce empeora a 0,988;
+  y los ajustes por spinoff (HON 1,061) no son splits de precio.
 
   El ratio captura/close sigue sirviendo como VALIDADOR: si difieren por un split
-  exacto que el registro no explica (escalas_sin_registro), falta registrar el
-  split o falta corregirlo en precios_diarios.
+  exacto que el registro no explica (escalas_sin_registro), falta corregir el
+  split con splits.py, o se corrigio por fuera sin registrarlo.
 
-LIMITE CONOCIDO: un split corregido en precios_diarios pero ausente de
-polygon_splits, en una rueda cuya captura vino SIN precio, no se detecta. Mantener
-el registro al dia: `scripts/refresh_polygon.py --splits`.
+LIMITE CONOCIDO: una correccion de precios_diarios hecha por fuera de splits.py
+(SQL a mano) no queda en el registro; el validador la avisa solo en las ruedas
+cuya captura trae precio.
 
 La regla de la CAPTURA no cambia: 33_opciones_snapshot.py sigue tomando el precio
 de yahooquery (en la nube no hay precios_diarios). Lo que cambia es QUIEN MANDA al
@@ -77,6 +87,12 @@ TOL_RATIO_SPLIT = 0.01
 # Una captura que trae precio para menos de esta fraccion de los tickers es una
 # anomalia de la fuente (el 09-09 fue 0 de 200), no un par de tickers raros.
 COBERTURA_MIN = 0.90
+
+# Registro de splits: el evento de Yahoo que corresponde a una correccion cae
+# entre la fecha de corte de la DB y esta cantidad de dias corridos despues. El
+# corte se adelanta a la ejecucion tantas ruedas como tardo en bajarse la data
+# (rutina manual: hasta 6 ruedas de atraso medidas en FT). Ver elegir_evento_split.
+VENTANA_EVENTO_DIAS = 15
 
 
 def _valido(valor):
@@ -139,6 +155,47 @@ def factores_por_ticker(filas, fecha, hasta=None):
         if f != 1.0:
             out[ticker] = f
     return out
+
+
+def elegir_evento_split(eventos, ratio, fecha_corte, ventana_dias=VENTANA_EVENTO_DIAS,
+                        tol=TOL_RATIO_SPLIT):
+    """
+    Evento de split (de Yahoo) que corresponde a una correccion de splits.py.
+
+    `fecha_corte` es la primera rueda que YA estaba en la escala nueva en
+    precios_diarios. NO es la fecha de mercado: depende de cuando se bajo cada
+    rueda. Una rueda anterior al split bajada DESPUES de el llega ajustada, asi
+    que el corte cae en la ejecucion o antes, nunca despues:
+        KLAC  corte 2026-06-11, ejecucion 2026-06-12
+        CRWD  corte 2026-06-30, ejecucion 2026-07-02
+    Registrar el corte como fecha del split dejaria mal escaladas las cadenas de
+    opciones de esas ruedas: su captura seguia en la escala vieja.
+
+    Args:
+        eventos:     iterable de (fecha, ratio) del ticker.
+        ratio:       ratio de la correccion (10 = split 10:1, 0.5 = inverso 1:2).
+        fecha_corte: primera rueda en escala nueva segun precios_diarios.
+
+    Returns:
+        (fecha, ratio) del evento con ese ratio (dentro de `tol`) y fecha en
+        [fecha_corte, fecha_corte + ventana_dias]; el mas cercano al corte si hay
+        varios. None si ninguno encaja: sin evento no se registra ni se corrige.
+    """
+    r = _valido(ratio)
+    if r is None or fecha_corte is None:
+        return None
+    candidatos = []
+    for fecha, ev_ratio in eventos:
+        e = _valido(ev_ratio)
+        if e is None or abs(e / r - 1.0) > tol:
+            continue
+        dias = (fecha - fecha_corte).days
+        if 0 <= dias <= ventana_dias:
+            candidatos.append((dias, fecha, e))
+    if not candidatos:
+        return None
+    _, fecha, e = min(candidatos)
+    return fecha, e
 
 
 # ── Resolucion ────────────────────────────────────────────────────────────────

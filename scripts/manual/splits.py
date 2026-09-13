@@ -26,12 +26,23 @@ DETECCION (2 etapas, para no gastar red al pedo):
     y un split se ven identicos en la etapa 1.
 
 CORRECCION:
-    Re-descarga el historial COMPLETO ya ajustado y lo upsertea (ON CONFLICT
-    DO UPDATE), despues recomputa las tablas derivadas del ticker. No aplica
-    un divisor a mano: re-bajar es autoritativo y cubre splits multiples.
+    Divide por el ratio las filas ANTERIORES a la fecha de corte (la primera
+    rueda que ya esta en la escala nueva en precios_diarios) y recomputa las
+    tablas derivadas del ticker. Por divisor y NO re-descargando: precios_diarios
+    guarda el close crudo y el de yahooquery viene ajustado ademas por dividendos
+    (detalle en corregir_ticker).
 
-    NO corrige ft_operaciones: eso es historia de trading y se trata aparte
-    (ver docs/forward_testing/METRICAS.md).
+REGISTRO (12/9/2026):
+    En la MISMA transaccion anota el split en `splits_aplicados`, con la fecha
+    REAL de mercado que informa Yahoo. No es la fecha de corte, que depende de
+    cuando se bajo cada rueda (KLAC corte 11/6, ejecucion 12/6). Si Yahoo no la
+    informa, NO corrige: pasar --fecha-ejecucion. De ese registro sale el factor
+    de escala del precio de referencia de opciones, y sirve para marcar en los
+    analisis las operaciones abiertas durante un split.
+
+    NO corrige ft_operaciones ni las tablas de los bots de Alpaca. Decision
+    12/9/2026: son estrategias en paper para evaluar; el split se REGISTRA y los
+    analisis lo consideran (ver docs/forward_testing/METRICAS.md).
 
 Uso:
     python scripts/manual/splits.py detectar
@@ -39,6 +50,7 @@ Uso:
     python scripts/manual/splits.py corregir KLAC CRWD --dry-run
     python scripts/manual/splits.py corregir KLAC CRWD --apply
     python scripts/manual/splits.py corregir KLAC --apply --no-derivadas
+    python scripts/manual/splits.py corregir XYZ --apply --fecha-ejecucion 2026-10-05
 """
 
 import os
@@ -71,6 +83,111 @@ TOL_CONSTANTE = 0.03
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+
+# ── Registro de splits aplicados (12/9/2026) ─────────────────────────────────
+#
+# Una fila = "la historia del ticker en precios_diarios ya esta en la escala
+# posterior a ese split". corregir_ticker() la escribe en la MISMA transaccion
+# que el UPDATE: no hay correccion sin registro. De aca sale el factor de escala
+# del precio de referencia de opciones (src/utils/opciones_plazo.py) y sirve
+# para marcar en los analisis las operaciones abiertas durante un split.
+# Carga inicial: scripts/oneshot/create_splits_aplicados.py
+
+DDL_SPLITS_APLICADOS = """
+CREATE TABLE IF NOT EXISTS splits_aplicados (
+    id               SERIAL PRIMARY KEY,
+    ticker           VARCHAR(20)   NOT NULL,
+    execution_date   DATE          NOT NULL,
+    ratio            NUMERIC(12,6) NOT NULL,
+    origen           VARCHAR(20)   NOT NULL,
+    fuente_fecha     VARCHAR(10)   NOT NULL,
+    fecha_corte_db   DATE,
+    filas_corregidas INTEGER,
+    backup           TEXT,
+    registrado_en    TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    CONSTRAINT splits_aplicados_uniq UNIQUE (ticker, execution_date)
+);
+COMMENT ON TABLE splits_aplicados IS
+    'Splits ya reflejados en precios_diarios: la historia del ticker esta en la '
+    'escala posterior. La escribe scripts/manual/splits.py corregir; la lee el '
+    'factor de escala del precio de referencia de opciones.';
+COMMENT ON COLUMN splits_aplicados.execution_date IS
+    'Fecha REAL de mercado (primera rueda en la escala nueva) segun Yahoo. NO es '
+    'fecha_corte_db, que depende de cuando se bajo cada rueda (KLAC corte '
+    '2026-06-11, ejecucion 2026-06-12).';
+COMMENT ON COLUMN splits_aplicados.ratio IS
+    'Acciones nuevas por cada vieja. 10 = split 10 por 1; 0.5 = inverso 1 por 2.';
+COMMENT ON COLUMN splits_aplicados.origen IS
+    'corregido = splits.py dividio la historia; historia_ajustada = la serie ya '
+    'se habia bajado en la escala nueva.';
+COMMENT ON COLUMN splits_aplicados.fecha_corte_db IS
+    'Primera rueda que ya estaba en la escala nueva en precios_diarios al '
+    'corregir. NULL si origen = historia_ajustada.';
+"""
+
+_SQL_REGISTRAR_SPLIT = """
+    INSERT INTO splits_aplicados (ticker, execution_date, ratio, origen, fuente_fecha,
+                                  fecha_corte_db, filas_corregidas, backup)
+    VALUES (:tk, :fe, :ratio, :origen, :fuente, :corte, :filas, :backup)
+    ON CONFLICT (ticker, execution_date) DO UPDATE SET
+        ratio            = EXCLUDED.ratio,
+        origen           = EXCLUDED.origen,
+        fuente_fecha     = EXCLUDED.fuente_fecha,
+        fecha_corte_db   = EXCLUDED.fecha_corte_db,
+        filas_corregidas = EXCLUDED.filas_corregidas,
+        backup           = EXCLUDED.backup,
+        registrado_en    = now()
+"""
+
+
+def asegurar_registro(engine):
+    """Crea splits_aplicados si no existe. Idempotente."""
+    with engine.connect() as conn:
+        conn.execute(text(DDL_SPLITS_APLICADOS))
+        conn.commit()
+
+
+def registrar_split(conn, ticker, execution_date, ratio, origen, fuente_fecha,
+                    fecha_corte_db=None, filas_corregidas=None, backup=None):
+    """UPSERT en splits_aplicados. NO commitea: va en la transaccion del llamador."""
+    conn.execute(text(_SQL_REGISTRAR_SPLIT), {
+        "tk": ticker, "fe": execution_date, "ratio": float(ratio),
+        "origen": origen, "fuente": fuente_fecha, "corte": fecha_corte_db,
+        "filas": filas_corregidas, "backup": backup,
+    })
+
+
+def resolver_ejecucion(ticker, ratio, fecha_corte, fecha_ejecucion=None):
+    """
+    Fecha REAL de mercado del split, para el registro.
+
+    Con `fecha_ejecucion` (--fecha-ejecucion) manda la manual. Si no, el evento
+    que informa Yahoo (precio_referencia.elegir_evento_split). La fecha de corte
+    de la DB NO sirve: depende de cuando se bajo cada rueda (KLAC corte 11/6,
+    ejecucion 12/6) y con ella las cadenas de opciones de esas ruedas quedarian
+    mal escaladas.
+
+    Returns:
+        (fecha, fuente, detalle) -- fecha None si no se pudo resolver.
+    """
+    from src.utils.precio_referencia import VENTANA_EVENTO_DIAS, elegir_evento_split
+
+    if fecha_ejecucion is not None:
+        if fecha_ejecucion < fecha_corte:
+            return None, "manual", (f"--fecha-ejecucion {fecha_ejecucion} es anterior al corte "
+                                    f"{fecha_corte}: esa rueda ya estaba en la escala nueva")
+        return fecha_ejecucion, "manual", None
+
+    from src.utils.yahooquery_loader import eventos_split
+    eventos = eventos_split([ticker], fecha_corte - timedelta(days=30),
+                            date.today()).get(ticker, [])
+    elegido = elegir_evento_split(eventos, ratio, fecha_corte)
+    if elegido is None:
+        vistos = ", ".join(f"{f} x{r:g}" for f, r in eventos) or "ninguno"
+        return None, "yahoo", (f"Yahoo no informa un split x{float(ratio):g} entre {fecha_corte} "
+                               f"y {VENTANA_EVENTO_DIAS} dias despues (eventos vistos: {vistos})")
+    return elegido[0], "yahoo", None
 
 
 # ── Etapa 1: barrido local ────────────────────────────────────────────────────
@@ -196,9 +313,14 @@ def backup_precios(engine, ticker):
 
 
 def corregir_ticker(engine, ticker, aplicar=False, derivadas=True, ratio=None,
-                    fecha_split=None):
+                    fecha_split=None, fecha_ejecucion=None):
     """
-    Aplica el divisor del split a las filas ANTERIORES a fecha_split.
+    Aplica el divisor del split a las filas ANTERIORES a fecha_split (la fecha de
+    CORTE: primera rueda que ya estaba en la escala nueva en precios_diarios) y
+    registra el split en splits_aplicados en la MISMA transaccion, con la fecha
+    REAL de ejecucion (Yahoo, o `fecha_ejecucion` manual). Sin fecha de ejecucion
+    no corrige: una correccion sin registro deja mal escalado el precio de
+    referencia de opciones de las ruedas previas al split.
 
     Por que divisor y no re-descargar la serie ajustada:
         precios_diarios guarda el close CRUDO tal como lo devolvio Yahoo el dia
@@ -224,6 +346,11 @@ def corregir_ticker(engine, ticker, aplicar=False, derivadas=True, ratio=None,
         ratio = v["ratio_limpio"] or round(v["ratio"])
         fecha_split = v["fecha_split"]
 
+    # --fecha-split / --fecha-ejecucion llegan como texto: a date para operar.
+    fecha_split = pd.Timestamp(fecha_split).date()
+    if fecha_ejecucion is not None:
+        fecha_ejecucion = pd.Timestamp(fecha_ejecucion).date()
+
     with engine.connect() as conn:
         n = conn.execute(text("""
             SELECT COUNT(*) FROM precios_diarios
@@ -240,6 +367,16 @@ def corregir_ticker(engine, ticker, aplicar=False, derivadas=True, ratio=None,
             f"{float(r['close'])/ratio:.4f} | vol {int(r['volume']):,} -> "
             f"{int(r['volume']*ratio):,}")
 
+    # Fecha REAL de mercado para el registro (no la de corte de la DB).
+    ejecucion, fuente, detalle = resolver_ejecucion(ticker, ratio, fecha_split, fecha_ejecucion)
+    if ejecucion is None:
+        log(f"   [ERROR] sin fecha de ejecucion del split: {detalle}.")
+        log("   NO se corrige: una correccion sin registro deja mal escalado el precio de")
+        log("   referencia de opciones. Reintentar cuando Yahoo lo informe, o pasar")
+        log("   --fecha-ejecucion YYYY-MM-DD (primera rueda que cotizo en la escala nueva).")
+        return False
+    log(f"   ejecucion del split: {ejecucion} ({fuente}) | corte en precios_diarios: {fecha_split}")
+
     if not aplicar:
         log("   [DRY RUN] no se escribe nada. Usar --apply para corregir.")
         return True
@@ -247,8 +384,9 @@ def corregir_ticker(engine, ticker, aplicar=False, derivadas=True, ratio=None,
         log("   nada que corregir.")
         return True
 
-    backup_precios(engine, ticker)
+    backup = backup_precios(engine, ticker)
 
+    # UPDATE y registro en la MISMA transaccion: no hay correccion sin registro.
     with engine.connect() as conn:
         res = conn.execute(text("""
             UPDATE precios_diarios
@@ -260,8 +398,13 @@ def corregir_ticker(engine, ticker, aplicar=False, derivadas=True, ratio=None,
                 volume    = (volume * :r)::bigint
             WHERE ticker = :tk AND fecha < :f
         """), {"r": ratio, "tk": ticker, "f": fecha_split})
+        registrar_split(conn, ticker, ejecucion, ratio, origen="corregido",
+                        fuente_fecha=fuente, fecha_corte_db=fecha_split,
+                        filas_corregidas=res.rowcount,
+                        backup=os.path.relpath(backup, ROOT).replace(os.sep, "/"))
         conn.commit()
     log(f"   precios_diarios: {res.rowcount} filas corregidas.")
+    log(f"   splits_aplicados: {ticker} {ejecucion} x{float(ratio):g} ({fuente}) registrado.")
 
     if derivadas:
         log("   recomputando indicadores tecnicos...")
@@ -509,14 +652,22 @@ def cmd_corregir(args):
     log(f"Target: {engine.url.host}/{engine.url.database}")
     log(f"Tickers: {args.tickers}  {'[APPLY]' if args.apply else '[DRY RUN]'}")
 
+    if args.fecha_ejecucion and len(args.tickers) > 1:
+        log("[ERROR] --fecha-ejecucion es de UN split: pasar un solo ticker.")
+        return 2
+
     from src.utils import yfinance_lock
     yfinance_lock.acquire("splits.py")
+
+    if args.apply:
+        asegurar_registro(engine)
 
     ok = []
     for tk in args.tickers:
         if corregir_ticker(engine, tk.upper(), aplicar=args.apply,
                            derivadas=not args.no_derivadas,
-                           ratio=args.ratio, fecha_split=args.fecha_split):
+                           ratio=args.ratio, fecha_split=args.fecha_split,
+                           fecha_ejecucion=args.fecha_ejecucion):
             ok.append(tk.upper())
 
     if args.apply and ok and not args.no_derivadas:
@@ -552,7 +703,7 @@ def main():
                     help="no enviar Telegram (solo imprime)")
     ch.set_defaults(func=cmd_chequeo)
 
-    c = sub.add_parser("corregir", help="re-baja el historial ajustado y recomputa")
+    c = sub.add_parser("corregir", help="corrige por divisor, registra el split y recomputa")
     c.add_argument("tickers", nargs="+")
     c.add_argument("--apply", action="store_true", help="escribe (default: dry run)")
     c.add_argument("--dry-run", action="store_true", help="explicito, es el default")
@@ -561,7 +712,11 @@ def main():
     c.add_argument("--ratio", type=float,
                    help="forzar el ratio del split (default: se verifica en Yahoo)")
     c.add_argument("--fecha-split", dest="fecha_split",
-                   help="forzar la fecha del split YYYY-MM-DD (default: Yahoo)")
+                   help="forzar la fecha de CORTE YYYY-MM-DD: primera rueda que ya esta "
+                        "en la escala nueva en precios_diarios (default: Yahoo)")
+    c.add_argument("--fecha-ejecucion", dest="fecha_ejecucion",
+                   help="fecha REAL del split YYYY-MM-DD (primera rueda que cotizo en la "
+                        "escala nueva), para el registro si Yahoo no la informa")
     c.set_defaults(func=cmd_corregir)
 
     args = ap.parse_args()

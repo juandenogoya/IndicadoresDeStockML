@@ -25,7 +25,7 @@ ticker x fecha x ventana). Se alimenta de opciones_snapshot.
 Precio del subyacente (10/9/2026): la zona de busqueda de los muros, el expected
 move y precio_sub usan el PRECIO DE REFERENCIA de src/utils/precio_referencia.py:
 el close de la rueda en precios_diarios manda (llevado a la escala de ese dia si
-hubo un split real despues, segun polygon_splits) y
+hubo un split real despues, segun el registro splits_aplicados) y
 opciones_snapshot.precio_subyacente solo tapa el hueco. La fuente usada queda en
 la columna precio_fuente. Antes se
 usaba solo el precio de la captura: el 2026-09-09 vino NULL y los muros del
@@ -204,9 +204,13 @@ def _muro(cands: list, precio: float) -> dict:
 
 # ── Escala de split del precio de referencia ─────────────────────────────────
 
+# Registro de splits YA reflejados en precios_diarios: lo escribe
+# scripts/manual/splits.py corregir en la misma transaccion que la correccion.
+# NO polygon_splits: congelado desde el 30/8/2026, y lista splits que pueden no
+# estar corregidos todavia en precios_diarios (se escalarian dos veces).
 _SQL_SPLITS_POSTERIORES = """
     SELECT ticker, execution_date, ratio
-    FROM   polygon_splits
+    FROM   splits_aplicados
     WHERE  execution_date > :f
       AND  execution_date <= (SELECT MAX(fecha) FROM precios_diarios)
 """
@@ -215,11 +219,11 @@ _SQL_SPLITS_POSTERIORES = """
 def cargar_factores_escala(engine, fecha: date) -> dict:
     """
     {ticker: factor} para llevar el close de precios_diarios de `fecha` a la
-    escala de ESE dia: splits reales ejecutados despues de `fecha` y hasta la
-    ultima rueda cargada (los ya reflejados). Regla en
+    escala de ESE dia: splits reales registrados en splits_aplicados, ejecutados
+    despues de `fecha` y hasta la ultima rueda cargada. Regla en
     precio_referencia.factor_escala.
 
-    Conexion propia: si polygon_splits no existe en esta DB, devuelve {} sin
+    Conexion propia: si splits_aplicados no existe en esta DB, devuelve {} sin
     dejar abortada la transaccion del llamador. En ese caso el close queda en la
     escala de hoy y el validador escalas_sin_registro() lo avisa donde haya
     captura con precio.
@@ -308,7 +312,7 @@ def calcular_pcr_plazo(fecha: date, engine=None) -> int:
             SELECT ticker, close FROM precios_diarios WHERE fecha = :f
         """), {"f": fecha}).fetchall()}
 
-    # Escala de ESE dia: close x splits reales posteriores (polygon_splits).
+    # Escala de ESE dia: close x splits reales posteriores (splits_aplicados).
     factores = cargar_factores_escala(eng, fecha)
 
     if not rows:

@@ -309,14 +309,15 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   SPLIT**: splits.py corrige precios_diarios HACIA ATRAS, pero los strikes de una
   cadena vieja estan en la escala de SU dia -> el close se lleva a esa escala
   multiplicando por los splits REALES (ratio >=1,5) ejecutados despues de la rueda,
-  segun `polygon_splits` (`precio_fuente='precios_x_split'`). Validado: captura /
+  segun el registro `splits_aplicados` (`precio_fuente='precios_x_split'`; lo
+  escribe `splits.py corregir`, ver "Splits" abajo). Validado: captura /
   (close x factor) = 1,0000 exacto en 81 ruedas frescas de KLAC y 81 de CRWD. El
   factor sale del REGISTRO y no de la captura: con captura rancia (pre-11/5) el
   ratio observado no es exacto (KLAC x9,17..x10,70) y el primer diseno, que lo
-  deducia de ahi, lo dejaba pasar. Los ajustes chicos de polygon (SCCO 1,01/1,012,
+  deducia de ahi, lo dejaba pasar. Los ajustes chicos (SCCO 1,01/1,012 de polygon,
   spinoffs tipo HON 1,061) NO se aplican: con ellos el cruce empeora (SCCO 0,988).
   Si captura y close difieren por un split EXACTO que el registro no explica, el
-  paso 0 avisa. Mantener el registro: `refresh_polygon.py --splits`. Las queries
+  paso 0 avisa. Las queries
   del MCP replican la regla en SQL sin factor: solo miran el ULTIMO snapshot. El snapshot
   ALERTA por Telegram si trae precio para <90% del universo, y el paso 0 de
   `compute_opciones_derivadas.py` avisa cuantos tickers caen al precio de la
@@ -431,6 +432,21 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - **DETECTA Y AVISA, NO CORRIGE.** Corregir reescribe precios_diarios (fuente de
   verdad) y el detector ya dio falsos positivos una vez. La correccion la
   dispara una persona con `splits.py corregir`.
+- **REGISTRO `splits_aplicados` (12/9/2026)**: `splits.py corregir` anota cada
+  split en la MISMA transaccion que corrige precios_diarios -> no hay correccion
+  sin registro. Guarda la fecha REAL de ejecucion que informa Yahoo
+  (`yahooquery_loader.eventos_split`: history() trae la columna `splits`, que
+  download_batch descarta), NO la fecha de corte de la DB, que depende de cuando
+  se bajo cada rueda (KLAC corte 11/6 / ejecucion 12/6; CRWD 30/6 / 2/7). Si
+  Yahoo no la informa, no corrige: `--fecha-ejecucion`. Lo lee el factor de escala
+  del precio de referencia de opciones (antes polygon_splits: congelado desde el
+  30/8, y un split listado pero sin corregir se habria escalado dos veces). Carga
+  inicial validada: `scripts/oneshot/create_splits_aplicados.py`.
+- **FT y bots Alpaca ante un split: se REGISTRA, NO se corrige** (decision
+  12/9/2026: son paper para evaluar). Una posicion abierta durante el split
+  cierra por un stop ficticio y queda con perdida ficticia; los analisis la marcan
+  cruzando con splits_aplicados (consulta en docs/forward_testing/METRICAS.md).
+  Corregido precios_diarios, las decisiones nuevas vuelven a ser correctas solas.
 - OJO al integrarlo en otro script: `chequeo_diario(usar_lock=False)` cuando el
   proceso YA tiene el lock de yfinance (caso recovery_incremental) -- pedirlo de
   nuevo aborta el proceso entero.
@@ -480,7 +496,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/manual/replay_opciones_spool.py` | Reinyecta a la DB los snapshots de opciones que quedaron en disco por DB caida (`--list` / `--dry-run` / `--target local\|railway`). Upsert idempotente |
 | `scripts/manual/retencion_opciones_railway.py` | Purga opciones_snapshot en RAILWAY dejando los ultimos 10 dias (causa raiz incidente 20/7: +580 MB/mes sin retencion). SOLO borra fechas verificadas replicadas en local (compara COUNT por fecha). Incluye VACUUM FULL (DELETE solo no devuelve disco). Encadenado al final de sync_opciones_railway_to_local.bat |
 | `src/utils/opciones_spool.py` | Red de seguridad en disco del snapshot de opciones (modulo puro, .csv.gz en streaming) |
-| `src/utils/precio_referencia.py` | Modulo PURO (stdlib): regla del precio de REFERENCIA del subyacente para calcular en local -- el close de `precios_diarios` manda, `precio_subyacente` de la captura solo tapa el hueco. `resolver_precio` / `factor_escala` (escala de split desde polygon_splits) / `medir_divergencias` / `escalas_sin_registro` / `cobertura_baja`. Lo usan opciones_plazo, compute_opciones_derivadas, FT oiexit y el snapshot (alerta de cobertura) |
+| `src/utils/precio_referencia.py` | Modulo PURO (stdlib): regla del precio de REFERENCIA del subyacente para calcular en local -- el close de `precios_diarios` manda, `precio_subyacente` de la captura solo tapa el hueco. `resolver_precio` / `factor_escala` (escala de split desde splits_aplicados) / `elegir_evento_split` (fecha real del split para el registro) / `medir_divergencias` / `escalas_sin_registro` / `cobertura_baja`. Lo usan opciones_plazo, compute_opciones_derivadas, FT oiexit y el snapshot (alerta de cobertura) |
 | `scripts/compute_opciones_derivadas.py` | Derivadas de opciones en LOCAL desde el crudo (HV, resumen, z-scores, PCR+muros por plazo). Paso 0 = diagnostico del precio de referencia (cuantos tickers caen al precio de la captura = huecos de precios_diarios). `--fecha` / `--desde` (recalcula en orden: los z-scores usan la historia previa). Paso [0b] de ft_run_diario.bat |
 | `scripts/sync_local.bat` | Sync Railway -> Local |
 | `scripts/sync_to_railway.bat` | Sync Local -> Railway (paso a paso) |
@@ -494,7 +510,7 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
 | `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos". **`Tabla.columna` es SIEMPRE la fecha de DATOS**; el reloj de corrida va aparte en `columna_registro` y se informa pero NO entra en el diagnostico (ver patrones criticos: incidente 2/9/2026) |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
-| `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
+| `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor, REGISTRA el split en `splits_aplicados` (misma transaccion, fecha real de Yahoo o `--fecha-ejecucion`) y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
 | `src/utils/ft_metricas.py` | Modulo PURO de metricas de riesgo (max DD, Sharpe con IC95%, Sortino, IR, beta) y de trade (expectancy, profit factor, payoff). Sin DB ni config |
 | `scripts/push_senales_bot.py` | Productor de la tabla masticada senales_bot_diaria (Plan B). Lee LOCAL (tecnico/scanner/PCR_VOL), UPSERT a RAILWAY. Conexion dual. Hermano de FT (paso final de ft_run_diario.bat). Standalone via push_senales_bot.bat |
@@ -637,10 +653,20 @@ Las criticas:
   companyfacts descarta los hechos dimensionados). La tabla `_validacion` guarda el veredicto por ticker
   (extendido, ratio_min/max, motivo). Motor puro: src/utils/acciones_series.py.
   200 tickers / 2.379 puntos: 101 arrancan en 2021, 83 en 2022, 16 en 2023+.
+- `splits_aplicados` (LOCAL, 12/9/2026) -- registro de splits YA reflejados en
+  precios_diarios (UNIQUE ticker, execution_date; `ratio` = acciones nuevas por
+  vieja; `origen` corregido | historia_ajustada; `fecha_corte_db` = primera rueda
+  que la DB tuvo en la escala nueva). `execution_date` es la fecha REAL de Yahoo,
+  no el corte. La escribe `splits.py corregir` en la misma transaccion que la
+  correccion; la lee el factor de escala del precio de referencia de opciones
+  (`opciones_plazo.cargar_factores_escala`). Es tambien el registro de sucesos
+  para marcar operaciones de FT/Alpaca cruzadas por un split
+  (docs/forward_testing/METRICAS.md: la frontera es fecha_corte_db).
 - `polygon_splits` / `polygon_acciones` / `polygon_ingesta` (LOCAL) --
   fuente Polygon, incorporada 30/8/2026 para cerrar las acciones en
   circulacion. `polygon_splits` (UNIQUE ticker, execution_date; `ratio` =
-  split_to/split_from) es la lista AUTORITATIVA que alimenta el rebase --
+  split_to/split_from) es la lista AUTORITATIVA que alimenta el rebase (NO el
+  factor de escala de opciones, que lee splits_aplicados) --
   OJO: el endpoint mezcla splits reales con ajustes de PRECIO por spinoff
   (HON 1,061 Solstice, IBM 1,046 Kyndryl, MMM 1,196 Solventum, DELL 1,973
   VMware, GSK 0,8 Haleon), que NO mueven el conteo; filtrar por "ratio

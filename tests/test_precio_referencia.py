@@ -2,7 +2,7 @@
 test_precio_referencia.py -- regla del precio de referencia del subyacente.
 
 El close de precios_diarios manda, llevado a la escala de la rueda con los splits
-reales posteriores (registro polygon_splits); el precio de la captura de opciones
+reales posteriores (registro splits_aplicados); el precio de la captura de opciones
 solo tapa el hueco. Casos sinteticos con los numeros reales medidos el 10/9/2026.
 Sin DB.
 """
@@ -166,3 +166,64 @@ def test_cobertura_baja():
     assert pr.cobertura_baja(180, 200) is False       # justo 90%
     assert pr.cobertura_baja(200, 200) is False
     assert pr.cobertura_baja(0, 0) is False           # sin tickers no es anomalia
+
+
+# ── Registro de splits: evento de Yahoo (12/9/2026) ──────────────────────────
+# fecha_corte = primera rueda que ya estaba en escala nueva en precios_diarios
+# (la detecta splits.py). La ejecucion cae en o despues del corte, nunca antes.
+
+def test_evento_klac_corte_un_dia_antes_de_la_ejecucion():
+    # precios_diarios en escala nueva desde el 11/6 (rueda bajada ya ajustada),
+    # pero el split ejecuto el 12/6: la captura de opciones del 11/6 era x10.
+    ev = [(date(2026, 6, 12), 10.0)]
+    assert pr.elegir_evento_split(ev, 10, date(2026, 6, 11)) == (date(2026, 6, 12), 10.0)
+
+
+def test_evento_crwd_corte_dos_ruedas_antes():
+    ev = [(date(2026, 7, 2), 4.0)]
+    assert pr.elegir_evento_split(ev, 4.0, date(2026, 6, 30)) == (date(2026, 7, 2), 4.0)
+
+
+def test_evento_el_mismo_dia_del_corte():
+    ev = [(date(2025, 11, 17), 10.0)]
+    assert pr.elegir_evento_split(ev, 10, date(2025, 11, 17)) == (date(2025, 11, 17), 10.0)
+
+
+def test_evento_inverso_con_ratio_decimal():
+    # AZN 2026-02-02: cambio de ratio del ADR, 0,5. De la DB llega como Decimal.
+    ev = [(date(2026, 2, 2), 0.5)]
+    assert pr.elegir_evento_split(ev, Decimal("0.5"), date(2026, 2, 2)) == (date(2026, 2, 2), 0.5)
+
+
+def test_evento_elige_el_split_que_corresponde_entre_varios():
+    # NVDA: 4:1 en 2021 y 10:1 en 2024.
+    ev = [(date(2021, 7, 20), 4.0), (date(2024, 6, 10), 10.0)]
+    assert pr.elegir_evento_split(ev, 10, date(2024, 6, 7)) == (date(2024, 6, 10), 10.0)
+    assert pr.elegir_evento_split(ev, 4, date(2021, 7, 16)) == (date(2021, 7, 20), 4.0)
+
+
+def test_evento_con_otro_ratio_no_sirve():
+    assert pr.elegir_evento_split([(date(2026, 6, 12), 5.0)], 10, date(2026, 6, 11)) is None
+
+
+def test_evento_anterior_al_corte_no_sirve():
+    # El corte nunca cae despues de la ejecucion: un evento previo es OTRO split.
+    assert pr.elegir_evento_split([(date(2026, 6, 1), 10.0)], 10, date(2026, 6, 11)) is None
+
+
+def test_evento_fuera_de_ventana():
+    ev = [(date(2026, 7, 20), 10.0)]
+    assert pr.elegir_evento_split(ev, 10, date(2026, 6, 11)) is None
+    assert pr.elegir_evento_split(ev, 10, date(2026, 6, 11), ventana_dias=60) == (date(2026, 7, 20), 10.0)
+
+
+def test_evento_mas_cercano_al_corte():
+    ev = [(date(2026, 6, 20), 10.0), (date(2026, 6, 12), 10.0)]
+    assert pr.elegir_evento_split(ev, 10, date(2026, 6, 11)) == (date(2026, 6, 12), 10.0)
+
+
+def test_evento_sin_datos_no_inventa_fecha():
+    ev = [(date(2026, 6, 12), 10.0)]
+    assert pr.elegir_evento_split([], 10, date(2026, 6, 11)) is None
+    assert pr.elegir_evento_split(ev, None, date(2026, 6, 11)) is None
+    assert pr.elegir_evento_split(ev, 10, None) is None
