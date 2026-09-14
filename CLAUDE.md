@@ -14,7 +14,9 @@ pipeline diario, scanner ML, snapshot de opciones US/AR y backtest historico.
   Bots Alpaca (3): APAGADOS el 13/9/2026 por decision del usuario (paper, sin valor
   frente a las estrategias FT): workflows deshabilitados y push de la masticada
   fuera de ft_run_diario. El codigo queda. Ver memory/bots_trading.md.
-- **Windows** = recovery local manual post-cierre (recovery_incremental.bat).
+- **Windows** = rutina local manual post-cierre: UN doble clic en
+  `scripts/manual/rutina_diaria.bat` (sync opciones + pasos 1-3 + FT, con log por
+  paso, registro en `rutina_corridas` y resumen por Telegram; 13/9/2026).
 - **Streamlit** = la app Cloud vieja (app/, indicadoresat) DECOMISIONADA (5/6/2026,
   Paso 7): directorio app/ eliminado del repo; pendiente borrar la app en
   share.streamlit.io (manual). Quedan SOLO apps Streamlit LOCALES: dashboard/
@@ -500,6 +502,20 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   los CR, dejando el archivo LF-only. Por el mismo motivo `grep -c $'\r'` /
   `cat -A` MIENTEN sobre los finales de linea de un .bat. Para verificar de
   verdad: `tr -cd '\r' < f | wc -c`. Para editar: Python en modo binario.
+- **`python ... | tee log` pierde el codigo de salida** (13/9/2026): `%ERRORLEVEL%`
+  queda con el del `tee`, que siempre es 0. `recovery_incremental.bat` dijo
+  "RECOVERY COMPLETO" con tickers pendientes durante meses (medido: Python sale 3,
+  el .bat lee 0). Para log + codigo real: `scripts/manual/rutina_diaria.py`
+  (`paso` / `correr`), que hace el tee en Python.
+- **La logica de orquestacion no va en un .bat**: condiciones, politicas y
+  resumenes viven en Python (`rutina_diaria.py` + `src/utils/rutina.py`). Los .bat
+  de la rutina quedaron sin bloques IF: IF de una linea y GOTO.
+- Un .bat llamado desde otro proceso no puede terminar en `pause`: queda esperando
+  una tecla. `ft_run_diario.bat` saltea sus pausas con `RUTINA_ORQUESTADA=1`.
+- **`exit /b N` adentro de un bloque `IF ( ... )` no llega a quien lanzo el .bat
+  con `cmd /c`: sale 0** (medido 13/9/2026 en el guard de ft_run_diario, que asi
+  habria dado "OK" con los bots sin correr). Salir del bloque con `goto :etiqueta`
+  y hacer el `exit /b` fuera. El `exit /b` de nivel superior si devuelve bien.
 
 ### Telegram
 - No usar backslash dentro de f-string (Python 3.11). Asignar la variable antes.
@@ -525,8 +541,10 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
-| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + precomputo de veredictos del dashboard. El push de senales_bot_diaria se saco el 13/9/2026 (bots Alpaca apagados) |
-| `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py` |
+| `scripts/manual/ft_run_diario.bat` | Corre los 10 bots de Forward Testing en local + reporte HTML + precomputo de veredictos del dashboard. El push de senales_bot_diaria se saco el 13/9/2026 (bots Alpaca apagados). Sale 0 OK / 1 el guard freno / 2 algun bot fallo. Con `RUTINA_ORQUESTADA=1` (lo setea rutina_diaria) no pausa ni se registra solo; suelto se anota en `rutina_corridas` |
+| `scripts/manual/rutina_diaria.bat` (+ `.py`) | La rutina diaria COMPLETA (13/9/2026): sync opciones + purga, Paso 1, Paso 2, Paso 3 y ft_run_diario, en orden. Si falla el Paso 1 con mas de 10 tickers pendientes, el 2 o el 3, FRENA antes de los bots; el sync sigue. Log por paso en `logs/rutina/AAAAMMDD_HHMM/` + `resumen.txt`, registro en `rutina_corridas`, resumen por Telegram con los tickers pendientes y su ultimo dato. `--desde pasoN` / `--sin-telegram`. El .py tambien es el ejecutor de cada .bat de paso (`paso <clave>`, `correr --nombre recovery_incremental`): codigo de salida REAL (0 OK, 2 avisos, 1 error) |
+| `src/utils/rutina.py` | Modulo PURO de la rutina: orden de pasos, politica ante una falla, clasificacion del Paso 1 (PARCIAL vs caida, via `recovery_incremental.py --resumen-json`), resumen de texto y mensaje de Telegram |
+| `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py`. Informa ademas los HUECOS en el medio de la serie (ultimas 252 ruedas de precios/indicadores/features; avisa, no frena; excepciones verificadas en `HUECOS_CONOCIDOS`; `--solo-huecos`) y la ultima corrida de cada paso (`rutina_corridas`) |
 | `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
 | `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos". **`Tabla.columna` es SIEMPRE la fecha de DATOS**; el reloj de corrida va aparte en `columna_registro` y se informa pero NO entra en el diagnostico (ver patrones criticos: incidente 2/9/2026) |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
@@ -784,6 +802,14 @@ Las criticas:
   tramos; datos, medicion, refactor e infra quedan como marca. La lee el reporte
   (`ft_tramos`). Alta con `ft_cambios.py add`; carga inicial fechada con evidencia
   en `scripts/oneshot/create_ft_cambios.py`. Ver METRICAS.md sec. 12
+- `rutina_corridas` (LOCAL, 13/9/2026) -- una fila por paso ejecutado de la rutina
+  diaria (sync/paso1/paso2/paso3/ft/recovery_incremental): origen rutina|suelto,
+  inicio, fin, duracion, exit_code, resultado (OK/PARCIAL/ERROR/SALTEADO/
+  INTERRUMPIDO/EN_CURSO), rueda de DATOS antes y despues, detalle JSONB (notas,
+  tickers pendientes, huecos), log_path, git_commit. Se inserta al arrancar y se
+  actualiza al terminar: si queda EN_CURSO, el proceso murio. La escribe
+  `rutina_diaria.py`; responde "cuando corrio cada paso" sin reconstruirlo desde
+  timestamps de filas y commits (lo que hubo que hacer en la Etapa 1)
 - `senales_bot_diaria` (RAILWAY) -- SIN PRODUCTOR desde el 13/9/2026 (bots Alpaca apagados). Tabla MASTICADA Plan B para los 3 bots Alpaca
   (Tarea 16). 1 fila por (ticker, fecha), ~18 cols, PK (ticker, fecha). El bot
   "solo opera": lee senales pre-computadas, no las crudas. Columnas: close, sector,
@@ -819,6 +845,12 @@ Las criticas:
   recovery diario). LOCAL-only (Plan C). Ver docs/perfiles_carteras.md.
 
 ## Flujo de recovery manual (caso comun: Oracle cron fallo)
+
+La rutina diaria NORMAL es `scripts/manual/rutina_diaria.bat` (todo en orden, con
+log, registro y resumen por Telegram; retomar con `--desde pasoN`). Lo de abajo es
+para reconstruir a mano. Huecos en el MEDIO de la serie (invisibles para el MAX de
+fecha): `chequeo_rutina.py` los informa; relleno en
+docs/checklist_recovery_manual.md, CASO E.
 
 ```
 1. status.bat               (ver Railway: que dias faltan)

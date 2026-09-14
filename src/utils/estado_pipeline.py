@@ -249,3 +249,88 @@ def _fecha_de(diag: dict, tabla: str):
         if f["tabla"] == tabla:
             return f["fecha"]
     return None
+
+
+# ── Huecos EN EL MEDIO de la serie (Etapa 2, 13/9/2026) ───────────────────────
+#
+# La antiguedad y la mezcla miran el MAX(fecha) de cada tabla. Un hueco en el
+# MEDIO no mueve ningun MAX: la rueda siguiente ya se cargo y todo "esta al dia".
+# Asi quedo 2026-08-28 sin precio para 157 de 200 tickers durante dos semanas,
+# con indicadores, features y equity calculados sin esa rueda. Lo destapo el
+# paso 0 de compute_opciones_derivadas, no este modulo; recovery_incremental
+# tampoco lo ve, porque detecta pendientes por MAX(fecha).
+#
+# Se AVISA y no se frena (decision 13/9/2026): no hay herramienta que los
+# rellene sola (el del 28/8 fue manual) y frenar sin poder arreglar deja a los
+# bots sin correr.
+
+# Un anio de ruedas: cubre la ventana mas larga de los indicadores (SMA200).
+RUEDAS_VENTANA_HUECOS = 252
+
+TABLAS_HUECOS = ("precios_diarios", "indicadores_tecnicos",
+                 "features_precio_accion", "features_market_structure")
+
+# Huecos verificados como irrecuperables: se informan aparte y no cuentan.
+HUECOS_CONOCIDOS = {
+    ("FISV", date(2025, 11, 12)): "Yahoo no tiene esa barra (verificado 12/9/2026)",
+}
+
+
+def huecos_intermedios(fechas_por_ticker: dict, ruedas, inicios: Optional[dict] = None,
+                       conocidos: Optional[dict] = None) -> dict:
+    """
+    Ruedas que faltan ENTRE la primera y la ultima fila de cada ticker.
+
+    fechas_por_ticker : {ticker: fechas con fila} dentro de la ventana
+    ruedas            : ruedas NYSE de la ventana, en orden. Las arma el llamador
+                        con trading_calendar: aca no se deduce si un dia es habil.
+    inicios           : {ticker: primera fecha de su serie COMPLETA}. Sin esto, un
+                        hueco en las primeras ruedas de la ventana de un ticker
+                        con historia previa no se ve; con esto, un ticker que
+                        nacio adentro de la ventana no tiene huecos antes de nacer.
+    conocidos         : {(ticker, fecha): motivo}. Default HUECOS_CONOCIDOS.
+
+    Returns: {"huecos": {fecha: [tickers]}, "conocidos": [(ticker, fecha, motivo)],
+              "n": cantidad de pares ticker-rueda faltantes}
+    """
+    conocidos = HUECOS_CONOCIDOS if conocidos is None else conocidos
+    inicios = inicios or {}
+    ruedas = sorted(ruedas)
+    huecos, vistos = {}, []
+    n = 0
+    if not ruedas:
+        return {"huecos": huecos, "conocidos": vistos, "n": 0}
+
+    for ticker, fechas in fechas_por_ticker.items():
+        fs = {_a_fecha(f) for f in fechas} - {None}
+        if not fs:
+            continue
+        ini = _a_fecha(inicios.get(ticker)) or min(fs)
+        desde, hasta = max(ini, ruedas[0]), max(fs)
+        for d in ruedas:
+            if d < desde or d > hasta or d in fs:
+                continue
+            if (ticker, d) in conocidos:
+                vistos.append((ticker, d, conocidos[(ticker, d)]))
+                continue
+            huecos.setdefault(d, []).append(ticker)
+            n += 1
+
+    return {"huecos": {d: sorted(t) for d, t in sorted(huecos.items())},
+            "conocidos": sorted(vistos), "n": n}
+
+
+def resumen_huecos(res: dict, max_fechas: int = 10, max_tickers: int = 5) -> list:
+    """Una linea por rueda con hueco: 'AAAA-MM-DD: N tickers (A, B, ... y M mas)'.
+    Acepta las fechas como date o como texto (el resultado serializado a JSON)."""
+    items = sorted((res or {}).get("huecos", {}).items(), key=lambda kv: str(kv[0]))
+    out = []
+    for f, tickers in items[:max_fechas]:
+        tickers = sorted(tickers)
+        resto = len(tickers) - max_tickers
+        cola = f" y {resto} mas" if resto > 0 else ""
+        palabra = "ticker" if len(tickers) == 1 else "tickers"
+        out.append(f"{f}: {len(tickers)} {palabra} ({', '.join(tickers[:max_tickers])}{cola})")
+    if len(items) > max_fechas:
+        out.append(f"... y {len(items) - max_fechas} ruedas mas")
+    return out

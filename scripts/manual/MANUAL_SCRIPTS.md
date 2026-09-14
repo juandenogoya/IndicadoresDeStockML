@@ -20,9 +20,24 @@ Estado de Railway. Bajo Plan C sirve sobre todo para ver el snapshot de opciones
 
 ---
 
+## Rutina diaria completa
+
+### `rutina_diaria.bat`  *(13/9/2026 -- el de todos los dias)*
+Un doble clic, una confirmacion: sync de opciones + purga de Railway, Paso 1,
+Paso 2, Paso 3 y `ft_run_diario`, en orden. Si falla el Paso 1 (con mas de 10
+tickers pendientes), el 2 o el 3, frena antes de los bots y dice como retomar
+(`rutina_diaria.bat --desde paso2`). Log por paso en `logs/rutina/AAAAMMDD_HHMM/`,
+registro en la tabla `rutina_corridas` y resumen por Telegram con los tickers
+pendientes. Motor: `rutina_diaria.py`. Detalle: `docs/checklist_recovery_manual.md`.
+
+---
+
 ## Pipeline diario (local) -- pasos individuales
 
-Correr post-cierre NYSE (>=21:00 UTC), en orden 1 -> 2 -> 3.
+Para rehacer UN paso. Correr post-cierre NYSE (>=21:00 UTC), en orden 1 -> 2 -> 3.
+Desde el 13/9/2026 cada uno corre a traves de `rutina_diaria.py paso <paso>`: log en
+`logs/rutina/pasos/`, registro en `rutina_corridas` y codigo de salida real
+(0 OK, 2 con avisos, 1 error).
 
 ### `cron_paso1_precios_yq.bat`  *(Paso 1)*
 Precios EOD + futuros + indicadores tecnicos + z-scores de acciones, via
@@ -42,6 +57,9 @@ Telegram se calcula al vuelo (mtf_context), no depende de tablas semanales.
 ### `recovery_incremental.bat`
 El motor del Paso 1 invocado directo (mismos efectos). Acepta `--dry-run`,
 `--target railway`, `--engine yfinance|yahooquery`, `--skip-futuros`, etc.
+Hasta el 13/9/2026 decia "RECOVERY COMPLETO" siempre (leia el codigo del `tee`, no
+el de Python); ahora corre por `rutina_diaria.py correr` y el log va a
+`logs/rutina/pasos/`.
 
 ---
 
@@ -53,9 +71,10 @@ ticker, ~30x menos carga que yfinance). Idempotente. Solo valido post-cierre y
 antes de la apertura siguiente (la chain vieja se pierde al abrir el mercado).
 
 ### `sync_opciones_railway_to_local.bat`
-Baja a local las 3 tablas de opciones (snapshot, resumen_diario, zscore_diario)
-desde Railway. Incremental, sin yfinance, sin rate limit. Es el paso 4 del flujo
-diario.
+Baja a local el CRUDO de opciones (`opciones_snapshot`) desde Railway y, si el sync
+termino bien, purga Railway dejando 10 dias. Las derivadas se calculan en local
+(paso [0b] de `ft_run_diario`). Incremental, sin Yahoo. Es el primer paso de
+`rutina_diaria.bat`.
 
 ---
 

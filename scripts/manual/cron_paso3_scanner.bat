@@ -2,24 +2,29 @@
 chcp 65001 > nul
 REM ============================================================
 REM  cron_paso3_scanner.bat
-REM  Contingencia manual: Paso 3 del pipeline diario.
-REM  Corre el scanner ML sobre los 199 tickers, persiste
-REM  alertas en DB y envia resumen a Telegram.
+REM  Paso 3 de la rutina diaria: scanner ML sobre el universo, persiste
+REM  alertas en DB y envia el resumen del scanner a Telegram.
+REM  Prerequisito: Pasos 1 y 2.
 REM
-REM  TARGET: PostgreSQL LOCAL (Plan C). NO carga .env.local, por lo
-REM  que DATABASE_URL no se setea y get_engine() usa DB_CONFIG local.
-REM  Telegram funciona igual (TELEGRAM_* estan en .env, no .env.local).
+REM  TARGET: PostgreSQL LOCAL - Plan C.
 REM
-REM  Tiempo estimado : ~60 minutos
-REM  Prerequisito    : Paso 1 y Paso 2 deben haber corrido hoy
-REM  Nota Telegram   : el mensaje de resumen se envia igual
-REM                    que en el cron automatico (comportamiento normal)
+REM  Corre a traves de scripts\manual\rutina_diaria.py desde el 13/9/2026:
+REM    - log en logs\rutina\pasos\paso3_AAAAMMDD_HHMM.log
+REM    - registro de la corrida en la tabla rutina_corridas
+REM    - codigo de salida real: 0 OK, 2 con avisos, 1 error
+REM  La rutina COMPLETA es rutina_diaria.bat; este .bat rehace solo este paso.
+REM
+REM  OJO al editar: nada de parentesis sin escapar adentro de un bloque
+REM  IF ( ... ). Cierran el bloque antes de tiempo y cmd aborta con "no se
+REM  esperaba X en este momento": le paso a cron_paso2_features.bat hasta
+REM  el 13/9/2026. Por eso estos .bat usan IF de una linea y GOTO, sin
+REM  bloques. Editar en modo binario, nunca con sed -i: ver CLAUDE.md.
 REM ============================================================
 
 SET ROOT=%~dp0..\..\
 SET PYTHON=%ROOT%venv\Scripts\python.exe
 
-REM Posicionarse en la raiz para que config.py:load_dotenv() encuentre .env
+REM Posicionarse en la raiz para que config.py encuentre el .env
 cd /d "%ROOT%"
 
 echo.
@@ -31,32 +36,27 @@ echo.
 echo Estado actual de la DB LOCAL:
 "%PYTHON%" "%ROOT%scripts\manual\db_status.py" --target local
 echo.
-echo PREREQUISITO: Paso 1 (precios) y Paso 2 (features) deben
-echo haber corrido hoy para que el scanner use datos frescos.
+echo PREREQUISITO: Paso 1 y Paso 2 deben haber corrido antes.
+echo AVISO: al finalizar se envia el resumen del scanner a Telegram.
 echo.
-echo AVISO: al finalizar se envia el resumen a Telegram
-echo        (comportamiento identico al cron automatico).
-echo.
-set /p CONFIRM="Ejecutar Paso 3 (scanner ML)? (s/n): "
-if /i not "%CONFIRM%"=="s" (
-    echo Operacion cancelada.
-    pause
-    exit /b 0
-)
+set /p CONFIRM="Ejecutar Paso 3? (s/n): "
+if /i not "%CONFIRM%"=="s" goto :cancelado
 
+"%PYTHON%" "%ROOT%scripts\manual\rutina_diaria.py" paso paso3
+set "RC=%ERRORLEVEL%"
 echo.
-echo Ejecutando Paso 3 (esto tarda ~60 minutos)...
-echo ----------------------------------------
-"%PYTHON%" "%ROOT%scripts\cron_diario.py" --step scanner
-IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [ERROR] El Paso 3 termino con errores. Revisar output arriba.
-) ELSE (
-    echo.
-    echo [OK] Paso 3 completado. Resumen enviado a Telegram.
-)
-echo ----------------------------------------
+if "%RC%"=="0" echo [OK] Paso 3 completado. Resumen del scanner enviado a Telegram.
+if "%RC%"=="2" echo [AVISO] Terminado con avisos: ver el detalle de arriba.
+if "%RC%"=="1" echo [ERROR] El Paso 3 termino con errores. Revisar el log de arriba.
 echo.
 echo Estado post-ejecucion (LOCAL):
 "%PYTHON%" "%ROOT%scripts\manual\db_status.py" --target local
+echo.
+echo Presiona cualquier tecla para cerrar...
+pause > nul
+exit /b %RC%
+
+:cancelado
+echo Operacion cancelada.
 pause
+exit /b 0

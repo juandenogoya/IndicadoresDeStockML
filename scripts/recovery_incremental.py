@@ -593,6 +593,10 @@ def main():
                         help="No recalcula indicadores tecnicos (solo OHLCV)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Diagnostico: muestra pendientes sin descargar")
+    parser.add_argument("--resumen-json", default=None, metavar="RUTA",
+                        help="Al terminar, escribe la rueda objetivo y los pendientes en "
+                             "JSON. Lo usa scripts/manual/rutina_diaria.py para distinguir "
+                             "un Paso 1 PARCIAL (sale con 1) de uno que se cayo (tambien 1)")
     args = parser.parse_args()
 
     setup_target_env(args.target)
@@ -762,6 +766,23 @@ def main():
             print(f"\n  FUTUROS: OK -- todos los simbolos al dia ({target_date})")
     print(SEP)
     print()
+
+    # Resumen legible por maquina. Se escribe JUSTO antes de salir: que el
+    # archivo exista es la prueba de que el recovery llego al final.
+    if args.resumen_json:
+        try:
+            import json
+            with open(args.resumen_json, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "target_date": str(target_date),
+                    "dry_run": bool(args.dry_run),
+                    "pend_precios": {t: (str(mf) if mf else None)
+                                     for t, mf in sorted(pend_precios.items())},
+                    "pend_futuros": {s: (str(mf) if mf else None)
+                                     for s, mf in sorted(pend_futuros.items())},
+                }, fh, indent=2)
+        except Exception as e:
+            log(f"[WARN] no se pudo escribir --resumen-json: {str(e)[:120]}")
 
     sys.exit(0 if not pend_precios and not pend_futuros else 1)
 

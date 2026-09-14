@@ -14,6 +14,7 @@ import pytest
 
 from src.utils.estado_pipeline import (
     TABLAS, ANCLA, CRUDO_OPCIONES, diagnosticar, enumerar, resumen, _a_fecha,
+    huecos_intermedios, resumen_huecos, HUECOS_CONOCIDOS,
 )
 
 D1 = date(2026, 9, 1)   # ultimo cierre
@@ -23,6 +24,57 @@ D0 = date(2026, 8, 31)  # rueda anterior
 def _todo_en(f):
     """Todas las tablas conocidas en la misma fecha."""
     return {t.nombre: f for t in TABLAS}
+
+
+# -- huecos en el medio de la serie ------------------------------------------
+
+RUEDAS = [date(2026, 8, 24), date(2026, 8, 25), date(2026, 8, 26), date(2026, 8, 27),
+          date(2026, 8, 28), date(2026, 8, 31), date(2026, 9, 1)]
+H28 = date(2026, 8, 28)
+
+
+def test_hueco_en_el_medio_se_ve_aunque_el_max_este_al_dia():
+    # El caso del 28/8: la rueda siguiente ya estaba cargada, MAX(fecha) al dia.
+    fechas = {"AAPL": set(RUEDAS) - {H28}, "MSFT": set(RUEDAS), "KO": set(RUEDAS) - {H28}}
+    res = huecos_intermedios(fechas, RUEDAS, conocidos={})
+    assert res["huecos"] == {H28: ["AAPL", "KO"]}
+    assert res["n"] == 2
+
+
+def test_ticker_que_nace_en_la_ventana_no_tiene_huecos_antes_de_nacer():
+    fechas = {"HOOD": {date(2026, 8, 27), H28, date(2026, 8, 31), date(2026, 9, 1)}}
+    res = huecos_intermedios(fechas, RUEDAS, inicios={"HOOD": date(2026, 8, 27)}, conocidos={})
+    assert res["n"] == 0
+
+
+def test_hueco_en_la_primera_rueda_de_la_ventana_solo_se_ve_con_el_inicio_real():
+    fechas = {"AAPL": set(RUEDAS) - {RUEDAS[0]}}
+    assert huecos_intermedios(fechas, RUEDAS, conocidos={})["n"] == 0
+    con_inicio = huecos_intermedios(fechas, RUEDAS, inicios={"AAPL": date(2021, 1, 4)}, conocidos={})
+    assert con_inicio["huecos"] == {RUEDAS[0]: ["AAPL"]}
+
+
+def test_la_ultima_rueda_sin_cargar_no_es_hueco():
+    # Que falte la rueda de hoy es ANTIGUEDAD, no un hueco en el medio.
+    fechas = {"AAPL": set(RUEDAS[:-1])}
+    assert huecos_intermedios(fechas, RUEDAS, conocidos={})["n"] == 0
+
+
+def test_hueco_conocido_se_informa_aparte_y_no_cuenta():
+    fechas = {"FISV": set(RUEDAS) - {date(2026, 8, 26)}}
+    res = huecos_intermedios(fechas, RUEDAS, conocidos={("FISV", date(2026, 8, 26)): "Yahoo"})
+    assert res["n"] == 0 and res["huecos"] == {}
+    assert res["conocidos"] == [("FISV", date(2026, 8, 26), "Yahoo")]
+
+
+def test_fisv_2025_11_12_esta_registrado_como_conocido():
+    assert ("FISV", date(2025, 11, 12)) in HUECOS_CONOCIDOS
+
+
+def test_resumen_huecos_agrupa_por_rueda_y_acepta_fechas_como_texto():
+    res = {"huecos": {"2026-08-28": ["A", "B", "C", "D", "E", "F", "G"]}}
+    assert resumen_huecos(res) == ["2026-08-28: 7 tickers (A, B, C, D, E y 2 mas)"]
+    assert resumen_huecos({"huecos": {H28: ["SCCO"]}}) == ["2026-08-28: 1 ticker (SCCO)"]
 
 
 # -- coercion de fechas ------------------------------------------------------

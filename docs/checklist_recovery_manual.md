@@ -23,33 +23,58 @@ falla y faltan datos. Actualizado 28/5/2026 al flujo **Plan C**.
 
 | Bat (scripts/manual/) | Target | Para que sirve |
 |-----|--------|-----------------|
+| **`rutina_diaria.bat`** | Local | **La rutina diaria COMPLETA en una corrida** (sync + pasos 1-3 + FT), con log por paso, registro en `rutina_corridas` y resumen por Telegram. `--desde pasoN` para retomar |
 | `status_local.bat` | Local | Estado de la DB local (la que importa) |
 | `status.bat` | Railway | Estado de Railway (sobre todo opciones) |
 | `cron_paso1_precios_yq.bat` | Local | **Paso 1**: precios + futuros + indicadores + z-scores (yahooquery, incremental) |
 | `cron_paso2_features.bat` | Local | **Paso 2**: features PA + Market Structure |
 | `cron_paso3_scanner.bat` | Local | **Paso 3**: scanner ML + alertas + Telegram |
 | `recovery_incremental.bat` | Local | Motor del Paso 1 directo (detecta pendientes via MAX(fecha) y baja solo lo faltante) |
-| `sync_opciones_railway_to_local.bat` | Railway -> Local | Baja las 3 tablas de opciones a local (incremental) |
+| `sync_opciones_railway_to_local.bat` | Railway -> Local | Baja el CRUDO de opciones a local (incremental) y purga Railway dejando 10 dias |
 | `poblar_opciones_yq.bat` | Railway | Carga manual del snapshot de opciones US (yahooquery) |
 | `recover_opciones_tickers.py` | Railway | Recovery quirurgico de opciones de tickers puntuales |
 | `sync_local.bat` | Railway -> Local | Sync completo Railway -> local (todas las tablas) |
-| `ft_run_diario.bat` | Local | **Paso 5**: deriva opciones ([0b]) + 10 bots FT + equity + reporte HTML + push senales + veredictos |
-| `chequeo_rutina.py` | Local | Diagnostico: que tablas quedaron atras y que .bat las arregla. Sale != 0 si hay mezcla de ruedas |
+| `ft_run_diario.bat` | Local | **Paso 5**: deriva opciones ([0b]) + 10 bots FT + equity + reporte HTML + veredictos |
+| `chequeo_rutina.py` | Local | Diagnostico: que tablas quedaron atras y que .bat las arregla, huecos en el medio de la serie y ultima corrida de cada paso. Sale != 0 solo si hay mezcla de ruedas |
 | `sync_to_railway.bat` | Local -> Railway | Subir local -> Railway (raro bajo Plan C) |
 
 ---
 
 ## Flujo diario normal (no es recovery)
 
-Post-cierre NYSE (despues de 21:00 UTC), desde Windows, en orden:
+Post-cierre NYSE (despues de 21:00 UTC), desde Windows. **Desde el 13/9/2026 es
+un solo doble clic: `rutina_diaria.bat`**, que corre en orden:
 
 ```
-1. sync_opciones_railway_to_local.bat  (baja el CRUDO de opciones desde Railway)
+1. sync_opciones_railway_to_local.bat  (baja el CRUDO de opciones desde Railway + purga)
 2. cron_paso1_precios_yq.bat   (precios + futuros + indicadores + z-scores, LOCAL)
 3. cron_paso2_features.bat     (features PA + Market Structure, LOCAL)
 4. cron_paso3_scanner.bat      (scanner ML + alertas + Telegram, LOCAL)
 5. ft_run_diario.bat           (deriva opciones + 10 bots FT + equity + reportes)
 ```
+
+Los cinco .bat siguen existiendo para rehacer un solo paso, y tambien dejan log y
+registro.
+
+### rutina_diaria.bat: que frena y que no (13/9/2026)
+
+| Paso | Si falla |
+|---|---|
+| Sync + purga | SIGUE (`ft_run_diario` vuelve a sincronizar); la purga se saltea |
+| Paso 1 | FRENA, salvo PARCIAL: hasta **10 tickers** sin la rueda sigue con aviso |
+| Paso 2 / Paso 3 | FRENA antes de los bots |
+| ft_run_diario | Informa (0 OK, 1 el guard freno y los bots no corrieron, 2 algun bot fallo) |
+
+- Si frena, el resumen dice que arreglar y como retomar: `rutina_diaria.bat --desde paso2`.
+- **Logs**: `logs/rutina/AAAAMMDD_HHMM/NN_<paso>.log` + `resumen.txt`. Un paso suelto:
+  `logs/rutina/pasos/<paso>_AAAAMMDD_HHMM.log`. El log detallado de los bots sigue en
+  `logs/forward_testing/`.
+- **Registro**: tabla `rutina_corridas` (inicio, fin, duracion, resultado, rueda de
+  datos antes y despues, tickers pendientes, huecos, log). Si queda `EN_CURSO`, el
+  proceso murio sin terminar. Ultima corrida de cada paso: `chequeo_rutina.py`.
+- **Telegram**: al final, el resumen con el detalle de los tickers pendientes (y su
+  ultimo dato) y de los huecos. `--sin-telegram` para no mandarlo.
+- Motor: `scripts/manual/rutina_diaria.py`; politica en `src/utils/rutina.py`.
 
 **El paso 5 no es opcional y no es "solo los bots"**: su paso [0b] corre
 `compute_opciones_derivadas.py`, que es lo UNICO que computa en local las 5
@@ -182,6 +207,36 @@ Las alertas dependen de: `precios_diarios` + `features_precio_accion` +
 7. sync_opciones_railway_to_local.bat  -> bajar opciones a local
 8. status_local.bat + status.bat       -> verificacion final
 ```
+
+---
+
+## CASO E: hueco en el MEDIO de la serie (una rueda faltante entre dos cargadas)
+
+**Sintoma**: `chequeo_rutina.py` (o el final del Paso 1) informa "Huecos en el medio
+de la serie". `status_local.bat` y el recovery NO lo ven: miran `MAX(fecha)`, y la
+rueda siguiente ya se cargo. Asi quedo 2026-08-28 sin precio para 157 de 200 tickers
+durante dos semanas.
+
+El detector avisa y no frena: todavia no hay herramienta que rellene sola. Relleno
+manual aplicado el 12/9/2026 (unos 5 minutos de maquina):
+
+1. Bajar la rueda faltante y sus vecinas con `yahooquery_loader.download_batch` y
+   **validar que las vecinas coincidan con la DB** antes de mezclar (dio 0,0000% en
+   los 158 tickers). Si no coinciden, el ticker cambio de base (split, ajuste): parar.
+2. Insertar SOLO las filas faltantes en `precios_diarios`.
+3. Recomputar las derivadas con las herramientas existentes, en este orden:
+   `procesar_indicadores_ticker` por ticker (500 barras, como el recovery);
+   `procesar_features_precio_accion` y `_market_structure` (bulk, ~2 min);
+   `backfill_zscore_tickers(desde)`; `compute_opciones_derivadas.py --desde`;
+   `ft_compute_equity.py --desde`.
+4. NO tocar registros historicos: `alertas_scanner`, `ft_operaciones`,
+   `ft_posiciones_diarias` (son lo que el sistema vio ese dia).
+5. Si cambia decisiones de FT a futuro, registrarlo en `ft_cambios` como marca
+   (docs/forward_testing/METRICAS.md, seccion 12).
+
+Huecos verificados como irrecuperables (Yahoo no tiene la barra) van en
+`HUECOS_CONOCIDOS` de `src/utils/estado_pipeline.py`: se informan aparte y no cuentan.
+Hoy: FISV 2025-11-12.
 
 ---
 

@@ -6,6 +6,9 @@ REM
 REM  Uso: doble click o desde consola
 REM       Correr DESPUES de la rutina local de datos, en este orden:
 REM       cron_paso1_precios_yq.bat, cron_paso2_features.bat, cron_paso3_scanner.bat
+REM       O todo junto con rutina_diaria.bat, que lo llama con RUTINA_ORQUESTADA=1:
+REM       sin pausas, y el registro en rutina_corridas lo hace la rutina.
+REM       Codigo de salida: 0 OK, 1 el guard freno, 2 algun bot fallo.
 REM
 REM  Para agregar una nueva estrategia:
 REM       Copiar el bloque "BOT N" al final de la lista
@@ -113,8 +116,7 @@ IF "%FT_IGNORAR_FRESCURA%"=="1" (
         echo  Para forzar igual: set FT_IGNORAR_FRESCURA=1
         echo ============================================================
         echo.
-        pause
-        exit /b 1
+        goto :guard_frenado
     )
     echo [OK] Datos alineados.
 )
@@ -330,4 +332,21 @@ IF %ERRORS% EQU 1 (
 )
 echo ============================================================
 echo.
-pause
+
+REM Codigo de salida para rutina_diaria.py: 0 OK, 2 algun bot fallo. El 1 es del guard.
+REM Corrido suelto se registra en rutina_corridas; orquestado lo registra la rutina.
+SET "RC=0"
+IF %ERRORS% EQU 1 SET "RC=2"
+if not defined RUTINA_ORQUESTADA "%PYTHON%" "%ROOT%scripts\manual\rutina_diaria.py" registrar --paso ft --inicio %_DT% --exit %RC% --log "%LOGFILE%"
+if not defined RUTINA_ORQUESTADA pause
+exit /b %RC%
+
+REM -- El guard freno, ver el bloque de arriba -----------------
+REM  Va FUERA del bloque IF a proposito: un exit /b adentro de un bloque
+REM  ( ... ) no llega como codigo de salida a quien lanzo el .bat con
+REM  cmd /c. Medido el 13/9/2026: salia 0 en vez de 1, y rutina_diaria
+REM  habria informado OK con los bots sin correr.
+:guard_frenado
+if not defined RUTINA_ORQUESTADA "%PYTHON%" "%ROOT%scripts\manual\rutina_diaria.py" registrar --paso ft --inicio %_DT% --exit 1 --log "%LOGFILE%"
+if not defined RUTINA_ORQUESTADA pause
+exit /b 1
