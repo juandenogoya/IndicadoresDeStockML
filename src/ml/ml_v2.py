@@ -45,13 +45,17 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from src.pipeline.alert_classifier import CORTES_ML_V1
+
 RAIZ = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DIR_MODELO_V2 = os.path.join(RAIZ, "models_ml_v2")
 ARCHIVO_MODELO = "rf_cal_global.joblib"
 ARCHIVO_META = "metadata.json"
 
-# Umbrales de probabilidad de la v1 en alert_classifier._puntos_ml, de mayor a menor.
-CORTES_V1: Tuple[float, ...] = (0.75, 0.65, 0.55, 0.45, 0.35)
+# Umbrales de probabilidad de la v1, de mayor a menor. Definidos en UN lugar, el
+# clasificador que los usa: si cambiaran alla y aca no, los cortes de la v2 dejarian
+# de ser equivalentes en silencio.
+CORTES_V1: Tuple[float, ...] = CORTES_ML_V1
 
 
 class ModeloV2Invalido(Exception):

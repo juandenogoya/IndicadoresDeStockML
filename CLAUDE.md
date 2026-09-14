@@ -630,7 +630,11 @@ Las criticas:
   motivo, detalle JSONB). local+Railway. Auditoria/reproducibilidad point-in-time.
 - `precios_diarios` (OHLCV) | `indicadores_tecnicos`
 - `features_precio_accion` | `features_market_structure`
-- `alertas_scanner` (col: `scan_fecha`, `precio_fecha`)
+- `alertas_scanner` (col: `scan_fecha`, `precio_fecha`). Desde el 13/9/2026 (Etapa 3d)
+  lleva ademas `ml_prob_v2` / `ml_modelo_v2` / `alert_score_v2` / `alert_nivel_v2`:
+  el modelo ML v2 calculado EN PARALELO en la misma fila (mismas senales de price
+  action, score tecnico y bajistas; cambian la probabilidad y los cortes). NULL en la
+  historia previa y si el artefacto no carga. Las lee FT_ML_SCANNER_v2
 - `ticker_zscore_diario` | `opciones_zscore_diario`
 - `opciones_snapshot` | `opciones_resumen_diario` -- en RAILWAY, opciones_snapshot
   tiene RETENCION de 10 dias (purga verificada post-sync, 20/7/2026); la historia

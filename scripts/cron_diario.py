@@ -67,6 +67,9 @@ def _persistir_alertas(resultados: list):
         "estructura_10", "dist_sl_10_pct", "dist_sh_10_pct",
         "dias_sl_10", "dias_sh_10",
         "alert_score", "alert_nivel", "alert_detalle",
+        # Modelo ML v2 en paralelo (Etapa 3d). NULL si el artefacto no cargo.
+        # Columnas creadas por scripts/oneshot/add_ml_v2_alertas_scanner.py.
+        "ml_prob_v2", "ml_modelo_v2", "alert_score_v2", "alert_nivel_v2",
     )
 
     # Solo persistir registros sin error y con precio_fecha valida (requerida por el constraint)
@@ -349,20 +352,152 @@ def paso_actualizar_sector_db(ruedas: int = RUEDAS_SECTOR) -> dict:
     }
 
 
+_COLUMNAS_V2 = ("ml_prob_v2", "ml_modelo_v2", "alert_score_v2", "alert_nivel_v2")
+
+
+def _cargar_modelo_v2():
+    """
+    Modelo ML v2 (Etapa 3d, 13/9/2026). Corre EN PARALELO a la v1 y escribe las
+    columnas _v2 de alertas_scanner, que lee FT_ML_SCANNER_v2.
+
+    Si el artefacto no esta o no valida contra su metadata, devuelve None: las
+    columnas _v2 quedan en NULL y la v1 corre igual. La v1 es el control del
+    experimento y no puede depender de la v2.
+    """
+    try:
+        from src.ml import ml_v2
+        from src.ml.trainer_v3 import FEATURE_COLS_V3
+        modelo, meta = ml_v2.cargar_modelo_v2(features_esperadas=FEATURE_COLS_V3)
+        cortes = ml_v2.cortes_de(meta)
+        log(f"  [Modelo v2] {meta['version']} | cortes "
+            f"{' / '.join(f'{c:.3f}' for c in cortes)}")
+        return {"modelo": modelo, "meta": meta, "cortes": cortes}
+    except Exception as e:
+        log(f"  [WARN] Modelo v2 NO cargado ({str(e)[:160]}). "
+            f"Columnas _v2 en NULL; la v1 sigue igual.")
+        return None
+
+
+def _agregar_v2(r: dict, signals: dict, meta: dict, features_v3: dict, v2) -> dict:
+    """
+    Suma probabilidad, score y nivel de la v2 al resultado de un ticker.
+
+    Usa las MISMAS senales de price action, score tecnico y bajistas que la v1:
+    solo cambian la probabilidad ML y los cortes con que suma puntos. Se clasifica
+    con la probabilidad redondeada, igual que la v1, para que lo persistido sea
+    coherente con el nivel. Una falla deja las columnas _v2 en None sin tocar la v1.
+    """
+    from src.ml import ml_v2
+    from src.pipeline.alert_classifier import clasificar_alerta
+
+    r.update({c: None for c in _COLUMNAS_V2})
+    if v2 is None:
+        return r
+    try:
+        p = round(ml_v2.prob_v2(v2["modelo"], v2["meta"], features_v3), 4)
+        score, nivel, _ = clasificar_alerta({**signals, "ml_prob_ganancia": p}, meta,
+                                            cortes_ml=v2["cortes"])
+        r.update({"ml_prob_v2": p, "ml_modelo_v2": v2["meta"]["version"],
+                  "alert_score_v2": score, "alert_nivel_v2": nivel})
+    except Exception as e:
+        log(f"    [WARN] v2 fallo en {r.get('ticker')}: {str(e)[:80]}")
+        r.update({c: None for c in _COLUMNAS_V2})
+    return r
+
+
+def _scanner_ticker(ticker: str, modelos: dict, scan_fecha, v2=None) -> dict:
+    """Pipeline completo del scanner para un ticker (v1 y, si hay modelo, v2)."""
+    from src.pipeline.data_manager import preparar_ticker
+    from src.pipeline.feature_calculator import calcular_features_completas
+    from src.pipeline.signal_engine import evaluar_ticker
+    from src.pipeline.alert_classifier import clasificar_alerta
+
+    resultado_base = {
+        "scan_fecha":        scan_fecha,
+        "ticker":            ticker,
+        "sector":            None,
+        "persistido_en_db":  False,
+    }
+    try:
+        df_ohlcv, sector, es_nuevo = preparar_ticker(ticker, persistir=False)
+        resultado_base["sector"] = sector
+
+        calc = calcular_features_completas(df_ohlcv, ticker, sector)
+        if not calc["ok"]:
+            raise ValueError(calc["error"])
+
+        signals = evaluar_ticker(calc["features_v3"], calc["features_pa"],
+                                 sector, modelos, ticker=ticker)
+        alert_score, alert_nivel, alert_detalle = clasificar_alerta(
+            signals, calc["meta"]
+        )
+        meta = calc["meta"]
+        fp   = calc["features_pa"]
+
+        r = {
+            **resultado_base,
+            "precio_cierre":     meta.get("precio_cierre"),
+            "precio_fecha":      meta.get("precio_fecha"),
+            "atr14":             meta.get("atr14"),
+            "ml_prob_ganancia":  signals["ml_prob_ganancia"],
+            "ml_modelo_usado":   signals["ml_modelo_usado"],
+            "pa_ev1":            signals["pa_ev1"],
+            "pa_ev2":            signals["pa_ev2"],
+            "pa_ev3":            signals["pa_ev3"],
+            "pa_ev4":            signals["pa_ev4"],
+            "bear_bos10":        signals["bear_bos10"],
+            "bear_choch10":      signals["bear_choch10"],
+            "bear_estructura":   signals["bear_estructura"],
+            "score_ponderado":   meta.get("score_ponderado"),
+            "condiciones_ok":    meta.get("condiciones_ok"),
+            "estructura_10":     fp.get("estructura_10"),
+            "dist_sl_10_pct":    fp.get("dist_sl_10_pct"),
+            "dist_sh_10_pct":    fp.get("dist_sh_10_pct"),
+            "dias_sl_10":        fp.get("dias_sl_10"),
+            "dias_sh_10":        fp.get("dias_sh_10"),
+            # Patrones de vela (para Mensaje 2 Telegram)
+            "patron_hammer":         fp.get("patron_hammer"),
+            "patron_shooting_star":  fp.get("patron_shooting_star"),
+            "patron_engulfing_bull": fp.get("patron_engulfing_bull"),
+            "patron_engulfing_bear": fp.get("patron_engulfing_bear"),
+            "es_alcista":            fp.get("es_alcista"),
+            "vol_spike":             fp.get("vol_spike"),
+            "alert_score":       alert_score,
+            "alert_nivel":       alert_nivel,
+            "alert_detalle":     alert_detalle,
+            # No se persiste: alimenta el aviso del final del paso.
+            "sector_rueda_ok":   meta.get("sector_rueda_ok"),
+        }
+        _agregar_v2(r, signals, meta, calc["features_v3"], v2)
+
+        linea = f"    -> {alert_nivel} (score={alert_score:.0f} ml={signals['ml_prob_ganancia']:.0%})"
+        if r["alert_nivel_v2"] is not None:
+            linea += (f" | v2 {r['alert_nivel_v2']} (score={r['alert_score_v2']:.0f} "
+                      f"ml={r['ml_prob_v2']:.0%})")
+        log(linea)
+
+    except Exception as e:
+        log(f"    ERROR: {str(e)[:80]}")
+        r = {**resultado_base, "error": str(e)}
+
+    return r
+
+
 def paso_scanner() -> list:
     """
     Corre el scanner para todos los tickers del universo.
     Retorna la lista de resultados.
+
+    Desde el 13/9/2026 (Etapa 3d) calcula ademas el modelo ML v2 en paralelo, en
+    las columnas _v2 de alertas_scanner (ver _cargar_modelo_v2).
     """
     from src.data.universo import get_universo
-    from src.pipeline.data_manager import preparar_ticker
-    from src.pipeline.feature_calculator import calcular_features_completas
-    from src.pipeline.signal_engine import cargar_modelos_v3, evaluar_ticker
-    from src.pipeline.alert_classifier import clasificar_alerta
+    from src.pipeline.signal_engine import cargar_modelos_v3
     from src.pipeline.telegram_notifier import enviar_resumen
 
     universo   = get_universo()
     modelos    = cargar_modelos_v3()
+    v2         = _cargar_modelo_v2()
     # Usar el ultimo dia habil como fecha del scan (no datetime.now() que puede
     # cruzar medianoche UTC si el cron tarda mucho o corre en re-run nocturno)
     from datetime import date as _date
@@ -374,69 +509,17 @@ def paso_scanner() -> list:
 
     for i, ticker in enumerate(universo, 1):
         log(f"  [{i:02d}/{len(universo)}] {ticker}...", )
-        resultado_base = {
-            "scan_fecha":        scan_fecha,
-            "ticker":            ticker,
-            "sector":            None,
-            "persistido_en_db":  False,
-        }
-        try:
-            df_ohlcv, sector, es_nuevo = preparar_ticker(ticker, persistir=False)
-            resultado_base["sector"] = sector
+        resultados.append(_scanner_ticker(ticker, modelos, scan_fecha, v2))
 
-            calc = calcular_features_completas(df_ohlcv, ticker, sector)
-            if not calc["ok"]:
-                raise ValueError(calc["error"])
-
-            signals = evaluar_ticker(calc["features_v3"], calc["features_pa"],
-                                     sector, modelos, ticker=ticker)
-            alert_score, alert_nivel, alert_detalle = clasificar_alerta(
-                signals, calc["meta"]
-            )
-            meta = calc["meta"]
-            fp   = calc["features_pa"]
-
-            r = {
-                **resultado_base,
-                "precio_cierre":     meta.get("precio_cierre"),
-                "precio_fecha":      meta.get("precio_fecha"),
-                "atr14":             meta.get("atr14"),
-                "ml_prob_ganancia":  signals["ml_prob_ganancia"],
-                "ml_modelo_usado":   signals["ml_modelo_usado"],
-                "pa_ev1":            signals["pa_ev1"],
-                "pa_ev2":            signals["pa_ev2"],
-                "pa_ev3":            signals["pa_ev3"],
-                "pa_ev4":            signals["pa_ev4"],
-                "bear_bos10":        signals["bear_bos10"],
-                "bear_choch10":      signals["bear_choch10"],
-                "bear_estructura":   signals["bear_estructura"],
-                "score_ponderado":   meta.get("score_ponderado"),
-                "condiciones_ok":    meta.get("condiciones_ok"),
-                "estructura_10":     fp.get("estructura_10"),
-                "dist_sl_10_pct":    fp.get("dist_sl_10_pct"),
-                "dist_sh_10_pct":    fp.get("dist_sh_10_pct"),
-                "dias_sl_10":        fp.get("dias_sl_10"),
-                "dias_sh_10":        fp.get("dias_sh_10"),
-                # Patrones de vela (para Mensaje 2 Telegram)
-                "patron_hammer":         fp.get("patron_hammer"),
-                "patron_shooting_star":  fp.get("patron_shooting_star"),
-                "patron_engulfing_bull": fp.get("patron_engulfing_bull"),
-                "patron_engulfing_bear": fp.get("patron_engulfing_bear"),
-                "es_alcista":            fp.get("es_alcista"),
-                "vol_spike":             fp.get("vol_spike"),
-                "alert_score":       alert_score,
-                "alert_nivel":       alert_nivel,
-                "alert_detalle":     alert_detalle,
-                # No se persiste: alimenta el aviso del final del paso.
-                "sector_rueda_ok":   meta.get("sector_rueda_ok"),
-            }
-            log(f"    -> {alert_nivel} (score={alert_score:.0f} ml={signals['ml_prob_ganancia']:.0%})")
-
-        except Exception as e:
-            log(f"    ERROR: {str(e)[:80]}")
-            r = {**resultado_base, "error": str(e)}
-
-        resultados.append(r)
+    # v1 contra v2: los cortes de la v2 se fijaron para dar la misma cantidad de
+    # senales que la v1. Una diferencia grande y sostenida es algo a revisar.
+    if v2 is not None:
+        ok = [r for r in resultados if not r.get("error")]
+        cf_v1 = sum(1 for r in ok if r.get("alert_nivel") == "COMPRA_FUERTE")
+        cf_v2 = sum(1 for r in ok if r.get("alert_nivel_v2") == "COMPRA_FUERTE")
+        sin_v2 = sum(1 for r in ok if r.get("alert_nivel_v2") is None)
+        aviso = f" | [WARN] {sin_v2} tickers sin v2" if sin_v2 else ""
+        log(f"  COMPRA_FUERTE v1={cf_v1} | v2={cf_v2}{aviso}")
 
     # features_sector sin la rueda de la barra (13/9/2026): esos tickers
     # recibieron las 11 features sectoriales en NaN. En los sectores sin

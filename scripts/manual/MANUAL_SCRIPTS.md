@@ -55,6 +55,9 @@ Paso 1 al dia.
 
 ### `cron_paso3_scanner.bat`  *(Paso 3)*
 Scanner ML sobre los 199 tickers -> `alertas_scanner` + resumen a Telegram.
+Desde el 13/9/2026 calcula en paralelo el modelo ML v2 (columnas `_v2`, que lee
+FT_ML_SCANNER_v2) y cierra con `COMPRA_FUERTE v1=N | v2=M`. Si el artefacto
+`models_ml_v2/rf_cal_global.joblib` falta o no valida, avisa y la v1 corre igual.
 Prerequisito: Paso 2 al dia. ~60 min. La tendencia MTF (1w/1m) del mensaje de
 Telegram se calcula al vuelo (mtf_context), no depende de tablas semanales.
 

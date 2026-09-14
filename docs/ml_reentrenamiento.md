@@ -353,6 +353,14 @@ Lo que NO dice:
 - Los cortes salen del modelo del holdout y se aplican al modelo final. Hay que
   comparar en vivo la cantidad de COMPRA_FUERTE de v1 y v2.
 
+Servicio (Etapa 3d): el Paso 3 (`cron_diario --step scanner`) carga la v2 una vez,
+validada contra la metadata, y por ticker calcula su probabilidad y un score
+compuesto con las MISMAS senales de price action, score tecnico y bajistas que la
+v1; solo cambian la probabilidad y los cortes (`alert_classifier.clasificar_alerta`,
+parametro `cortes_ml`). Escribe `ml_prob_v2`, `ml_modelo_v2`, `alert_score_v2` y
+`alert_nivel_v2` en la misma fila de `alertas_scanner`. Si el artefacto no carga, esas
+columnas quedan NULL y la v1 corre sin cambios: es el control del experimento.
+
 Cadencia: la v2 queda CONGELADA durante la Etapa 4 (reentrenarla seria un corte de
 tramo). El RF tiene semilla fija: si el artefacto se pierde, regenerarlo con los
 mismos datos y comparar su sha256 con la metadata.

@@ -16,7 +16,7 @@ Composicion del score (base = 50):
     -   Senales bajistas            max -25
 """
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 
 # ─────────────────────────────────────────────────────────────
@@ -36,21 +36,35 @@ _NIVELES = [
 # Puntuacion por componente
 # ─────────────────────────────────────────────────────────────
 
-def _puntos_ml(prob: float) -> Tuple[int, str]:
-    """Contribucion del modelo ML V3 al score."""
-    if prob >= 0.75:
-        pts, desc = 30, f"ML fuerte alcista ({prob:.0%})"
-    elif prob >= 0.65:
-        pts, desc = 22, f"ML alcista ({prob:.0%})"
-    elif prob >= 0.55:
-        pts, desc = 14, f"ML leve alcista ({prob:.0%})"
-    elif prob >= 0.45:
-        pts, desc = 5,  f"ML neutro ({prob:.0%})"
-    elif prob >= 0.35:
-        pts, desc = -5, f"ML leve bajista ({prob:.0%})"
-    else:
-        pts, desc = -15, f"ML bajista ({prob:.0%})"
-    return pts, desc
+# Umbrales de probabilidad ML de la v1, de mayor a menor, y los puntos de cada
+# tramo. Por debajo del ultimo: -15. Son tambien la referencia de los cortes
+# equivalentes de la v2 (src/ml/ml_v2.py): la probabilidad calibrada vive en otra
+# escala y con estos mismos umbrales daria la mitad de senales fuertes.
+CORTES_ML_V1 = (0.75, 0.65, 0.55, 0.45, 0.35)
+_TRAMOS_ML = (
+    (30, "ML fuerte alcista"),
+    (22, "ML alcista"),
+    (14, "ML leve alcista"),
+    (5,  "ML neutro"),
+    (-5, "ML leve bajista"),
+)
+
+
+def _validar_cortes(cortes) -> Tuple[float, ...]:
+    cortes = tuple(float(c) for c in cortes)
+    if len(cortes) != len(_TRAMOS_ML):
+        raise ValueError(f"se esperaban {len(_TRAMOS_ML)} cortes ML, llegaron {len(cortes)}")
+    if any(b >= a for a, b in zip(cortes, cortes[1:])):
+        raise ValueError(f"cortes ML no estrictamente decrecientes: {cortes}")
+    return cortes
+
+
+def _puntos_ml(prob: float, cortes: Tuple[float, ...] = CORTES_ML_V1) -> Tuple[int, str]:
+    """Contribucion del modelo ML al score. `cortes`: los de la v1 por defecto."""
+    for corte, (pts, desc) in zip(cortes, _TRAMOS_ML):
+        if prob >= corte:
+            return pts, f"{desc} ({prob:.0%})"
+    return -15, f"ML bajista ({prob:.0%})"
 
 
 def _puntos_pa(ev1: int, ev2: int, ev3: int, ev4: int) -> Tuple[int, str]:
@@ -110,13 +124,17 @@ def _puntos_bajistas(bear_bos10: int, bear_choch10: int,
 # Clasificador principal
 # ─────────────────────────────────────────────────────────────
 
-def clasificar_alerta(signals: Dict, meta: Dict) -> Tuple[float, str, str]:
+def clasificar_alerta(signals: Dict, meta: Dict,
+                      cortes_ml: Optional[Sequence[float]] = None) -> Tuple[float, str, str]:
     """
     Calcula el score compuesto y asigna el nivel de alerta.
 
     Args:
-        signals: dict de evaluar_ticker() con ml_prob_ganancia, pa_ev*, bear_*
-        meta:    dict de calcular_features_completas() con score_ponderado, etc.
+        signals:   dict de evaluar_ticker() con ml_prob_ganancia, pa_ev*, bear_*
+        meta:      dict de calcular_features_completas() con score_ponderado, etc.
+        cortes_ml: umbrales de probabilidad ML, de mayor a menor. None = los de la
+                   v1 (CORTES_ML_V1), sin ningun cambio. La v2 pasa los suyos
+                   (models_ml_v2/metadata.json); el resto del score es el mismo.
 
     Returns:
         (alert_score, alert_nivel, alert_detalle)
@@ -129,7 +147,8 @@ def clasificar_alerta(signals: Dict, meta: Dict) -> Tuple[float, str, str]:
 
     # ML
     prob = signals.get("ml_prob_ganancia", 0.5)
-    pts_ml, desc_ml = _puntos_ml(prob)
+    cortes = CORTES_ML_V1 if cortes_ml is None else _validar_cortes(cortes_ml)
+    pts_ml, desc_ml = _puntos_ml(prob, cortes)
     base += pts_ml
     partes.append(desc_ml)
 
