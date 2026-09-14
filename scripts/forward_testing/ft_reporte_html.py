@@ -41,6 +41,8 @@ from src.utils.ft_metricas import (
     resumen_riesgo, retornos_desde_equity, metricas_trade, RF_ANUAL_DEFAULT,
 )
 from src.utils import ft_tramos
+from src.utils import ft_comparar
+from scripts.forward_testing import ft_comparar_ml
 
 OUTPUT_DEFAULT = os.path.join(ROOT, "reportes", "ft_reporte.html")
 MAX_CERRADAS_TABLA = 20   # operaciones cerradas a mostrar por estrategia
@@ -750,12 +752,98 @@ def seccion_cambios(ests, cambios, df_met, df_ops, bench):
 """
 
 
+# ── ML v1 vs v2: por que difieren (Etapa 3f) ──────────────────────────────────
+
+_VEREDICTOS_ML = (ft_comparar.A_FAVOR_V2, ft_comparar.A_FAVOR_V1, ft_comparar.POSITIVO,
+                  ft_comparar.NEGATIVO, ft_comparar.AFUERA_MEJOR, ft_comparar.ADENTRO_MEJOR)
+
+
+def cargar_comparacion_ml():
+    """
+    FT_ML_SCANNER_v1 contra v2 desde el inicio de la v2 (ft_comparar_ml.py). None si
+    falta alguna de las dos. Un error no tumba el reporte: la seccion muestra el aviso
+    y el detalle queda en el log.
+    """
+    try:
+        insumos = ft_comparar_ml.cargar_insumos()
+        if insumos is None:
+            return None
+        return {"insumos": insumos, "res": ft_comparar_ml.calcular(insumos)}
+    except Exception as exc:  # la seccion es opcional; el resto del reporte sigue
+        print(f"[ft_reporte_html] [WARN] Comparacion ML v1 vs v2 fallo: "
+              f"{type(exc).__name__}: {str(exc)[:200]}")
+        return {"error": type(exc).__name__}
+
+
+def _celda_ml(texto):
+    """INSUFICIENTE en gris, un veredicto concluyente en negrita."""
+    t = esc(texto)
+    if texto.startswith(ft_comparar.INSUFICIENTE):
+        return f"<span class='nc'>{t}</span>"
+    if texto.endswith(_VEREDICTOS_ML):
+        return f"<b>{t}</b>"
+    return t
+
+
+def seccion_ml_v1_v2(comp):
+    """
+    Seccion "ML v1 vs v2: por que difieren". Solo presentacion: las tablas salen de
+    ft_comparar.tablas(), las mismas del reporte .md.
+    """
+    if "error" in comp:
+        return (f"<div class='vacio'>No se pudo calcular ({esc(comp['error'])}). Ver el log "
+                "de ft_run_diario o correr scripts/forward_testing/ft_comparar_ml.py.</div>")
+    res, ins = comp["res"], comp["insumos"]
+    rango = f" ({res['desde']} a {res['hasta']})" if res["desde"] else ""
+    cab = (f"<div class='sub'>Desde la rueda {ins['desde']}: {res['filas']} filas de "
+           f"alertas_scanner con v1 y v2{rango}. Version en texto: "
+           "<code>scripts/forward_testing/ft_comparar_ml.py</code>.</div>")
+    if res["filas"] == 0:
+        cab += "<div class='vacio'>Todavia no hay filas del scanner con la v2.</div>"
+
+    bloques = []
+    for t in ft_comparar.tablas(res):
+        if t["filas"]:
+            th = "".join(f"<th>{esc(c)}</th>" for c in t["columnas"])
+            trs = "".join("<tr>" + "".join(f"<td>{_celda_ml(c)}</td>" for c in f) + "</tr>"
+                          for f in t["filas"])
+            tabla = f"<table><tr>{th}</tr>{trs}</table>"
+        else:
+            tabla = "<div class='vacio'>Sin filas.</div>"
+        bloques.append(f"<h3 style='margin-top:18px'>{esc(t['titulo'])}</h3>"
+                       f"<div class='sub'>{esc(t['nota'])}</div>{tabla}")
+
+    return f"""
+  <div class="aviso">
+    <b>Que mide.</b> FT_ML_SCANNER_v1 y v2 tienen las mismas reglas de entrada, salida y
+    tamano; cambia el modelo ML. Esta seccion explica <b>por que eligen distinto</b>; cual
+    rinde mas lo dice la cartera, y la decision es de la Etapa 4.<br>
+    <b>Senales</b>: sobre las mismas filas del scanner, cuales da cada version y cuanto
+    rindieron despues contra el promedio del universo en la misma rueda, se hayan operado o
+    no. Las compartidas son iguales en las dos: la comparacion que importa es exclusivas de
+    la v2 contra exclusivas de la v1.<br>
+    <b>Por que una senal es de una sola</b>: si el ticker estaba en el entrenamiento de la
+    v1 y que nivel le dio la otra version.<br>
+    <b>Operaciones</b> y <b>oportunidades</b>: lo que efectivamente operaron y lo que el tope
+    de posiciones dejo afuera.<br>
+    Entre corchetes, el IC95. <b>INSUFICIENTE</b>: menos de {ft_comparar.MIN_SENALES} senales en
+    {ft_comparar.MIN_RUEDAS_SENAL} ruedas distintas ({ft_comparar.MIN_OPS} operaciones,
+    {ft_comparar.MIN_RUEDAS_CARTERA} ruedas de cartera), y el numero no se muestra.
+    <b>NO CONCLUYENTE</b>: el intervalo incluye el cero. Metodo: METRICAS.md sec. 13.
+  </div>
+  {cab}
+  {''.join(bloques)}
+"""
+
+
 def render_html(ests, df_ops, df_met, df_bch=None, desde=VENTANA_COMPARABLE,
-                cambios=None):
-    """Construye el documento HTML completo."""
+                cambios=None, comparacion_ml=None):
+    """Construye el documento HTML completo. `comparacion_ml` None = sin esa seccion."""
     ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
     bench = serie_benchmark(df_bch)
     cambios_html = seccion_cambios(ests, cambios, df_met, df_ops, bench)
+    ml_html = ("" if comparacion_ml is None else
+               f"<h2>ML v1 vs v2: por que difieren</h2>{seccion_ml_v1_v2(comparacion_ml)}")
 
     # Stats por estrategia
     filas = []
@@ -929,6 +1017,8 @@ def render_html(ests, df_ops, df_met, df_bch=None, desde=VENTANA_COMPARABLE,
   <h2>Antes y despues de cada cambio</h2>
   {cambios_html}
 
+  {ml_html}
+
   <h2>Detalle por estrategia</h2>
   {''.join(bloques)}
 </body>
@@ -953,7 +1043,13 @@ def run(output, desde=VENTANA_COMPARABLE):
         print("[ft_reporte_html] [WARN] ft_cambios no existe: el reporte sale sin la "
               "seccion de antes y despues. Correr scripts/oneshot/create_ft_cambios.py --apply.")
 
-    html = render_html(ests, df_ops, df_met, df_bch, desde=desde, cambios=cambios)
+    comparacion_ml = cargar_comparacion_ml()
+    if comparacion_ml is None:
+        print("[ft_reporte_html] [WARN] Falta FT_ML_SCANNER_v1 o v2 en ft_estrategias: el "
+              "reporte sale sin la seccion ML v1 vs v2.")
+
+    html = render_html(ests, df_ops, df_met, df_bch, desde=desde, cambios=cambios,
+                       comparacion_ml=comparacion_ml)
 
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w", encoding="utf-8") as fh:

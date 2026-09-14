@@ -702,3 +702,110 @@ no por resultado.
 5. Una estrategia NUEVA en paralelo (ej. ML_SCANNER_v2) no es un corte de la vieja:
    se comparan en el mismo periodo. Si el despliegue toca algo que la vieja usa (el
    scanner), se registra como marca sobre la vieja.
+
+---
+
+## 13. Por que difieren ML_SCANNER_v1 y v2 (Etapa 3f, 2026-09-14)
+
+La cartera y la seccion 12 responden CUAL rinde mas. Con dos estrategias que tienen
+las mismas reglas y distinto modelo hace falta ademas saber POR QUE eligen distinto:
+sin eso, una diferencia de rendimiento no dice si vino del modelo, de la cobertura de
+tickers o del tope de posiciones.
+
+Modulo PURO `src/utils/ft_comparar.py`. Reporte `scripts/forward_testing/ft_comparar_ml.py`
+(`reportes/ft_comparar_ml.md`, `--desde`) y seccion "ML v1 vs v2: por que difieren" del
+reporte HTML diario, las dos con las mismas tablas (`ft_comparar.tablas`).
+
+### 13.1 Niveles
+
+| Nivel | Fuente | Que responde |
+|---|---|---|
+| Senales | `alertas_scanner`, las MISMAS filas (columnas v1 y `_v2`) | que da cada modelo y cuanto rindio despues, aunque nadie lo haya operado |
+| Atribucion | idem + historia de precios | por que una senal es de una sola |
+| Operaciones | `ft_operaciones` (fechas de dato) | que operaron, compartido o exclusivo, y como salieron |
+| Oportunidades | `ft_candidatos_diarios` | que dejo afuera el tope de 5 posiciones |
+| Cartera | `ft_equity_diaria` | diferencia diaria v2 - v1, pareada |
+
+**Senal** = `COMPRA_FUERTE` con score >= 65, la regla de entrada de las dos. Por rueda:
+ambas / solo v1 / solo v2, y Jaccard = ambas / union.
+
+### 13.2 Retorno de una senal
+
+- Rueda de datos = `precio_fecha`, nunca `scan_fecha`. Si hubo dos corridas sobre la
+  misma rueda, cuenta la ultima.
+- Retorno a N ruedas (5 y 20) = close(D+N) / close(D) - 1, con D+N contado sobre las
+  ruedas del MERCADO (dias habiles NYSE con precio), no sobre la serie del ticker, y con
+  el close de ese dia exacto. Un hueco en la serie del ticker deja la senal sin retorno
+  en vez de correr la ventana.
+- **Exceso** = retorno menos el promedio de TODAS las filas de esa rueda (el universo,
+  tengan o no la v2) en la misma ventana. Es la medida principal: descuenta el mercado,
+  que las senales de una misma rueda comparten.
+- Sale de `precios_diarios` y no de `alertas_scanner.retorno_Nd_real`: esas columnas no
+  se llenan desde mayo (el Paso 4 no esta en la rutina).
+- **Splits**: se lee `precios_diarios` tal como esta. Un split corregido deja la serie
+  continua (`splits.py corregir` divide la historia), asi que una ventana que lo cruza es
+  valida: el +12,9% de KLAC del 11/6 es movimiento real. Uno SIN corregir parte la serie y
+  contamina sus ventanas hasta que se corrige; como todo se recalcula en cada corrida,
+  corregirlo arregla la historia sola. El diseno inicial descartaba las ventanas que cruzan
+  `splits_aplicados.fecha_corte_db`: se saco al verificar que esas ventanas son continuas y
+  que un split sin corregir no figura en ese registro, o sea que la regla no protegia nada
+  y tiraba datos buenos.
+
+### 13.3 La comparacion que decide
+
+Las senales compartidas son identicas en las dos: la diferencia de eleccion vive entera
+en las exclusivas. La comparacion es el **exceso medio de las exclusivas de la v2 contra
+el de las exclusivas de la v1**, con IC95 de Welch (`ft_tramos.comparar_medias`). A FAVOR
+DE V2 / A FAVOR DE V1 solo si el intervalo excluye el cero; si no, NO CONCLUYENTE.
+
+**Minimos**: 10 senales **en al menos 5 ruedas distintas** por lado. El minimo de ruedas
+no esta en la seccion 12 y es a proposito: el 11/9 la v2 dio 14 senales exclusivas en UNA
+rueda. Con solo el minimo de 10 se publicaria un IC como si fueran 14 observaciones
+independientes, y son una sola semana de mercado.
+
+### 13.4 Atribucion
+
+Las dos versiones comparten price action, score tecnico y bajistas: la diferencia de score
+ES la diferencia de puntos ML. Por grupo:
+
+- **Sin entrenar en la v1**: tickers que no estaban en el entrenamiento de la v1, leidos
+  contra la tasa base de las filas (~38%). El conjunto se reproduce por la historia de
+  precios (hasta fin de 2021 = los 123 de `features_ml` de la v1): la tabla se reconstruyo
+  en la Etapa 3b con 196, y `activos.modelo_asignado` da 125 porque HOOD y LAC tienen modelo
+  asignado sin esa historia.
+- **Nivel en la otra version**: COMPRA (60-74) es un desacuerdo de borde; NEUTRAL o menos,
+  de fondo.
+- Probabilidad media de cada modelo, diferencia de score y sectores.
+
+### 13.5 Operaciones, oportunidades y cartera
+
+- **Compartida** = la otra version tuvo el mismo ticker abierto algun dia en comun (las
+  abiertas se extienden hasta la ultima rueda). Expectancy, win rate, permanencia en ruedas
+  y motivos de salida (`SCORE_DEGRADADO_*` agrupado); `_SPLIT_FIX` afuera. Expectancy
+  v2 - v1 con IC95, minimo 10 cerradas por lado.
+- Solo cuentan las operaciones con entrada desde la rueda de inicio: las posiciones que la
+  v1 ya tenia abiertas quedan afuera de este nivel, aunque si estan en su equity.
+- **Oportunidades**: `ft_candidatos_diarios` guarda el dia de REGISTRO; la rueda de datos es
+  la de la ultima alerta del ticker hasta ese dia. Sus `retorno_Nd` propios no se usan:
+  cuentan dias desde el registro y solo se llenan si el bot corre justo N ruedas despues.
+  Exceso de los que entraron contra los que quedaron afuera: si afuera rinde mas, el orden
+  por score no elige bien dentro del dia, y con mas senales por dia (la v2) el tope pesa mas.
+- **Cartera**: diferencia diaria de retorno v2 - v1 en los dias comunes, en pp/mes con IC95
+  de muestra pareada (el mismo mercado cada dia). Minimo 20 ruedas.
+
+### 13.6 Validacion (14/9/2026)
+
+- Retornos contra un calculo independiente en SQL (ruedas por ROW_NUMBER sobre fechas
+  distintas): 120 ventanas a 5 y 20 ruedas, diferencia maxima 2e-16.
+- Camino completo sobre junio-septiembre con una v2 FALSA en memoria, porque la real
+  todavia no tiene filas: las 6 tablas en ASCII y 212 candidatos con su rueda resuelta.
+- La v2 real escribe filas desde la rueda del 14/9: todo arranca INSUFICIENTE.
+
+### 13.7 Limites
+
+- El IC trata las senales como independientes; varias del mismo sector y semana lo dejan
+  angosto de mas. El exceso y el minimo de ruedas lo atenuan, no lo eliminan.
+- El retorno a 20 ruedas tarda 20 ruedas en existir: esa comparacion va un mes atras de
+  la de 5.
+- Senales y operaciones miden cosas distintas: una senal exclusiva buena que el tope dejo
+  afuera no suma a la cartera. La decision de reemplazo es de la Etapa 4, con la cartera.

@@ -79,10 +79,13 @@ SL = entrada x 0,95 | TP = entrada x 1,10.
 
 - Mismo periodo, mismo capital, mismas reglas: la comparacion de cartera usa las
   metricas de `ft_equity_diaria` contra el grupo de control (METRICAS.md sec. 12).
-- Por que difieren: senales exclusivas de cada una sobre las mismas filas de
-  `alertas_scanner` (con retorno real a 5/20 dias), operaciones en tickers
-  compartidos vs exclusivos, candidatos que quedaron afuera por el tope de 5
-  posiciones. Es la Etapa 3f / Etapa 4.
+- Por que difieren (Etapa 3f): seccion "ML v1 vs v2: por que difieren" del reporte
+  HTML diario y `scripts/forward_testing/ft_comparar_ml.py`
+  (`reportes/ft_comparar_ml.md`). Senales exclusivas de cada una sobre las mismas
+  filas de `alertas_scanner`, con retorno real a 5/20 ruedas contra el universo;
+  atribucion (tickers fuera del entrenamiento de la v1, nivel que dio la otra
+  version); operaciones compartidas vs exclusivas; candidatos que quedaron afuera
+  por el tope de 5 posiciones. Metodo: [METRICAS.md sec. 13](../METRICAS.md).
 - Decision de reemplazo: en la Etapa 4 (~40 operaciones cerradas u 8 semanas).
 - La v2 queda CONGELADA mientras dure la comparacion: reentrenarla seria un corte.
 
