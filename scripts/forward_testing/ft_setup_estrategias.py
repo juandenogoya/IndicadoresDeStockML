@@ -254,6 +254,27 @@ ESTRATEGIAS = [
             "position_pct":             0.20,
         },
     },
+    {
+        # Etapa 3e (13/9/2026): la misma estrategia que FT_ML_SCANNER_v1 con la
+        # senal del modelo ML v2 (columnas _v2 de alertas_scanner). La v1 queda
+        # como control; se comparan en la Etapa 4.
+        "nombre":      "FT_ML_SCANNER_v2",
+        "descripcion": "ML_SCANNER_v1 con el modelo ML v2 (RF calibrado, 196 tickers) en paralelo. "
+                       "Mismas reglas: COMPRA_FUERTE v2 score>=65, 5 posiciones, 15%/trade, "
+                       "SL 5%, TP 10%, earnings. Lee alert_nivel_v2/alert_score_v2.",
+        "logica":      "ml_scanner",
+        "parametros":  {
+            "nivel_min":        "COMPRA_FUERTE",
+            "score_min":        65,
+            "max_posiciones":   5,
+            "max_deploy_pct":   0.80,
+            "riesgo_por_trade": 0.15,
+            "sl_pct":           0.05,
+            "tp_pct":           0.10,
+            "senal":            "alert_nivel_v2 / alert_score_v2",
+            "modelo":           "ml_v2_20260913 (models_ml_v2/metadata.json)",
+        },
+    },
 ]
 
 

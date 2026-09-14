@@ -15,6 +15,7 @@ explorar y parametrizar de la mejor manera posible.
 | [METRICAS.md](METRICAS.md) | Medicion de riesgo y rendimiento: equity a mercado (`ft_equity_diaria`), max drawdown, Sharpe/Sortino con IC, benchmarks |
 | **Estrategias activas** | |
 | [estrategias/ML_SCANNER_v1.md](estrategias/ML_SCANNER_v1.md) | Bot ML — scoring scanner + ML prob |
+| [estrategias/ML_SCANNER_v2.md](estrategias/ML_SCANNER_v2.md) | Bot ML v1 con el modelo ML v2 calibrado, en paralelo (control: v1) |
 | [estrategias/TECH_v1.md](estrategias/TECH_v1.md) | Bot Tecnico — SMA/MACD/RSI rule-based |
 | [estrategias/SMC_v1.md](estrategias/SMC_v1.md) | Bot SMC — estructura BOS/CHoCH |
 | [estrategias/TECH_SECTOR_v1.md](estrategias/TECH_SECTOR_v1.md) | Bot Sectorial — tech score con diversificacion sectorial |
@@ -32,7 +33,7 @@ explorar y parametrizar de la mejor manera posible.
 
 ## Estado actual (2026-07-21)
 
-> Forward Testing corre 100% en la DB **local** (Plan C). Los 10 bots se ejecutan
+> Forward Testing corre 100% en la DB **local** (Plan C). Los 11 bots se ejecutan
 > con `scripts/manual/ft_run_diario.bat`. Railway no recibe escrituras de FT.
 
 > **En curso (rama `feature/ft-metricas-riesgo`)**: capa de metricas de riesgo.
@@ -52,6 +53,7 @@ explorar y parametrizar de la mejor manera posible.
 | 8 | TECH_SECTOR_OPTIONS_v1 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_OI opciones |
 | 9 | TECH_SECTOR_OPTIONS_v2 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_VOL opciones |
 | 10 | TECH_SECTOR_OIEXIT_v1 | EN DESARROLLO | 2026-05-18 | Entrada v1 + salida OI walls/corrida |
+| 11 | ML_SCANNER_v2 | ACTIVA | 2026-09-14 | ML_SCANNER_v1 con el modelo ML v2 calibrado; control: v1 |
 
 ---
 

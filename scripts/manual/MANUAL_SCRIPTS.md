@@ -100,7 +100,7 @@ que las escribe el cron).
 ## Forward Testing
 
 ### `ft_run_diario.bat`
-Corre los 10 bots de forward testing en local + regenera el reporte HTML
+Corre los 11 bots de forward testing (FT_ML_SCANNER_v2 desde el 14/9/2026) en local + regenera el reporte HTML
 (`reportes/ft_reporte.html`). Despues del Paso 3 del scanner.
 
 ---

@@ -135,6 +135,21 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
+REM -- BOT 1b - ML Scanner v2: modelo ML v2 en paralelo, Etapa 3e -----
+REM  Misma estrategia que el BOT 1 con la senal del modelo v2: columnas _v2
+REM  de alertas_scanner. Si el scanner no trajo la v2, sale 1 sin operar.
+echo [1b/10] FT_ML_SCANNER_v2...
+echo. >> "%LOGFILE%"
+echo --- FT_ML_SCANNER_v2 --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_ml_scanner_v2.py" >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] ft_bot_ml_scanner_v2.py fallo. Ver log.
+    SET ERRORS=1
+) ELSE (
+    echo [OK]
+)
+
+
 REM ── BOT 2 - Tecnico global ──────────────────────────────────
 echo [2/10] FT_TECH_v1...
 echo. >> "%LOGFILE%"

@@ -7,7 +7,7 @@ REM    1. Sync de opciones Railway -> local + purga de Railway
 REM    2. Paso 1: precios + futuros + indicadores + z-scores
 REM    3. Paso 2: features
 REM    4. Paso 3: scanner ML
-REM    5. ft_run_diario: derivadas de opciones + 10 bots FT + reportes
+REM    5. ft_run_diario: derivadas de opciones + 11 bots FT + reportes
 REM
 REM  Si falla: el sync SIGUE, porque ft_run_diario lo reintenta; los
 REM  pasos 1, 2 y 3 FRENAN antes de los bots, salvo el Paso 1 con hasta

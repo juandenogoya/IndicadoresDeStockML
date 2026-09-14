@@ -34,7 +34,7 @@ falla y faltan datos. Actualizado 28/5/2026 al flujo **Plan C**.
 | `poblar_opciones_yq.bat` | Railway | Carga manual del snapshot de opciones US (yahooquery) |
 | `recover_opciones_tickers.py` | Railway | Recovery quirurgico de opciones de tickers puntuales |
 | `sync_local.bat` | Railway -> Local | Sync completo Railway -> local (todas las tablas) |
-| `ft_run_diario.bat` | Local | **Paso 5**: deriva opciones ([0b]) + 10 bots FT + equity + reporte HTML + veredictos |
+| `ft_run_diario.bat` | Local | **Paso 5**: deriva opciones ([0b]) + 11 bots FT + equity + reporte HTML + veredictos |
 | `chequeo_rutina.py` | Local | Diagnostico: que tablas quedaron atras y que .bat las arregla, huecos en el medio de la serie y ultima corrida de cada paso. Sale != 0 solo si hay mezcla de ruedas |
 | `sync_to_railway.bat` | Local -> Railway | Subir local -> Railway (raro bajo Plan C) |
 
@@ -50,7 +50,7 @@ un solo doble clic: `rutina_diaria.bat`**, que corre en orden:
 2. cron_paso1_precios_yq.bat   (precios + futuros + indicadores + z-scores, LOCAL)
 3. cron_paso2_features.bat     (features PA + Market Structure, LOCAL)
 4. cron_paso3_scanner.bat      (scanner ML + alertas + Telegram, LOCAL)
-5. ft_run_diario.bat           (deriva opciones + 10 bots FT + equity + reportes)
+5. ft_run_diario.bat           (deriva opciones + 11 bots FT + equity + reportes)
 ```
 
 Los cinco .bat siguen existiendo para rehacer un solo paso, y tambien dejan log y

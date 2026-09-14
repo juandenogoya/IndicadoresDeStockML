@@ -841,6 +841,44 @@ src/pipeline/feature_calculator.py; scripts/cron_diario.py (paso_actualizar_sect
 **Registro**: ft_cambios features_sector_recalculo_20260702 (retroactiva, rueda 2/7)
 y features_sector_diaria (rueda 14/9)
 
+### 2026-09-14 — LANZAMIENTO
+**FT_ML_SCANNER_v2: la estrategia ML con el modelo v2 calibrado, en paralelo a la v1**
+
+Fase 5 de la Tarea 20 (Etapa 3 del plan del 13/9). En vez de reemplazar el modelo de
+FT_ML_SCANNER_v1, se lanza una estrategia gemela (id 11, $100.000) que solo cambia la
+senal: lee `alert_nivel_v2` / `alert_score_v2`, que el scanner calcula en la misma
+fila con el modelo v2. Mismas reglas, parametros y cerebro
+(`src/strategies/ml_scanner.py`). La v1 queda como control y su codigo no se toca.
+
+**Modelo v2** (docs/ml_reentrenamiento.md sec. 8c): RF global + calibracion
+isotonica, 196 tickers, entrenado sobre `features_ml` reconstruida (hasta
+2026-08-13). Holdout feb-ago 2026: AUC 0,641, lift@decil 1,51. Cortes de puntos ML
+equivalentes a los de la v1 (misma fraccion de filas arriba en el holdout): 0,769 /
+0,607 / 0,557 / 0,471 / 0,364.
+
+**Antes de lanzarla se arreglo el insumo de la v1** (BUG FIX del 13/9): las dos
+arrancan con las features sectoriales de cada rueda.
+
+**Guard**: si la ultima corrida del scanner no trae la v2, el bot no opera y sale 1.
+
+**Selectividad a vigilar**: en el holdout las dos dan en promedio la misma cantidad
+de senales por dia (4,2 contra 4,5 en el corte alto), pero en dias de senal extrema
+la v2 reacciona mas (rueda 11/9: 9 COMPRA_FUERTE de la v1 contra 23 de la v2). El
+tope de 5 posiciones evita que eso sume exposicion; cambia cuales elige. El Paso 3
+cierra con el conteo v1 contra v2.
+
+**Razon / Hipotesis**: el valor esperado de la v2 no es mas edge sino cobertura (196
+contra 123 tickers entrenados) y probabilidades calibradas.
+**Efecto esperado**: operaciones distintas de la v1 en parte de los dias; contra el
+control, la v2 igual o mejor si la hipotesis vale.
+**Resultado real**: (Etapa 4: ~40 operaciones cerradas u 8 semanas; el analisis de por
+que difieren es la Etapa 3f)
+**Ref**: docs/forward_testing/estrategias/ML_SCANNER_v2.md;
+scripts/forward_testing/ft_bot_ml_scanner_v2.py; src/ml/ml_v2.py;
+scripts/cron_diario.py (_agregar_v2)
+**Registro**: ft_cambios ml_scanner_v2_lanzamiento (MODELO, estrategia 11, rueda 14/9)
+y scanner_v2_en_paralelo (INFRA, marca sobre la v1, rueda 14/9)
+
 ---
 
 ## Template de entrada
