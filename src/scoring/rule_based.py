@@ -123,13 +123,20 @@ def calcular_scoring(df_ind: pd.DataFrame, df_precios: pd.DataFrame,
 # Proceso completo: leer DB, calcular, persistir
 # ─────────────────────────────────────────────────────────────
 
-def procesar_scoring_ticker(ticker: str, guardar_db: bool = True) -> pd.DataFrame:
+def procesar_scoring_ticker(ticker: str, guardar_db: bool = True,
+                            desde=None, verbose: bool = True) -> pd.DataFrame:
     """
     Lee indicadores y precios de la DB, calcula scoring y persiste.
 
     Args:
         ticker:     código del activo
         guardar_db: si True, upsert en scoring_tecnico
+        desde:      fecha o None. Con fecha, devuelve y persiste solo las
+                    sesiones >= desde. El calculo es fila a fila (sin ventanas),
+                    asi que esas sesiones dan lo mismo que la corrida completa.
+                    Modo del Paso 2 diario: scoring_tecnico es insumo de
+                    features_sector (pct_long_sector).
+        verbose:    imprime la linea de resumen por ticker
 
     Returns:
         DataFrame con scoring calculado
@@ -171,13 +178,20 @@ def procesar_scoring_ticker(ticker: str, guardar_db: bool = True) -> pd.DataFram
         print(f"  [WARN] {ticker}: scoring vacío.")
         return pd.DataFrame()
 
-    longs   = (result["senal"] == "LONG").sum()
-    neutros = (result["senal"] == "NEUTRAL").sum()
-    print(
-        f"  {ticker}: {len(result)} sesiones | "
-        f"LONG: {longs} ({longs/len(result)*100:.1f}%) | "
-        f"NEUTRAL: {neutros}"
-    )
+    if desde is not None:
+        result = result[result["fecha"] >= pd.Timestamp(desde)].reset_index(drop=True)
+        if result.empty:
+            print(f"  [WARN] {ticker}: sin sesiones desde {desde}.")
+            return pd.DataFrame()
+
+    if verbose:
+        longs   = (result["senal"] == "LONG").sum()
+        neutros = (result["senal"] == "NEUTRAL").sum()
+        print(
+            f"  {ticker}: {len(result)} sesiones | "
+            f"LONG: {longs} ({longs/len(result)*100:.1f}%) | "
+            f"NEUTRAL: {neutros}"
+        )
 
     if guardar_db:
         upsert_scoring(result)
@@ -186,9 +200,12 @@ def procesar_scoring_ticker(ticker: str, guardar_db: bool = True) -> pd.DataFram
 
 
 def procesar_scoring_todos(tickers: list = None,
-                           guardar_db: bool = True) -> dict:
+                           guardar_db: bool = True,
+                           desde=None, verbose: bool = True) -> dict:
     """
     Calcula el scoring para todos los activos del universo.
+
+    `desde` y `verbose`: ver procesar_scoring_ticker.
 
     Returns:
         dict {ticker: DataFrame scoring}
@@ -200,7 +217,8 @@ def procesar_scoring_todos(tickers: list = None,
     print("-" * 65)
 
     for ticker in tickers:
-        df = procesar_scoring_ticker(ticker, guardar_db=guardar_db)
+        df = procesar_scoring_ticker(ticker, guardar_db=guardar_db,
+                                     desde=desde, verbose=verbose)
         if not df.empty:
             resultados[ticker] = df
 

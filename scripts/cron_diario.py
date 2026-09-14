@@ -7,7 +7,7 @@ particionado en jobs GH Actions encadenados con `needs`.
 
 Modos de uso:
     python scripts/cron_diario.py --step precios   # Paso 1: precios + futuros
-    python scripts/cron_diario.py --step features  # Paso 2: features PA + SMC
+    python scripts/cron_diario.py --step features  # Paso 2: features PA + SMC + sector
     python scripts/cron_diario.py --step scanner   # Paso 3: scanner ML + Telegram
     python scripts/cron_diario.py --step verificar # Paso 4: verificacion post-facto
     python scripts/cron_diario.py                  # Legacy: todos los pasos en uno
@@ -296,6 +296,59 @@ def paso_actualizar_features_db() -> dict:
     return {"pa": len(df_pa), "ms": len(df_ms)}
 
 
+# Ruedas que el Paso 2 recalcula en scoring_tecnico y features_sector. No alcanza
+# con la ultima: si el Paso 1 quedo PARCIAL (la rutina sigue con hasta 10 tickers
+# pendientes) la rueda se calculo sin ellos y hay que rehacerla cuando lleguen.
+# Un hueco mas viejo que esto se rellena con la corrida completa
+# (docs/checklist_recovery_manual.md, CASO E).
+RUEDAS_SECTOR = 10
+
+
+def paso_actualizar_sector_db(ruedas: int = RUEDAS_SECTOR) -> dict:
+    """
+    Paso 2b: scoring_tecnico + features_sector de las ultimas `ruedas` ruedas.
+
+    features_sector es INSUMO del scanner: 11 de las 53 features del modelo ML
+    (z-scores del ticker contra su sector). Hasta el 13/9/2026 ningun paso
+    diario la actualizaba y el scanner leia la ultima fila disponible, asi que
+    el modelo recibia datos de semanas atras. scoring_tecnico va primero porque
+    features_sector toma de ahi la senal LONG (pct_long_sector).
+
+    Calcula sobre la historia completa y persiste solo desde la primera de esas
+    ruedas: mismo resultado que la corrida completa (scripts/legacy_ml/03 y 05).
+    """
+    from src.data.database import query_df
+    from src.data.universo import get_universo
+    from src.scoring.rule_based import procesar_scoring_todos
+    from src.indicators.sector_features import procesar_features_sector
+
+    df = query_df(
+        "SELECT DISTINCT fecha FROM precios_diarios ORDER BY fecha DESC LIMIT :n",
+        params={"n": ruedas},
+    )
+    if df.empty:
+        raise ValueError("precios_diarios vacia: no hay ruedas para recalcular")
+    desde = min(df["fecha"])
+    if hasattr(desde, "date"):
+        desde = desde.date()
+
+    log(f"  Recalculando desde {desde} (ultimas {ruedas} ruedas)...")
+    sc = procesar_scoring_todos(tickers=get_universo(), guardar_db=True,
+                                desde=desde, verbose=False)
+    fs = procesar_features_sector(guardar_db=True, desde=desde, verbose=False)
+    if fs.empty:
+        raise ValueError(f"features_sector sin filas desde {desde}")
+
+    ultima = max(fs["fecha"])
+    return {
+        "desde":          desde,
+        "scoring":        sum(len(d) for d in sc.values()),
+        "sector":         len(fs),
+        "ultima":         ultima,
+        "tickers_ultima": int(fs.loc[fs["fecha"] == ultima, "ticker"].nunique()),
+    }
+
+
 def paso_scanner() -> list:
     """
     Corre el scanner para todos los tickers del universo.
@@ -374,6 +427,8 @@ def paso_scanner() -> list:
                 "alert_score":       alert_score,
                 "alert_nivel":       alert_nivel,
                 "alert_detalle":     alert_detalle,
+                # No se persiste: alimenta el aviso del final del paso.
+                "sector_rueda_ok":   meta.get("sector_rueda_ok"),
             }
             log(f"    -> {alert_nivel} (score={alert_score:.0f} ml={signals['ml_prob_ganancia']:.0%})")
 
@@ -382,6 +437,19 @@ def paso_scanner() -> list:
             r = {**resultado_base, "error": str(e)}
 
         resultados.append(r)
+
+    # features_sector sin la rueda de la barra (13/9/2026): esos tickers
+    # recibieron las 11 features sectoriales en NaN. En los sectores sin
+    # contexto es lo esperable; en el resto significa que el Paso 2 no corrio.
+    from src.utils.contexto_sectorial import sin_contexto_sectorial
+    sin_rueda = [r["ticker"] for r in resultados
+                 if not r.get("error") and r.get("sector_rueda_ok") is False
+                 and not sin_contexto_sectorial(r.get("sector"))]
+    if sin_rueda:
+        resto = " ..." if len(sin_rueda) > 15 else ""
+        log(f"  [WARN] {len(sin_rueda)} tickers sin features_sector en su rueda "
+            f"(11 features en NaN): {', '.join(sin_rueda[:15])}{resto}. "
+            f"Correr el Paso 2.")
 
     # Contexto MTF (batch, una sola query)
     from src.indicators.mtf_context import get_contexto_mtf_batch
@@ -569,10 +637,10 @@ def cmd_precios():
 
 def cmd_features():
     """
-    Paso 2: Features precio accion + Market Structure.
+    Paso 2: Features precio accion + Market Structure + features sectoriales.
     Critico: exit 1 si falla (scanner depende de estos datos).
     """
-    _header("CRON  Paso 2 -- Features PA + Market Structure")
+    _header("CRON  Paso 2 -- Features PA + Market Structure + sector")
 
     log("\n[2] Upsert features_precio_accion y features_market_structure...")
     try:
@@ -580,6 +648,16 @@ def cmd_features():
         log(f"  Features OK: PA={stats['pa']:,} filas, MS={stats['ms']:,} filas.")
     except Exception:
         log(f"  ERROR CRITICO en features:\n{traceback.format_exc()}")
+        sys.exit(1)
+
+    log("\n[2b] scoring_tecnico + features_sector (insumo del scanner ML)...")
+    try:
+        st = paso_actualizar_sector_db()
+        log(f"  Sector OK: desde {st['desde']} | scoring={st['scoring']:,} filas, "
+            f"sector={st['sector']:,} filas | ultima rueda {st['ultima']} "
+            f"({st['tickers_ultima']} tickers)")
+    except Exception:
+        log(f"  ERROR CRITICO en features sectoriales:\n{traceback.format_exc()}")
         sys.exit(1)
 
     log("\n  Paso 2 finalizado.")
@@ -656,6 +734,14 @@ def cmd_all():
         log(f"  Features OK: PA={stats_feat['pa']:,}, MS={stats_feat['ms']:,} filas.")
     except Exception:
         log(f"  ERROR en features (continua):\n{traceback.format_exc()[:300]}")
+
+    log("\n[1b/4] scoring_tecnico + features_sector (insumo del scanner ML)...")
+    try:
+        st = paso_actualizar_sector_db()
+        log(f"  Sector OK: desde {st['desde']} | ultima rueda {st['ultima']} "
+            f"({st['tickers_ultima']} tickers)")
+    except Exception:
+        log(f"  ERROR en features sectoriales (continua):\n{traceback.format_exc()[:300]}")
 
     log("\n[2/4] Scanner de alertas...")
     try:

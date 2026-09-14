@@ -229,6 +229,12 @@ manual aplicado el 12/9/2026 (unos 5 minutos de maquina):
    `procesar_features_precio_accion` y `_market_structure` (bulk, ~2 min);
    `backfill_zscore_tickers(desde)`; `compute_opciones_derivadas.py --desde`;
    `ft_compute_equity.py --desde`.
+   Features sectoriales (`scoring_tecnico` + `features_sector`, insumo del scanner
+   ML): el Paso 2 recalcula solo las ultimas 10 ruedas. Si el hueco es mas viejo,
+   correr completos `scripts/legacy_ml/03_calcular_scoring.py` y
+   `05_calcular_features_sector.py` (unos 3 minutos), desde la raiz y con
+   `PYTHONPATH=.`: al moverse a `legacy_ml/` su `sys.path` apunta a `scripts/` y
+   sin eso fallan con "No module named 'src'".
 4. NO tocar registros historicos: `alertas_scanner`, `ft_operaciones`,
    `ft_posiciones_diarias` (son lo que el sistema vio ese dia).
 5. Si cambia decisiones de FT a futuro, registrarlo en `ft_cambios` como marca

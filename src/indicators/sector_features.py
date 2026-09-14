@@ -215,12 +215,29 @@ def upsert_features_sector(df: pd.DataFrame):
 # Pipeline principal
 # ─────────────────────────────────────────────────────────────
 
-def procesar_features_sector(guardar_db: bool = True) -> pd.DataFrame:
+def procesar_features_sector(guardar_db: bool = True, desde=None,
+                             verbose: bool = True) -> pd.DataFrame:
     """
     Pipeline completo: carga datos, calcula features, persiste.
 
+    Args:
+        guardar_db: si True, upsert en features_sector.
+        desde:      fecha o None. Con fecha, calcula igual sobre TODA la historia
+                    (retorno_5d necesita las ruedas previas del ticker) y
+                    devuelve/persiste solo las filas con fecha >= desde. Las
+                    filas de esas ruedas son identicas a las de la corrida
+                    completa; el upsert baja de ~170.000 filas a unos miles.
+                    Es el modo del Paso 2 diario (cron_diario --step features).
+        verbose:    imprime la muestra de z-scores de la ultima fecha.
+
+    Por que existe el modo incremental (13/9/2026): esta tabla no la actualizaba
+    ningun paso diario -- solo el script legacy 05, a mano (24/2, 30/3, 9-10/4 y
+    2/7) -- y el scanner leia su ultima fila sin mirar la fecha. El modelo ML
+    recibio 11 de sus 53 features con semanas de antiguedad. Ver CLAUDE.md,
+    patrones criticos.
+
     Returns:
-        DataFrame con features sectoriales calculados
+        DataFrame con features sectoriales calculados (desde `desde`, si se paso)
     """
     print("  Cargando datos de todos los tickers...", end=" ")
     df_raw = cargar_datos_completos()
@@ -228,17 +245,21 @@ def procesar_features_sector(guardar_db: bool = True) -> pd.DataFrame:
 
     print("  Calculando Z-scores y metricas sectoriales...", end=" ")
     df_features = calcular_features_sector(df_raw)
+    if desde is not None:
+        desde = pd.Timestamp(desde).date()
+        df_features = df_features[df_features["fecha"] >= desde].reset_index(drop=True)
     print(f"{len(df_features):,} registros listos.")
 
     # Resumen por sector
-    print("\n  Muestra de Z-scores (ultima fecha disponible):")
-    ultima = df_features[df_features["fecha"] == df_features["fecha"].max()]
-    cols_show = ["ticker", "sector", "z_rsi_sector", "z_retorno_1d_sector",
-                 "pct_long_sector", "rank_retorno_sector"]
-    print(ultima[cols_show].sort_values(
-        ["sector", "rank_retorno_sector"]).to_string(index=False))
+    if verbose and not df_features.empty:
+        print("\n  Muestra de Z-scores (ultima fecha disponible):")
+        ultima = df_features[df_features["fecha"] == df_features["fecha"].max()]
+        cols_show = ["ticker", "sector", "z_rsi_sector", "z_retorno_1d_sector",
+                     "pct_long_sector", "rank_retorno_sector"]
+        print(ultima[cols_show].sort_values(
+            ["sector", "rank_retorno_sector"]).to_string(index=False))
 
-    if guardar_db:
+    if guardar_db and not df_features.empty:
         upsert_features_sector(df_features)
 
     return df_features

@@ -791,6 +791,56 @@ antes de desplegarse y tiene lectura con IC95 desde que junta muestra.
 scripts/forward_testing/ft_cambios.py y ft_foto_base.py;
 scripts/oneshot/create_ft_cambios.py
 
+### 2026-09-13 — BUG FIX
+**ML_SCANNER_v1 decidia con 11 de sus 53 features congeladas (features_sector)**
+
+Al preparar ML_SCANNER_v2 aparecio que el scanner leia la ULTIMA fila de
+`features_sector` sin mirar la fecha, y que ningun paso diario actualizaba esa
+tabla (solo el legacy 05, a mano: 24/2, 30/3, 9-10/4 y 2/7). El modelo ML recibio
+los z-scores y promedios del sector de semanas atras junto con el precio del dia:
+del 23/4 al 1/7 los del 9/4, y desde la rueda 2/7 los del 1/7. Las otras 42
+features se calculan en vivo y estaban al dia, igual que las otras tres partes
+del score compuesto (price action, score tecnico, senales bajistas).
+
+**Alcance**: solo ML_SCANNER_v1, la unica estrategia que lee `alertas_scanner`.
+Las otras 9 leen sus tablas directo, y esas si se actualizan. Fuera de FT: el
+Bot 1 de Alpaca mientras estuvo prendido, el Telegram del scanner y el MCP.
+
+**Magnitud** (rueda 11/9, mismo dato y mismo codigo salvo esas 11 columnas):
+
+| Nivel | Congelado (1/7) | Dato de la rueda |
+|---|---|---|
+| COMPRA_FUERTE | 7 | 9 (3 en comun) |
+| COMPRA | 46 | 74 |
+| NEUTRAL | 137 | 108 |
+| VENTA | 10 | 9 |
+
+`ml_prob_ganancia` se mueve 0,065 en promedio (p90 0,18, max 0,37) y 57 de 200
+tickers cambian de nivel. Entre el z-score congelado y el de la rueda la
+correlacion es ~0: era ruido.
+
+**Decision**: arreglarlo para la v1 ahora, antes de lanzar la v2, para que las dos
+arranquen con los mismos insumos y la Etapa 4 compare modelos y no datos. La
+historia no se corrige (paper, mismo criterio que los splits): se registra.
+- El Paso 2 (paso 2b) recalcula `scoring_tecnico` + `features_sector` de las
+  ultimas 10 ruedas; el scanner lee la fila de la rueda de la barra (NaN y aviso
+  si falta); `estado_pipeline` vigila la tabla como insumo critico.
+- Compuerta A/B sobre la rueda 11/9: 0 diferencias en las 42 features no
+  sectoriales; las 11 sectoriales coinciden con una replica independiente
+  (max 0,00005); sin fila solo AMT/EQIX/PLD/VST, los sin contexto sectorial.
+
+**Lo que NO se puede afirmar**: que la v1 habria rendido mas o menos con el dato
+fresco. Sus resultados valen como registro de lo que opero, no como medida del
+modelo funcionando bien.
+
+**Efecto esperado**: desde la rueda 14/9 la v1 cambia de senales. Sobre la 11/9,
+4 de sus 7 COMPRA_FUERTE salian y entraban 6 nuevos.
+**Resultado real**: (Etapa 4; el tramo de la v1 queda marcado, no cortado)
+**Ref**: docs/ml_reentrenamiento.md sec. 8b; CLAUDE.md patrones criticos;
+src/pipeline/feature_calculator.py; scripts/cron_diario.py (paso_actualizar_sector_db)
+**Registro**: ft_cambios features_sector_recalculo_20260702 (retroactiva, rueda 2/7)
+y features_sector_diaria (rueda 14/9)
+
 ---
 
 ## Template de entrada

@@ -282,6 +282,32 @@ PRODUCCION (scanner que alimenta alertas_scanner + bot ML FT/Alpaca); al calibra
 la distribucion de prob -> RECALIBRAR el umbral COMPRA_FUERTE. Requiere listar archivos
 + aprobacion antes de codear. Homologar con FT via src/strategies/ml_scanner.
 
+## 8b. Insumo del scanner en vivo: features sectoriales congeladas (13/9/2026)
+
+Encontrado al preparar la Fase 5. `feature_calculator._obtener_zscore_sectorial`
+tomaba la ULTIMA fila de `features_sector` sin mirar la fecha, y esa tabla no la
+actualizaba ningun paso diario: solo el script legacy 05, a mano (24/2, 30/3,
+9-10/4 y 2/7 segun `log_ejecuciones`). El modelo desplegado recibio 11 de sus 53
+features (z-scores y promedios del sector) con semanas de antiguedad durante toda
+la vida de FT_ML_SCANNER_v1: del 23/4 al 2/7 con datos del 9/4, y desde el 2/7
+con los del 1/7. Las otras 42 se calculan en vivo y estaban al dia.
+
+Medido sobre la rueda 2026-09-11 (solo lectura, mismo codigo y mismo dato salvo
+esas 11 columnas):
+- correlacion ~0 entre el valor congelado y el de la rueda en los 6 z-scores;
+- `ml_prob_ganancia` se mueve 0,065 en promedio (p90 0,18, max 0,37);
+- 57 de 200 tickers cambian de nivel; COMPRA_FUERTE pasa de 7 a 9 con 3 en comun.
+
+Consecuencias para este documento:
+- La performance EN VIVO de la seccion 2.2 (y la de FT_ML_SCANNER_v1) midio el
+  modelo con esta falla, no el modelo funcionando bien. Es valida como registro
+  de lo que opero; no dice si con el dato fresco habria rendido mas o menos.
+- El walk-forward (secciones 5-8) NO esta afectado: entrena y evalua sobre
+  `features_ml`, que trae los z-scores de cada rueda.
+- Arreglo (Etapa 3a): el Paso 2 recalcula `scoring_tecnico` y `features_sector`
+  de las ultimas 10 ruedas, el scanner lee la fila de la rueda de la barra (NaN
+  si falta) y `estado_pipeline` vigila la tabla. Registrado en `ft_cambios`.
+
 ## 9. Addendum -- validez predictiva del PCR (previo a sumar features de opciones)
 
 Antes de invertir en features de opciones para intentar subir el techo (unica

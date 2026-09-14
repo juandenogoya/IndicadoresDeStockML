@@ -47,7 +47,11 @@ atrasados (MAX(fecha)) y baja SOLO los pendientes. Idempotente.
 
 ### `cron_paso2_features.bat`  *(Paso 2)*
 Features de precio-accion (`features_precio_accion`) y market structure
-(`features_market_structure`). Prerequisito: Paso 1 al dia.
+(`features_market_structure`), y desde el 13/9/2026 `scoring_tecnico` +
+`features_sector` de las ultimas 10 ruedas (paso 2b). `features_sector` es insumo
+del scanner: 11 de las 53 features del modelo ML. Antes no la actualizaba ningun
+paso diario y el scanner leia su ultima fila sin mirar la fecha. Prerequisito:
+Paso 1 al dia.
 
 ### `cron_paso3_scanner.bat`  *(Paso 3)*
 Scanner ML sobre los 199 tickers -> `alertas_scanner` + resumen a Telegram.

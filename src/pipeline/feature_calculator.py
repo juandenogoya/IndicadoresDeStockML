@@ -49,11 +49,22 @@ PA_COLS_EXTRA = [
 _SECTOR_ZCOLS = list(FEATURES_SECTORIALES)
 
 
-def _obtener_zscore_sectorial(ticker: str,
-                               fecha: Optional[object] = None) -> Dict[str, Optional[float]]:
+def _obtener_zscore_sectorial(ticker: str, fecha) -> Dict[str, Optional[float]]:
     """
-    Obtiene los z-scores sectoriales de la ultima fecha disponible en DB
-    para el ticker. Retorna dict con NaN si no hay datos.
+    Z-scores sectoriales del ticker EN LA RUEDA `fecha` (la de su ultima barra).
+    Si esa rueda no esta en features_sector, NaN en las 11 columnas.
+
+    BUG CORREGIDO (13/9/2026): antes tomaba la ultima fila disponible SIN mirar
+    la fecha, y features_sector no la actualizaba ningun paso diario (solo el
+    script legacy 05, a mano). El modelo recibio durante meses la posicion del
+    ticker en su sector de semanas atras junto con el precio de hoy. Medido
+    sobre la rueda 2026-09-11: con el dato de la rueda, 57 de 200 tickers
+    cambiaban de nivel de alerta.
+
+    Un numero de otra rueda es peor que un hueco: parece valido y nada falla.
+    El hueco lo cubre el imputer del modelo (mediana) -- como en los 4 tickers
+    sin contexto sectorial -- y el scanner lo informa en su resumen.
+    `fecha` es obligatoria a proposito: sin ella no hay lectura correcta.
     """
     empty = {c: np.nan for c in _SECTOR_ZCOLS}
 
@@ -63,12 +74,10 @@ def _obtener_zscore_sectorial(ticker: str,
     sql = f"""
         SELECT {", ".join(_SECTOR_ZCOLS)}
         FROM features_sector
-        WHERE ticker = :ticker
-        ORDER BY fecha DESC
-        LIMIT 1
+        WHERE ticker = :ticker AND fecha = :fecha
     """
     try:
-        df = query_df(sql, params={"ticker": ticker})
+        df = query_df(sql, params={"ticker": ticker, "fecha": fecha})
         if df.empty:
             return empty
         row = df.iloc[0]
@@ -153,18 +162,23 @@ def calcular_features_completas(df_ohlcv: pd.DataFrame,
         df_base = df_base.merge(df_pa_result[["fecha"] + pa_extra_cols], on="fecha", how="left",
                                  suffixes=("", "_pa"))
 
-        # ── 7. Z-scores sectoriales ──────────────────────────
-        zscores = _obtener_zscore_sectorial(ticker)
-        for col, val in zscores.items():
-            df_base[col] = val
-
-        # ── 8. Extraer la ultima barra ─────────────────────────
-        # Buscar la ultima fila con datos tecnicos validos
+        # ── 7. Ultima barra con datos tecnicos validos ─────────
         mask_valida = df_base["rsi14"].notna() & df_base["atr14"].notna()
         if not mask_valida.any():
             return {"ok": False, "error": "No hay barras con indicadores calculados"}
 
         last_idx = df_base[mask_valida].index[-1]
+
+        # ── 8. Z-scores sectoriales DE ESA RUEDA ──────────────
+        # Va despues de elegir la barra porque depende de su fecha: antes se
+        # leia la ultima fila de features_sector, de la rueda que fuera.
+        fecha_barra = df_base.loc[last_idx, "fecha"]
+        fecha_barra = fecha_barra.date() if hasattr(fecha_barra, "date") else fecha_barra
+        zscores = _obtener_zscore_sectorial(ticker, fecha_barra)
+        sector_rueda_ok = any(not pd.isna(v) for v in zscores.values())
+        for col, val in zscores.items():
+            df_base[col] = val
+
         row = df_base.loc[last_idx]
 
         # ── 9. Armar dict de features V3 ──────────────────────
@@ -225,6 +239,11 @@ def calcular_features_completas(df_ohlcv: pd.DataFrame,
             "atr14":         _safe_float("atr14"),
             "score_ponderado": _safe_float("score_ponderado"),
             "condiciones_ok":  _safe_int("condiciones_ok"),
+            # False = features_sector no tiene la rueda de esta barra y las 11
+            # features sectoriales van en NaN. Esperable solo en los sectores
+            # sin contexto (contexto_sectorial); en el resto es un Paso 2 que
+            # no corrio o fallo, y el scanner lo informa.
+            "sector_rueda_ok": sector_rueda_ok,
         }
 
         return {

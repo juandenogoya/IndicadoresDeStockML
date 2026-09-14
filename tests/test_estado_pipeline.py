@@ -26,6 +26,15 @@ def _todo_en(f):
     return {t.nombre: f for t in TABLAS}
 
 
+def test_features_sector_es_insumo_critico_medido_por_su_rueda():
+    # Incidente 13/9/2026: estuvo meses congelada y el diagnostico no la veia
+    # porque no estaba en el registro. Es insumo del scanner ML.
+    t = next(t for t in TABLAS if t.nombre == "features_sector")
+    assert t.critica
+    assert t.columna == "fecha"
+    assert "cron_paso2" in t.arreglo
+
+
 # -- huecos en el medio de la serie ------------------------------------------
 
 RUEDAS = [date(2026, 8, 24), date(2026, 8, 25), date(2026, 8, 26), date(2026, 8, 27),

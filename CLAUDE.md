@@ -416,6 +416,27 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   apareciendo sobre tickers que ya tienen contexto -- o dejaria de aparecer
   sobre los que no.
 
+### features_sector: el scanner lee la fila de SU rueda (incidente 13/9/2026)
+- `feature_calculator._obtener_zscore_sectorial` tomaba la ULTIMA fila de
+  `features_sector` sin mirar la fecha, y ningun paso diario actualizaba la tabla
+  (solo el legacy 05, a mano: 24/2, 30/3, 9-10/4 y 2/7). El modelo ML recibio 11
+  de sus 53 features con semanas de antiguedad durante toda la vida de
+  FT_ML_SCANNER_v1, sin un solo error. Medido sobre la rueda 11/9: con el dato de
+  la rueda, 57 de 200 tickers cambian de nivel.
+- Ahora: el Paso 2 (`cron_diario --step features`, paso 2b) recalcula
+  `scoring_tecnico` + `features_sector` de las ultimas 10 ruedas (calcula sobre
+  toda la historia y persiste desde ahi); el scanner lee `fecha = rueda de la
+  barra` y si falta deja NaN y lo avisa en su resumen; `estado_pipeline` vigila la
+  tabla como insumo critico.
+- Misma familia que `scan_fecha` y `fecha_datos`: una lectura "la ultima que
+  haya" nunca falla y devuelve un numero plausible. Para decidir sobre la rueda
+  D, leer la fila de D.
+- Afecto SOLO a FT_ML_SCANNER_v1 (la unica estrategia que lee `alertas_scanner`),
+  al Bot 1 de Alpaca mientras estuvo prendido, al Telegram del scanner y al MCP.
+  Registrado en `ft_cambios` (DATOS). Detalle: docs/ml_reentrenamiento.md sec. 8b.
+- Los legacy 03/05/06 (`scripts/legacy_ml/`) se corren desde la raiz con
+  `PYTHONPATH=.`: su `sys.path` apunta a `scripts/`.
+
 ### Splits -- precios_diarios NO se re-ajusta hacia atras (21/7/2026)
 - El pipeline diario solo trae los dias NUEVOS (ya ajustados por Yahoo). Cuando
   un ticker hace split, la historia previa queda en la escala VIEJA -> la serie
@@ -626,7 +647,9 @@ Las criticas:
   mtf_context y el MCP get_ticker_sintesis). Ningun flujo vivo la lee ya:
   src/utils/weekly_tf.py es la fuente unica del RSI/MACD semanal (29/5/2026).
 - `futuros_diarios` | `indicadores_tecnicos_futuros`
-- `features_regimen_macro` | `features_ml` | `features_sector`
+- `features_regimen_macro` | `features_ml` | `features_sector` (z-scores del ticker
+  contra su sector; INSUMO del scanner ML, 11 de las 53 features. La actualiza el
+  Paso 2 desde el 13/9/2026: ultimas 10 ruedas. Ver patrones criticos)
 - `earnings_calendar` (ticker PK, earnings_date DATE NULL; refrescada semanal
   desde Nasdaq por `refresh_earnings_calendar.py`)
 - `earnings_historico` (LOCAL) -- fecha de anuncio de cada balance por trimestre
@@ -867,7 +890,8 @@ docs/checklist_recovery_manual.md, CASO E.
       Escribe solo la rueda nueva pero calcula la serie entera (el percentil es
       rodante). Recompute DB->local, sin red. Ver docs/fuentes_fundamentales.md.
 3. status_local.bat         (verificar 0 tickers desactualizados)
-4. cron_diario --step features  (calcular features sobre los nuevos precios)
+4. cron_diario --step features  (features PA/SMC + scoring_tecnico y features_sector
+                                 de las ultimas 10 ruedas, insumo del scanner)
 5. cron_diario --step scanner   (generar alertas)
 ```
 

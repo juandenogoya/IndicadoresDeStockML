@@ -97,6 +97,13 @@ TABLAS = (
           True, "cron_paso2_features.bat", None),
     Tabla("features_market_structure", "fecha", "Features SMC",
           True, "cron_paso2_features.bat", None),
+    # features_sector (13/9/2026): insumo del scanner, 11 de las 53 features del
+    # modelo ML. Estuvo meses sin actualizarse y este registro no lo vio porque
+    # la tabla no figuraba aca -- y el scanner leia su ultima fila sin mirar la
+    # fecha, asi que tampoco fallaba nada. Su created_at existe pero es NULL en
+    # toda la historia: no sirve de reloj.
+    Tabla("features_sector", "fecha", "Features sector",
+          True, "cron_paso2_features.bat", None),
     Tabla("alertas_scanner", "precio_fecha", "Scanner ML",
           True, "cron_paso3_scanner.bat", "created_at"),
     Tabla("opciones_snapshot", "fecha_snapshot", "Opciones (crudo)",
