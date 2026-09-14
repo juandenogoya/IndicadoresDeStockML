@@ -1,0 +1,321 @@
+{
+  "version": "ml_v2_20260913",
+  "creado": "2026-09-13T23:47:30",
+  "git_commit": "9b42bf0",
+  "config": {
+    "modelo": "CalibratedClassifierCV(construir_modelo('rf', n), method='isotonic', cv=3)",
+    "rf": {
+      "n_estimators": 300,
+      "max_depth": 8,
+      "min_samples_leaf": 584,
+      "max_features": "sqrt",
+      "class_weight": "balanced",
+      "random_state": 42
+    },
+    "label": "label_binario = retorno_20d > +1% (UMBRAL_NEUTRO)",
+    "ponderador_sectorial": null,
+    "referencia": "docs/ml_reentrenamiento.md sec. 8 (config congelada, Tarea 20)"
+  },
+  "features": [
+    "rsi14",
+    "macd_hist",
+    "adx",
+    "vol_relativo",
+    "dist_sma21",
+    "dist_sma50",
+    "dist_sma200",
+    "bb_posicion",
+    "atr14_pct",
+    "momentum_pct",
+    "score_ponderado",
+    "condiciones_ok",
+    "cond_rsi",
+    "cond_macd",
+    "cond_sma21",
+    "cond_sma50",
+    "cond_sma200",
+    "cond_momentum",
+    "z_rsi_sector",
+    "z_retorno_1d_sector",
+    "z_retorno_5d_sector",
+    "z_vol_sector",
+    "z_dist_sma50_sector",
+    "z_adx_sector",
+    "pct_long_sector",
+    "rank_retorno_sector",
+    "rsi_sector_avg",
+    "adx_sector_avg",
+    "retorno_1d_sector_avg",
+    "is_sh_5",
+    "is_sl_5",
+    "estructura_5",
+    "dist_sh_5_pct",
+    "dist_sl_5_pct",
+    "dias_sh_5",
+    "dias_sl_5",
+    "impulso_5_pct",
+    "bos_bull_5",
+    "bos_bear_5",
+    "choch_bull_5",
+    "choch_bear_5",
+    "is_sh_10",
+    "is_sl_10",
+    "estructura_10",
+    "dist_sh_10_pct",
+    "dist_sl_10_pct",
+    "dias_sh_10",
+    "dias_sl_10",
+    "impulso_10_pct",
+    "bos_bull_10",
+    "bos_bear_10",
+    "choch_bull_10",
+    "choch_bear_10"
+  ],
+  "columnas_cero": [
+    "is_sh_5",
+    "is_sl_5",
+    "estructura_5",
+    "dist_sh_5_pct",
+    "dist_sl_5_pct",
+    "dias_sh_5",
+    "dias_sl_5",
+    "impulso_5_pct",
+    "bos_bull_5",
+    "bos_bear_5",
+    "choch_bull_5",
+    "choch_bear_5",
+    "is_sh_10",
+    "is_sl_10",
+    "estructura_10",
+    "dist_sh_10_pct",
+    "dist_sl_10_pct",
+    "dias_sh_10",
+    "dias_sl_10",
+    "impulso_10_pct",
+    "bos_bull_10",
+    "bos_bear_10",
+    "choch_bull_10",
+    "choch_bear_10"
+  ],
+  "datos": {
+    "origen": "features_ml JOIN features_market_structure (walkforward_ml.cargar_dataset)",
+    "desde": "2020-10-15",
+    "hasta": "2026-08-13",
+    "filas": 175425,
+    "tickers": 196,
+    "base_label": 0.4925
+  },
+  "holdout": {
+    "ruedas": 126,
+    "embargo": 20,
+    "train_hasta": "2026-01-13",
+    "desde": "2026-02-12",
+    "hasta": "2026-08-13",
+    "filas_train": 146809,
+    "filas": 24696,
+    "base": 0.4821,
+    "metricas": {
+      "auc": 0.6408,
+      "prec_decil": 0.7282,
+      "lift_decil": 1.5104,
+      "ret_decil": 8.3016,
+      "prec_065": 0.7726,
+      "n_065": 1350.0,
+      "brier": 0.2345,
+      "exceso_decil": 6.293
+    },
+    "calibracion_deciles": [
+      {
+        "decil": 1,
+        "prob_media": 0.6795,
+        "tasa_obs": 0.7283,
+        "n": 2470
+      },
+      {
+        "decil": 2,
+        "prob_media": 0.5733,
+        "tasa_obs": 0.5874,
+        "n": 2470
+      },
+      {
+        "decil": 3,
+        "prob_media": 0.559,
+        "tasa_obs": 0.5579,
+        "n": 2470
+      },
+      {
+        "decil": 4,
+        "prob_media": 0.5535,
+        "tasa_obs": 0.5312,
+        "n": 2470
+      },
+      {
+        "decil": 5,
+        "prob_media": 0.5425,
+        "tasa_obs": 0.5093,
+        "n": 2470
+      },
+      {
+        "decil": 6,
+        "prob_media": 0.5034,
+        "tasa_obs": 0.4385,
+        "n": 2470
+      },
+      {
+        "decil": 7,
+        "prob_media": 0.4477,
+        "tasa_obs": 0.4467,
+        "n": 2469
+      },
+      {
+        "decil": 8,
+        "prob_media": 0.4157,
+        "tasa_obs": 0.3896,
+        "n": 2469
+      },
+      {
+        "decil": 9,
+        "prob_media": 0.3922,
+        "tasa_obs": 0.3742,
+        "n": 2469
+      },
+      {
+        "decil": 10,
+        "prob_media": 0.2851,
+        "tasa_obs": 0.258,
+        "n": 2469
+      }
+    ]
+  },
+  "compuerta": {
+    "umbrales": {
+      "auc_min": 0.55,
+      "lift_decil_min": 1.1,
+      "exceso_decil_min": 0.0,
+      "brier_mejor_que_constante": true,
+      "calibracion_decil_max_desvio": 0.1
+    },
+    "criterios": {
+      "auc": {
+        "valor": 0.6408351453243704,
+        "pasa": true
+      },
+      "lift_decil": {
+        "valor": 1.5104030721689692,
+        "pasa": true
+      },
+      "exceso_decil": {
+        "valor": 6.292950815643623,
+        "pasa": true
+      },
+      "brier_vs_constante": {
+        "valor": [
+          0.2345409772201974,
+          0.24968112244897955
+        ],
+        "pasa": true
+      },
+      "calibracion_decil_alto": {
+        "valor": 0.048799999999999955,
+        "pasa": true
+      }
+    },
+    "pasa": true
+  },
+  "cortes": {
+    "v1": [
+      0.75,
+      0.65,
+      0.55,
+      0.45,
+      0.35
+    ],
+    "v2": [
+      0.768849,
+      0.606518,
+      0.557172,
+      0.471122,
+      0.364417
+    ],
+    "fracciones_v1": [
+      0.0213,
+      0.0807,
+      0.2969,
+      0.6118,
+      0.8888
+    ],
+    "fracciones_v2": [
+      0.0228,
+      0.0808,
+      0.3068,
+      0.6118,
+      0.8892
+    ],
+    "aciertos": [
+      {
+        "corte_v1": 0.75,
+        "acierto_v1": 0.7214,
+        "corte_v2": 0.768849,
+        "acierto_v2": 0.8047
+      },
+      {
+        "corte_v1": 0.65,
+        "acierto_v1": 0.6414,
+        "corte_v2": 0.606518,
+        "acierto_v2": 0.7313
+      },
+      {
+        "corte_v1": 0.55,
+        "acierto_v1": 0.6062,
+        "corte_v2": 0.557172,
+        "acierto_v2": 0.6275
+      },
+      {
+        "corte_v1": 0.45,
+        "acierto_v1": 0.5587,
+        "corte_v2": 0.471122,
+        "acierto_v2": 0.5667
+      },
+      {
+        "corte_v1": 0.35,
+        "acierto_v1": 0.5195,
+        "corte_v2": 0.364417,
+        "acierto_v2": 0.5234
+      }
+    ],
+    "filas": 16856,
+    "desde": "2026-04-13",
+    "hasta": "2026-08-13",
+    "nota": "Cortes del modelo del HOLDOUT sobre filas posteriores al despliegue de la v1; se aplican al modelo final. Comparar en vivo la cantidad de COMPRA_FUERTE v1 vs v2."
+  },
+  "comparacion_mismo_tramo": {
+    "v1": {
+      "auc": 0.6061,
+      "prec_decil": 0.635,
+      "lift_decil": 1.2759,
+      "ret_decil": 5.2408,
+      "prec_065": 0.6414,
+      "n_065": 1361.0,
+      "brier": 0.2428
+    },
+    "v2": {
+      "auc": 0.6315,
+      "prec_decil": 0.7234,
+      "lift_decil": 1.4536,
+      "ret_decil": 8.2648,
+      "prec_065": 0.7689,
+      "n_065": 926.0,
+      "brier": 0.2364
+    }
+  },
+  "versiones": {
+    "python": "3.11.5",
+    "sklearn": "1.5.2",
+    "numpy": "2.4.6",
+    "pandas": "3.0.3",
+    "joblib": "1.5.3"
+  },
+  "archivo": "rf_cal_global.joblib",
+  "bytes": 4062599,
+  "sha256": "ddb0acb58700a337a72822f9ecfe671e73f5e2c0c5ef669d1d413302fa2d69af"
+}

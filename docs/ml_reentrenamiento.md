@@ -308,6 +308,55 @@ Consecuencias para este documento:
   de las ultimas 10 ruedas, el scanner lee la fila de la rueda de la barra (NaN
   si falta) y `estado_pipeline` vigila la tabla. Registrado en `ft_cambios`.
 
+## 8c. Fase 5 -- modelo v2 entrenado (Etapa 3c, 13/9/2026)
+
+Script: `scripts/ml/entrenar_ml_v2.py`. Modulo: `src/ml/ml_v2.py`. Artefacto:
+`models_ml_v2/rf_cal_global.joblib` (4,1 MB, FUERA de git) + `metadata.json` (EN
+git: sha256, datos, holdout, compuerta, cortes y versiones). Config = la congelada
+en la seccion 8.
+
+Datos: `features_ml` reconstruida en la Etapa 3b (KLAC/CRWD ya en escala correcta),
+175.425 filas con label, 196 tickers, 2020-10-15 -> 2026-08-13, base 0,493.
+
+**Holdout** (train hasta 2026-01-13, embargo 20, evalua 2026-02-12 -> 2026-08-13,
+24.696 filas, base 0,482, retorno 20d medio +2,01%):
+
+| AUC | lift@decil | Acierto decil alto | Retorno 20d decil alto | Brier (constante) |
+|---|---|---|---|---|
+| 0,641 | 1,51 | 72,8% | +8,30% | 0,2345 (0,2497) |
+
+Calibracion por decil: el alto da 0,68 de probabilidad y 0,73 observado; el medio
+sigue algo sobreconfiado (d6: 0,50 contra 0,44). La compuerta (umbrales fijados en el
+script antes de correrlo) pasa los 5 criterios.
+
+**Cortes equivalentes** (16.856 filas posteriores al despliegue de la v1,
+2026-04-13 -> 2026-08-13; mismas filas para las dos):
+
+| Corte v1 | Filas arriba | Corte v2 | Acierto v1 | Acierto v2 |
+|---|---|---|---|---|
+| 0,75 | 2,1% | 0,769 | 72,1% | 80,5% |
+| 0,65 | 8,1% | 0,607 | 64,1% | 73,1% |
+| 0,55 | 29,7% | 0,557 | 60,6% | 62,8% |
+| 0,45 | 61,2% | 0,471 | 55,9% | 56,7% |
+| 0,35 | 88,9% | 0,364 | 51,9% | 52,3% |
+
+Mismo tramo, informativo: v1 AUC 0,606 / lift 1,28 / retorno decil +5,24%; v2 AUC
+0,631 / lift 1,45 / +8,26%.
+
+Lo que NO dice:
+- Es UNA ventana de seis meses con mercado alcista, no el walk-forward de 9 folds.
+  Que la v2 supere a la v1 aca es consistente con mas cobertura (196 contra 123
+  tickers entrenados) y calibracion, pero lo decide la Etapa 4 en forward testing.
+- La v1 recibe aca las features sectoriales de cada rueda (vienen de `features_ml`);
+  en vivo recibio las congeladas (seccion 8b). Por eso su fraccion >= 0,65 da 8,1%
+  aca y 13,8% en `alertas_scanner`.
+- Los cortes salen del modelo del holdout y se aplican al modelo final. Hay que
+  comparar en vivo la cantidad de COMPRA_FUERTE de v1 y v2.
+
+Cadencia: la v2 queda CONGELADA durante la Etapa 4 (reentrenarla seria un corte de
+tramo). El RF tiene semilla fija: si el artefacto se pierde, regenerarlo con los
+mismos datos y comparar su sha256 con la metadata.
+
 ## 9. Addendum -- validez predictiva del PCR (previo a sumar features de opciones)
 
 Antes de invertir en features de opciones para intentar subir el techo (unica
