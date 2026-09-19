@@ -6,6 +6,14 @@
 **Script**: `scripts/forward_testing/ft_bot_tech_sectorial_v2.py`
 **Logica base**: `tecnico_sectorial_v2`
 
+> **NOTA (19/9/2026).** La premisa de esta version ("eliminar el exit binario de v1",
+> "cierres innecesarios con score = 0") salio de observar la v1 durante el bug del score
+> 0,0: a la consulta de salida le faltaba el close y el score daba 0 todos los dias
+> (arreglado el 29/5/2026, `ft_cambios` fix_score_cero_salida, que tambien toco a esta v2
+> con churn de SIN_MOMENTUM). La salida real de la v1 es score <= 3,5, no score = 0. La
+> pregunta de esta version sigue siendo valida como tal, pero su motivacion hay que
+> releerla con eso. Ver [../ANALISIS_SALIDAS.md](../ANALISIS_SALIDAS.md) sec. 4.2.
+
 ---
 
 ## Concepto

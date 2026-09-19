@@ -5,6 +5,11 @@
 **Inicio**: 2026-04-28
 **Script**: `scripts/forward_testing/ft_bot_smc.py`
 **Logica base**: `smc_estructura`
+**Analisis de salidas (19/9/2026, pre-registrado)**: ninguna de 96 combinaciones de stop,
+CHoCH, estructura rota y time stop se confirma. CHOCH_BEAR y ESTRUCTURA_ROTA casi nunca
+salen primero (1 y 19 de 920 en 2021-2026): el trailing stop esta en el mismo swing low y va
+antes. Un time stop de 10 dias va mejor en los dos periodos sin alcanzar la vara. La salida
+queda como esta. Detalle: [../ANALISIS_SALIDAS.md](../ANALISIS_SALIDAS.md) sec. 10.
 
 ---
 
