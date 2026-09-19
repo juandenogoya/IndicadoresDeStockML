@@ -55,7 +55,7 @@ REM  Los bots de opciones (8, 9) necesitan opciones_snapshot fresco y
 REM  el filtro de earnings necesita earnings_calendar. Ambas tablas se
 REM  capturan en Railway; se bajan a local antes de correr los bots.
 REM  Si el sync falla, los bots corren igual con los datos previos.
-echo [0/10] Sincronizando insumos desde Railway (opciones + earnings)...
+echo [0/11] Sincronizando insumos desde Railway (opciones + earnings)...
 echo. >> "%LOGFILE%"
 echo --- SYNC insumos (opciones + earnings_calendar) --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\migrations\sync_railway_to_local.py" --tabla opciones >> "%LOGFILE%" 2>&1
@@ -70,7 +70,7 @@ REM  opciones (HV, resumen_diario, zscore, pcr_plazo, sector_*) se computan en
 REM  LOCAL desde el crudo recien sincronizado (paso [0]), no en la nube.
 REM  Idempotente. Hoy convive con el calculo de la nube (lo reescribe igual);
 REM  cuando el snapshot pase a solo-crudo (Fase 2), esta sera la unica fuente.
-echo [0b/10] Computando derivadas de opciones en local (HV/resumen/zscore/pcr_plazo)...
+echo [0b/11] Computando derivadas de opciones en local (HV/resumen/zscore/pcr_plazo)...
 echo. >> "%LOGFILE%"
 echo --- COMPUTE derivadas opciones (local) --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\compute_opciones_derivadas.py" >> "%LOGFILE%" 2>&1
@@ -123,7 +123,7 @@ IF "%FT_IGNORAR_FRESCURA%"=="1" (
 
 
 REM ── BOT 1 - ML Scanner ──────────────────────────────────────
-echo [1/10] FT_ML_SCANNER_v1...
+echo [1/11] FT_ML_SCANNER_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_ML_SCANNER_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_ml_scanner.py" >> "%LOGFILE%" 2>&1
@@ -138,7 +138,7 @@ IF %ERRORLEVEL% NEQ 0 (
 REM -- BOT 1b - ML Scanner v2: modelo ML v2 en paralelo, Etapa 3e -----
 REM  Misma estrategia que el BOT 1 con la senal del modelo v2: columnas _v2
 REM  de alertas_scanner. Si el scanner no trajo la v2, sale 1 sin operar.
-echo [1b/10] FT_ML_SCANNER_v2...
+echo [1b/11] FT_ML_SCANNER_v2...
 echo. >> "%LOGFILE%"
 echo --- FT_ML_SCANNER_v2 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_ml_scanner_v2.py" >> "%LOGFILE%" 2>&1
@@ -151,7 +151,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 
 REM ── BOT 2 - Tecnico global ──────────────────────────────────
-echo [2/10] FT_TECH_v1...
+echo [2/11] FT_TECH_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tecnico.py" >> "%LOGFILE%" 2>&1
@@ -164,7 +164,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 
 REM ── BOT 3 - SMC Estructura ──────────────────────────────────
-echo [3/10] FT_SMC_v1...
+echo [3/11] FT_SMC_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_SMC_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_smc.py" >> "%LOGFILE%" 2>&1
@@ -176,8 +176,40 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
+REM -- BOT 3b/3c - SMC sobre estructura CONFIRMADA (N=5, N=3) -
+REM  Tarea 23 Fase 2b (17/9/2026). Misma regla que el BOT 3; la estructura sale
+REM  de features_estructura (swings confirmados) y las velas de features_velas.
+REM  Las dos ventanas corren en paralelo: en el backtest N=5 y N=3 empatan en el
+REM  total y difieren por anio, y el pre-registro dice que el N no se elige
+REM  mirando el backtest. FT_SMC_v1 (BOT 3) queda como control.
+REM  Ver docs/estructura_velas.md sec. 9.3
+echo [3b/11] FT_SMC_v3_N5...
+echo. >> "%LOGFILE%"
+echo --- FT_SMC_v3_N5 --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scriptsorward_testingt_bot_smc_v3.py" --ventana 5 >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] ft_bot_smc_v3.py --ventana 5 fallo. Ver log.
+    SET ERRORS=1
+) ELSE (
+    echo [OK]
+)
+
+
+REM -- BOT 3c - la misma regla con confirmacion mas rapida ------
+echo [3c/11] FT_SMC_v3_N3...
+echo. >> "%LOGFILE%"
+echo --- FT_SMC_v3_N3 --- >> "%LOGFILE%"
+"%PYTHON%" "%ROOT%scriptsorward_testingt_bot_smc_v3.py" --ventana 3 >> "%LOGFILE%" 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] ft_bot_smc_v3.py --ventana 3 fallo. Ver log.
+    SET ERRORS=1
+) ELSE (
+    echo [OK]
+)
+
+
 REM ── BOT 4 - Tecnico Sectorial ───────────────────────────────
-echo [4/10] FT_TECH_SECTOR_v1...
+echo [4/11] FT_TECH_SECTOR_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_SECTOR_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tech_sectorial.py" >> "%LOGFILE%" 2>&1
@@ -189,21 +221,16 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
-REM ── BOT 5 - Combo Tecnico + Candle Score ────────────────────
-echo [5/10] FT_COMBO_v1...
-echo. >> "%LOGFILE%"
-echo --- FT_COMBO_v1 --- >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_combo_v1.py" >> "%LOGFILE%" 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] ft_bot_combo_v1.py fallo. Ver log.
-    SET ERRORS=1
-) ELSE (
-    echo [OK]
-)
+REM -- BOT 5 - RETIRADO 17/9/2026: FT_COMBO_v1 DISCONTINUADA ---
+REM  El scoring de velas no aporta. Backtest 2021-09 -> 2026-09: COMBO +22,3%
+REM  contra TECH_SECTOR_v1 sin velas +24,4%, con el mismo motor sectorial; en
+REM  vivo 28/4 -> 16/9: -0,10% contra 0,00%, sobre 452 operaciones cerradas.
+REM  Posiciones liquidadas y activa=FALSE. El codigo del bot queda.
+REM  Cierre completo: docs/forward_testing/estrategias/COMBO_v1.md
 
 
 REM ── BOT 6 - Tech Sectorial v2 (retencion + rotacion) ────────
-echo [6/10] FT_TECH_SECTOR_v2...
+echo [6/11] FT_TECH_SECTOR_v2...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_SECTOR_v2 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tech_sectorial_v2.py" >> "%LOGFILE%" 2>&1
@@ -215,21 +242,16 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 
-REM ── BOT 7 - SMC v2 (filtro contexto + agotamiento) ──────────
-echo [7/10] FT_SMC_v2...
-echo. >> "%LOGFILE%"
-echo --- FT_SMC_v2 --- >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_smc_v2.py" >> "%LOGFILE%" 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] ft_bot_smc_v2.py fallo. Ver log.
-    SET ERRORS=1
-) ELSE (
-    echo [OK]
-)
+REM -- BOT 7 - RETIRADO 17/9/2026: FT_SMC_v2 DISCONTINUADA -----
+REM  Peor equity de las 11: -5,46%, -6.622 USD en 27 operaciones. Sus tres
+REM  filtros se apoyan en velas y en estructura sin confirmar, que es lo que
+REM  la revision de la Tarea 23 midio que no sirve. Nunca tuvo backtest.
+REM  Posiciones liquidadas y activa=FALSE. El codigo del bot queda.
+REM  Cierre completo: docs/forward_testing/estrategias/SMC_v2.md
 
 
 REM ── BOT 8 - Tech Sectorial + Opciones PCR_OI ────────────────
-echo [8/10] FT_TECH_SECTOR_OPTIONS_v1...
+echo [8/11] FT_TECH_SECTOR_OPTIONS_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_SECTOR_OPTIONS_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tech_sectorial_options_v1.py" >> "%LOGFILE%" 2>&1
@@ -242,7 +264,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 
 REM ── BOT 9 - Tech Sectorial + Opciones PCR_VOL ──────────────
-echo [9/10] FT_TECH_SECTOR_OPTIONS_v2...
+echo [9/11] FT_TECH_SECTOR_OPTIONS_v2...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_SECTOR_OPTIONS_v2 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tech_sectorial_options_v2.py" >> "%LOGFILE%" 2>&1
@@ -255,7 +277,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 
 REM ── BOT 10 - Tech Sectorial + salida OI walls / corrida ─────
-echo [10/10] FT_TECH_SECTOR_OIEXIT_v1...
+echo [10/11] FT_TECH_SECTOR_OIEXIT_v1...
 echo. >> "%LOGFILE%"
 echo --- FT_TECH_SECTOR_OIEXIT_v1 --- >> "%LOGFILE%"
 "%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_tech_sectorial_oiexit_v1.py" >> "%LOGFILE%" 2>&1

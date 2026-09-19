@@ -18,6 +18,16 @@
 #   TECH_SECTOR_OPTIONS_v2) consumen ese mismo cerebro -> deciden identico a su
 #   bot FT homonimo. Detalle de la arquitectura de produccion: docs/bots_alpaca.md.
 #   Este documento sigue siendo la spec conceptual de las logicas FT.
+#
+# ACTUALIZACION 2026-09-17 (Tarea 23, Fase 2b):
+#   ALTA: ESTRATEGIA 3b (SMC sobre estructura CONFIRMADA), dos instancias
+#   FT_SMC_v3_N5 y FT_SMC_v3_N3.
+#   BAJA: FT_COMBO_v1 y FT_SMC_v2, discontinuadas con la rueda 2026-09-16
+#   (posiciones liquidadas, activa=FALSE, bots fuera de ft_run_diario.bat).
+#   El cierre de cada una, con periodo, parametros, metricas y motivos, vive en
+#   docs/forward_testing/estrategias/COMBO_v1.md y SMC_v2.md.
+#   Los criterios de alta y baja de una estrategia estan en CLAUDE.md,
+#   seccion "Alta y baja de estrategias FT".
 
 ---
 
@@ -224,17 +234,78 @@ Take Profit: NINGUNO (filosofia de salida estructural pura)
 
 ---
 
+## ESTRATEGIA 3b — SMC sobre estructura CONFIRMADA (alta 17/9/2026)
+
+**Nombres de instancia**: SMC_v3_N5 (id 12) y SMC_v3_N3 (id 13)
+**Logica**: `smc_estructura_confirmada`
+**Script**: `scripts/forward_testing/ft_bot_smc_v3.py --ventana {5|3}`
+**Fuente de datos**: `features_estructura`, `features_velas`, `features_precio_accion`
+(solo `vol_spike`), `indicadores_tecnicos`, `precios_diarios`
+**Control**: SMC_v1 (ESTRATEGIA 3), que sigue corriendo sin cambios
+**Ficha**: docs/forward_testing/estrategias/SMC_v3.md
+
+La MISMA regla de la ESTRATEGIA 3 con otra fuente de estructura. El score se IMPORTA
+de `ft_scoring.calcular_score_estructura`: no se reimplementa, para que la diferencia
+de resultados sea atribuible a la fuente y a la ventana N.
+
+| Aspecto | ESTRATEGIA 3 (SMC_v1) | ESTRATEGIA 3b (SMC_v3) |
+|---|---|---|
+| Tabla de estructura | `features_market_structure` | `features_estructura` |
+| Swings | ventana centrada; la ultima barra trae swings provisionales | CONFIRMADOS en p+N, inmutables (test de invariancia) |
+| Ventana N | 10 | 5 y 3 (una instancia cada una) |
+| Patrones de vela | `features_precio_accion` (definiciones flojas) | `features_velas` (clasicas con contexto) |
+| `es_alcista` | columna de la tabla | derivada (`close > open`) |
+| Ancla del lookback | `CURRENT_DATE` | ultima rueda de DATOS |
+| Todo lo demas | -- | identico (score, filtros, trailing SL, salidas, sizing, time stop 20d) |
+
+Parametros: los de la ESTRATEGIA 3, mas `ventana_confirmacion` (5 o 3).
+
+Por que dos instancias: el backtest pre-registrado 2021-09 -> 2026-09
+(docs/estructura_velas.md sec. 9.3) dio N=10 confirmado +13,5% (no pasa), N=5 +59,8%
+y N=3 +58,2% (pasan). N=5 y N=3 empatan en el total y difieren por anio, y el
+pre-registro dice que el N no se elige mirando el backtest: se decide en FT.
+
+---
+
+## Instancias DISCONTINUADAS
+
+Una estrategia dada de baja conserva: la ficha con su cierre, su historia en
+`ft_operaciones` / `ft_equity_diaria`, su entrada en `ft_setup_estrategias.ESTRATEGIAS`
+con la marca `discontinuada`, el bloque comentado en `ft_run_diario.bat` y el registro
+en `ft_cambios`. El codigo del bot NO se borra.
+
+| Instancia | Periodo | Equity final | Motivo (resumen) | Cierre |
+|---|---|---|---|---|
+| COMBO_v1 (id 5) | 2026-04-28 -> 2026-09-16 | 99.901,60 (-0,10%) | El candle score, su unico aporte sobre TECH_SECTOR_v1, no agrega: backtest 5 anios +19,9% contra +24,4% sin velas; FT -0,09% contra +2,29% del control | [COMBO_v1.md](forward_testing/estrategias/COMBO_v1.md) |
+| SMC_v2 (id 7) | 2026-05-04 -> 2026-09-16 | 94.538,65 (-5,46%) | Peor equity de las once; la salida por agotamiento no disparo nunca y sus filtros se apoyan en velas y estructura sin confirmar, medidas sin valor. Sin backtest previo | [SMC_v2.md](forward_testing/estrategias/SMC_v2.md) |
+
+---
+
 ## Registro de instancias activas
 
-| id | nombre           | logica       | capital    | activa | fecha_inicio | notas                  |
-|----|------------------|--------------|------------|--------|--------------|------------------------|
-| -  | ML_SCANNER_v1    | ml_scanner   | $100.000   | -      | pendiente    | Benchmark Bot1 Alpaca  |
-| -  | TECH_v1          | tecnico      | $100.000   | -      | pendiente    | Benchmark Bot2 Alpaca  |
-| -  | SMC_v1           | smc_estructura| $100.000  | -      | pendiente    | Benchmark Bot3 Alpaca  |
+Estado al 17/9/2026 (11 activas, $100.000 cada una). La fuente de verdad es
+`ft_estrategias`; `ft_setup_estrategias.py --status` la imprime.
+
+| id | nombre | logica | inicio | notas |
+|----|--------|--------|--------|-------|
+| 1  | FT_ML_SCANNER_v1 | ml_scanner | 2026-04-23 | Benchmark Bot1 Alpaca. Control de la v2 |
+| 2  | FT_TECH_v1 | tecnico | 2026-04-23 | Benchmark Bot2 Alpaca |
+| 3  | FT_SMC_v1 | smc_estructura | 2026-04-23 | Benchmark Bot3 Alpaca. Control de la v3 |
+| 4  | FT_TECH_SECTOR_v1 | tecnico_sectorial | 2026-04-25 | Sectorial 9 sectores. Control de COMBO |
+| 6  | FT_TECH_SECTOR_v2 | tecnico_sectorial_v2 | 2026-05-05 | Retencion + rotacion intrasectorial |
+| 8  | FT_TECH_SECTOR_OPTIONS_v1 | tecnico_sectorial_options_v1 | 2026-05-17 | + PCR_OI |
+| 9  | FT_TECH_SECTOR_OPTIONS_v2 | tecnico_sectorial_options_v2 | 2026-05-17 | + PCR_VOL |
+| 10 | FT_TECH_SECTOR_OIEXIT_v1 | tecnico_sectorial_oiexit_v1 | 2026-05-23 | Salida por muros de OI |
+| 11 | FT_ML_SCANNER_v2 | ml_scanner | 2026-09-14 | Modelo ML v2 en paralelo |
+| 12 | FT_SMC_v3_N5 | smc_estructura_confirmada | 2026-09-16 | Estructura confirmada N=5 |
+| 13 | FT_SMC_v3_N3 | smc_estructura_confirmada | 2026-09-16 | Estructura confirmada N=3 |
+
+Los ids 5 (COMBO_v1) y 7 (SMC_v2) estan discontinuados, ver arriba. Los ids no se
+reutilizan: la historia de una estrategia dada de baja sigue colgada de su id.
 
 Notas:
-  - Los 3 anteriores son los benchmarks iniciales (replica logica Alpaca en FT)
-  - Nuevas variaciones de parametros se agregan como filas adicionales
+  - Nuevas variaciones de parametros se agregan como instancias nuevas, en paralelo:
+    una version nueva NUNCA corta a la vieja, que queda como control
   - id se asigna al insertar en ft_estrategias (DB)
 
 ---

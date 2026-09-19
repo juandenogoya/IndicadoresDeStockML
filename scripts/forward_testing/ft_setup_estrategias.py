@@ -2,6 +2,10 @@
 ft_setup_estrategias.py
 Inserta las instancias de estrategia iniciales en ft_estrategias.
 
+Las entradas con clave "discontinuada" NO se insertan: quedan como registro de los
+parametros con los que corrio la estrategia y del motivo de la baja. Ver
+docs/forward_testing/estrategias/ para el cierre detallado de cada una.
+
 Uso:
     python scripts/forward_testing/ft_setup_estrategias.py           # inserta
     python scripts/forward_testing/ft_setup_estrategias.py --status  # muestra estado
@@ -84,6 +88,11 @@ ESTRATEGIAS = [
         },
     },
     {
+        # DISCONTINUADA el 17/9/2026: las velas no aportan (ver clave abajo).
+        "discontinuada": "17/9/2026 -- el scoring de velas no aporta: backtest "
+                         "2021-09 -> 2026-09 COMBO +22,3% vs TECH_SECTOR_v1 sin "
+                         "velas +24,4%, y en vivo -0,10% vs 0,00%. Cierre "
+                         "documentado en docs/forward_testing/estrategias/COMBO_v1.md",
         "nombre":      "FT_COMBO_v1",
         "descripcion": "AT Tecnico sectorial + scoring de velas 5d como desempate. "
                        "9 sectores x $11.111. Ranking: tech_score DESC, candle_score_5d DESC. "
@@ -139,6 +148,11 @@ ESTRATEGIAS = [
         },
     },
     {
+        # DISCONTINUADA el 17/9/2026: peor equity de las 11 y sin backtest.
+        "discontinuada": "17/9/2026 -- -5,46% de equity (la peor de las 11), "
+                         "-6.622 USD en 27 operaciones, y sus tres filtros se "
+                         "apoyan en velas y estructura sin confirmar. Cierre "
+                         "documentado en docs/forward_testing/estrategias/SMC_v2.md",
         "nombre":      "FT_SMC_v2",
         "descripcion": "SMC_v1 con filtro de contexto en entrada (OR: lateral>1 OR candle>0) "
                        "y salida por agotamiento (AND: up_vol=0 AND candle<-2 AND lateral<0.5). "
@@ -275,6 +289,54 @@ ESTRATEGIAS = [
             "modelo":           "ml_v2_20260913 (models_ml_v2/metadata.json)",
         },
     },
+    {
+        # Tarea 23, Fase 2b (17/9/2026): la regla de FT_SMC_v1 sobre estructura
+        # CONFIRMADA (features_estructura), que es la unica historia reproducible
+        # en vivo. N=5 y N=3 son las dos ventanas que pasaron el backtest
+        # pre-registrado (+59,8% / +58,2% vs +13,5% de N=10 confirmado); el
+        # backtest no distingue entre ellas, asi que las dos corren en paralelo y
+        # FT_SMC_v1 queda como control. Ver docs/estructura_velas.md sec. 9.3.
+        "nombre":      "FT_SMC_v3_N5",
+        "descripcion": "SMC_v1 con swings CONFIRMADOS N=5 (features_estructura + "
+                       "features_velas) en vez de features_market_structure. Misma "
+                       "regla: CHoCH/BOS + estructura + vela alcista, trailing SL "
+                       "estructural, sin TP, time stop 20d.",
+        "logica":      "smc_estructura_confirmada",
+        "parametros":  {
+            "ventana_confirmacion": 5,
+            "fuente_estructura":    "features_estructura",
+            "fuente_velas":         "features_velas",
+            "score_entrada_min":    1,
+            "score_maximo":         3,
+            "lookback_dias":        12,
+            "lookback_ancla":       "ultima rueda de datos (no el reloj)",
+            "min_sl_dist_pct":      1.0,
+            "max_sl_dist_pct":      8.0,
+            "dias_max_pos":         20,
+            "max_posiciones":       5,
+            "riesgo_por_trade":     0.15,
+        },
+    },
+    {
+        "nombre":      "FT_SMC_v3_N3",
+        "descripcion": "Igual a FT_SMC_v3_N5 con ventana de confirmacion N=3 "
+                       "(reacciona mas rapido, mas operaciones).",
+        "logica":      "smc_estructura_confirmada",
+        "parametros":  {
+            "ventana_confirmacion": 3,
+            "fuente_estructura":    "features_estructura",
+            "fuente_velas":         "features_velas",
+            "score_entrada_min":    1,
+            "score_maximo":         3,
+            "lookback_dias":        12,
+            "lookback_ancla":       "ultima rueda de datos (no el reloj)",
+            "min_sl_dist_pct":      1.0,
+            "max_sl_dist_pct":      8.0,
+            "dias_max_pos":         20,
+            "max_posiciones":       5,
+            "riesgo_por_trade":     0.15,
+        },
+    },
 ]
 
 
@@ -316,6 +378,13 @@ def cmd_insert():
 
     with engine.connect() as conn:
         for est in ESTRATEGIAS:
+            # Una estrategia dada de baja NO se re-inserta: la entrada queda en la
+            # lista como registro de sus parametros, con el motivo del cierre.
+            if est.get("discontinuada"):
+                log(f"  [BAJA] '{est['nombre']}' discontinuada: {est['discontinuada']}")
+                omitidos += 1
+                continue
+
             existe = conn.execute(text(
                 "SELECT COUNT(*) FROM ft_estrategias WHERE nombre = :nombre"
             ), {"nombre": est["nombre"]}).scalar()

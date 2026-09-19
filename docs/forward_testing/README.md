@@ -13,28 +13,37 @@ explorar y parametrizar de la mejor manera posible.
 | [GLOSARIO.md](GLOSARIO.md) | Definiciones canonicas de todos los terminos, features y metricas |
 | [JOURNAL.md](JOURNAL.md) | Log cronologico de decisiones, hipotesis y observaciones |
 | [METRICAS.md](METRICAS.md) | Medicion de riesgo y rendimiento: equity a mercado (`ft_equity_diaria`), max drawdown, Sharpe/Sortino con IC, benchmarks |
+| [ANALISIS_SALIDAS.md](ANALISIS_SALIDAS.md) | Analisis de SALIDAS (19/9/2026): que hizo el precio despues de cada salida, contra el universo; anatomia de la salida de TECH_SECTOR_v1 (el score es una regla de si/no; la historia antes del 29/5 es el bug del score 0,0); pre-registro del paso 1 (sin SMA21) |
 | **Estrategias activas** | |
 | [estrategias/ML_SCANNER_v1.md](estrategias/ML_SCANNER_v1.md) | Bot ML — scoring scanner + ML prob |
 | [estrategias/ML_SCANNER_v2.md](estrategias/ML_SCANNER_v2.md) | Bot ML v1 con el modelo ML v2 calibrado, en paralelo (control: v1) |
 | [estrategias/TECH_v1.md](estrategias/TECH_v1.md) | Bot Tecnico — SMA/MACD/RSI rule-based |
-| [estrategias/SMC_v1.md](estrategias/SMC_v1.md) | Bot SMC — estructura BOS/CHoCH |
+| [estrategias/SMC_v1.md](estrategias/SMC_v1.md) | Bot SMC — estructura BOS/CHoCH (control de la v3) |
+| [estrategias/SMC_v3.md](estrategias/SMC_v3.md) | Bot SMC sobre estructura CONFIRMADA, N=5 y N=3 (control: v1) |
 | [estrategias/TECH_SECTOR_v1.md](estrategias/TECH_SECTOR_v1.md) | Bot Sectorial — tech score con diversificacion sectorial |
-| [estrategias/COMBO_v1.md](estrategias/COMBO_v1.md) | Bot Combo — sectorial + candle score desempate |
 | **En desarrollo** | |
 | [estrategias/TECH_SECTOR_v2.md](estrategias/TECH_SECTOR_v2.md) | Sectorial + retencion condicional + rotacion |
-| [estrategias/SMC_v2.md](estrategias/SMC_v2.md) | SMC + filtro contexto entrada + salida agotamiento |
 | [estrategias/TECH_SECTOR_OPTIONS_v1.md](estrategias/TECH_SECTOR_OPTIONS_v1.md) | Sectorial + confirmacion PCR_OI opciones |
 | [estrategias/TECH_SECTOR_OPTIONS_v2.md](estrategias/TECH_SECTOR_OPTIONS_v2.md) | Sectorial + confirmacion PCR_VOL opciones |
 | [estrategias/TECH_SECTOR_OIEXIT_v1.md](estrategias/TECH_SECTOR_OIEXIT_v1.md) | Entrada TECH_SECTOR_v1 + salida por OI walls / corrida |
+| **Discontinuadas** (la ficha cierra con periodo, parametros, metricas y motivos) | |
+| [estrategias/COMBO_v1.md](estrategias/COMBO_v1.md) | Sectorial + candle score de desempate. BAJA 17/9/2026: las velas no aportan |
+| [estrategias/SMC_v2.md](estrategias/SMC_v2.md) | SMC + filtro de contexto + salida por agotamiento. BAJA 17/9/2026: peor equity, insumos sin valor |
 | **Templates** | |
 | [templates/ESTRATEGIA_TEMPLATE.md](templates/ESTRATEGIA_TEMPLATE.md) | Template para documentar nuevas versiones |
 
 ---
 
-## Estado actual (2026-07-21)
+## Estado actual (2026-09-17)
 
-> Forward Testing corre 100% en la DB **local** (Plan C). Los 11 bots se ejecutan
-> con `scripts/manual/ft_run_diario.bat`. Railway no recibe escrituras de FT.
+> Forward Testing corre 100% en la DB **local** (Plan C). Los 11 bots ACTIVOS se
+> ejecutan con `scripts/manual/ft_run_diario.bat`. Railway no recibe escrituras de FT.
+
+> **17/9/2026**: entran FT_SMC_v3_N5 y FT_SMC_v3_N3 (estructura confirmada); salen
+> FT_COMBO_v1 y FT_SMC_v2 (discontinuadas, posiciones liquidadas, `activa = FALSE`).
+> Una estrategia dada de baja conserva su ficha, su historia en `ft_operaciones` y
+> `ft_equity_diaria`, y su entrada en `ft_setup_estrategias` con la marca
+> `discontinuada`. Criterios de baja: CLAUDE.md, "Alta y baja de estrategias FT".
 
 > **En curso (rama `feature/ft-metricas-riesgo`)**: capa de metricas de riesgo.
 > La equity a costo de `ft_metricas_diarias` se reemplaza, para fines de
@@ -47,13 +56,15 @@ explorar y parametrizar de la mejor manera posible.
 | 2 | TECH_v1 | ACTIVA | 2026-04-28 | Benchmark Bot2 Alpaca |
 | 3 | SMC_v1 | ACTIVA | 2026-04-28 | Benchmark Bot3 Alpaca |
 | 4 | TECH_SECTOR_v1 | ACTIVA | 2026-05-02 | Sectorial 9 sectores |
-| 5 | COMBO_v1 | ACTIVA | 2026-04-28 | Sectorial + candle score |
+| 5 | COMBO_v1 | **DISCONTINUADA 17/9/2026** | 2026-04-28 | Sectorial + candle score. Las velas no aportan: backtest +19,9% vs +24,4% sin velas; FT -0,09% vs +2,29% |
 | 6 | TECH_SECTOR_v2 | EN DESARROLLO | 2026-05-17 | Retencion + rotacion intrasectorial |
-| 7 | SMC_v2 | EN DESARROLLO | 2026-05-17 | Filtro contexto + salida agotamiento |
+| 7 | SMC_v2 | **DISCONTINUADA 17/9/2026** | 2026-05-17 | Filtro contexto + salida agotamiento. Peor equity (-5,46%); la salida nueva nunca disparo |
 | 8 | TECH_SECTOR_OPTIONS_v1 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_OI opciones |
 | 9 | TECH_SECTOR_OPTIONS_v2 | EN DESARROLLO | 2026-05-17 | Sectorial + PCR_VOL opciones |
 | 10 | TECH_SECTOR_OIEXIT_v1 | EN DESARROLLO | 2026-05-18 | Entrada v1 + salida OI walls/corrida |
 | 11 | ML_SCANNER_v2 | ACTIVA | 2026-09-14 | ML_SCANNER_v1 con el modelo ML v2 calibrado; control: v1 |
+| 12 | SMC_v3_N5 | ACTIVA | 2026-09-16 | Regla de SMC_v1 sobre estructura CONFIRMADA N=5; control: v1 |
+| 13 | SMC_v3_N3 | ACTIVA | 2026-09-16 | Idem con N=3. Las dos corren porque el backtest no distingue |
 
 ---
 
