@@ -345,3 +345,70 @@ Proyecto 2 (estacionalidad/rotacion) fuera de este plan inicial.
 Antes de codear cualquier archivo en `src/` o `scripts/`: listar los archivos a
 crear/modificar y pedir aprobacion (regla del proyecto). Este documento es solo
 el marco conceptual; la implementacion se decide en pasos posteriores.
+
+## 15. Proyecto 2 (rotacion): MEDIDO Y DESCARTADO (15/9/2026)
+
+Se evaluo agregar a la vista Carteras, debajo del grafico de barras, indicadores
+de "volumen operado por cartera" + "variacion vs el dia anterior", con la
+hipotesis de que darian senal de ROTACION o ACUMULACION entre perfiles. Es el
+primer anticipo del Proyecto 2. **Se midio antes de codear y NO se construyo.**
+
+Medicion: 275 ruedas (2025-08-11 a 2026-09-14), cobertura 199-200 tickers/rueda,
+agrupando por el snapshot vigente de `perfiles_ticker`.
+
+### Por que el indicador propuesto es ruido
+
+1. **Sumar volumen en ACCIONES entre tickers no significa nada** (distinto precio,
+   distinto float). Habria que usar volumen en DOLARES (close x volume). Aun
+   bien construido, lo de abajo sigue valiendo.
+2. **El movimiento diario es del mercado, no de la cartera.** El **75,2% de la
+   varianza** del cambio diario la explica UN factor comun; la correlacion entre
+   carteras va de 0,52 a 0,88 (Conservadora-Moderada 0,88). Cuando una cartera
+   "sube 18% de volumen", las cuatro subieron.
+3. **Autocorrelacion NEGATIVA** (-0,27 a -0,31): un dia alto es seguido
+   mecanicamente por uno bajo. Es la firma del ruido; una serie con informacion
+   persiste, no rebota.
+4. **El calendario domina la lectura.** Volumen total por dia de semana
+   (100 = promedio): Lun 95,7 / Mar 96,7 / Mie 97,9 / Jue 103,4 / **Vie 106,6**.
+   Los 8 dias de mayor volumen del anio son 5 viernes, encabezados por triple
+   witching (19/12/2025 x2,15 / 19/9/2025 x2,01 / 20/3/2026 x1,75). Un viernes de
+   vencimiento el indicador marcaria +100% y se leeria como "acumulacion" donde
+   solo hay rolleo de opciones. **Este es el riesgo concreto de mostrarlo.**
+5. **La cartera no habla, hablan 5 tickers.** Peso del top-1 / top-5 en el volumen
+   $ de su caja: Conservadora BAC 8,6% / 32,4% -- Moderada AAPL 20,5% / 53,6% --
+   Arriesgada NVDA 25,1% / 62,6% -- Especulativa **MU 25,5% / 65,6%**. Y entre el
+   16% y el 22% de las ruedas tienen un balance adentro de la cartera: el pico
+   que se leeria como acumulacion es un earnings.
+
+### Donde SI habia algo (y por que igual no alcanzo)
+
+Cambiando **nivel** por **participacion** (share del volumen $ total) la serie deja
+de ser ruido: autocorrelacion **+0,52 a +0,74**, donde el nivel daba negativa. Esa
+es la unica version defendible del indicador.
+
+Pero al contrastarla contra retorno futuro, de ~20 contrastes sobrevive UNO
+(Arriesgada, r=-0,30 a 20 ruedas, signo negativo = exhaustion, no acumulacion),
+que es exactamente lo que predice el azar con alpha=0,05 y 20 tests. Y el limite
+de fondo: la senal esta tan autocorrelacionada (ac1 ~0,95) que **216 ruedas valen
+como n efectivo de 3 a 8 observaciones independientes**. No hay con que calibrar.
+
+### Bloqueante estructural
+
+`perfiles_ticker` tiene **un solo snapshot** (2026-08-06 al momento de medir). No
+hay historia de membresia, asi que cualquier analisis retrospectivo -- incluido
+este -- clasifica con las cajas de hoy y las aplica hacia atras (look-ahead).
+
+### Decision
+
+**No se agrega el indicador.** Seria justo lo que el proyecto evita: un numero que
+se mueve mucho, se lee como senal y no lo es.
+
+Lo que habilitaria retomar el Proyecto 2 es lo que la seccion 2 de este documento
+ya identificaba como la senal valiosa: **acumular snapshots mensuales y mirar el
+DRIFT** (que ticker migro de caja), no el volumen agregado. Con 12+ snapshots la
+pregunta se vuelve contestable. Antes, no.
+
+Si alguna vez se construye el indicador de participacion, las condiciones minimas
+segun lo medido: volumen en DOLARES, SHARE y no nivel, suavizado 5 ruedas contra
+su normal de 60, y rotulado explicito de que el pico de un viernes de vencimiento
+no es rotacion.

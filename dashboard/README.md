@@ -313,3 +313,82 @@ comparacion contra la rueda anterior del bloque Clima.
 - `fileWatcherType` estaba en `"none"` por Streamlit Cloud, que fue
   decomisionado. En `"none"` un cambio en un modulo importado quedaba en
   `sys.modules` sin avisar, mostrando codigo viejo con aspecto de nuevo.
+
+## Alertas de comportamiento inusual -- MEDIDO y NO construido (15/9/2026)
+
+Se evaluo una vista nueva de "alertas de comportamiento inusual" cruzando tres
+familias de variables: volumen de la accion (vs dia anterior y vs base de 52
+semanas), volumen de contratos call/put, y variacion de precio. Se midio ANTES de
+codear. **No se construyo.** Lo que sigue es el resultado, que vale mas que la
+feature: define como se rotula y se calibra cualquier alerta futura.
+
+Panel medido: **13.863 ticker-dias** (200 tickers x 70 ruedas, 2026-05-22 a
+2026-09-04). Inferencia con efectos fijos por TICKER (mata el sesgo de
+composicion) + bootstrap de clusters de FECHA (mata la correlacion transversal).
+
+### 1. La direccion NO existe
+
+Las 7 reglas probadas, con y sin earnings: **los 7 IC95 cruzan cero**, con n de
+600 a 1.800 por regla. Ninguna alerta de volumen, precio u opciones dice hacia
+donde va el precio a 5 ruedas. Esto NO es falta de muestra -- es una respuesta.
+
+**Consecuencia de diseno: una vista de alertas no puede llevar flecha de
+direccion ni leerse como senal de compra.**
+
+### 2. En magnitud solo sobrevive una regla
+
+Unica que aguanta excluir earnings, y que se REFUERZA al excluirlos (patron de
+efecto real, no de azar): `|ret| >= 2 sigma` -> **+0,101 [+0,022, +0,182]**
+desvios sobre una base de ~0,9, es decir ~+11% de movimiento posterior. Es
+*volatility clustering*, el efecto mejor documentado en finanzas empiricas. Las
+de opciones hacen lo contrario: se caen al limpiar earnings.
+
+### 3. REGLA: umbral por z-score, NUNCA multiplo fijo
+
+Tasa de disparo por ticker (p10 / p90 sobre los 200):
+
+| Regla                | tasa global | p10 ticker | p90 ticker | p90/p10 |
+|----------------------|-------------|------------|------------|---------|
+| VOL >= 2x mediana 52s| 6,30%       | **0,0%**   | 14,3%      | **inf** |
+| \|ret\| >= 2 sigma   | 6,50%       | 1,4%       | 11,6%      | 8,0     |
+| CALL >= 2x med 40    | 13,27%      | 2,9%       | 27,1%      | 9,5     |
+| **CALL z >= 2**      | 4,66%       | 1,4%       | 8,6%       | **6,0** |
+
+El multiplo fijo de volumen **nunca dispara** en el 10% de los tickers y dispara
+1 de cada 7 dias en el otro 10%: eso no es una alerta, es una lista de los mismos
+nombres siempre.
+
+En opciones el sesgo es por **tamano de la base de contratos** (en cadenas finas
+un solo bloque grande mueve el ratio; no es ruido de conteo). El z-score sobre
+log(volumen) lo corrige en buena parte -- correlacion con el tamano de la base
+**-0,355 -> -0,165**:
+
+| Cuartil de liquidez | call_vol mediana | tasa 2x   | tasa z>=2 |
+|---------------------|------------------|-----------|-----------|
+| Q1 (cadenas finas)  | 706              | **17,2%** | 5,3%      |
+| Q4 (liquidas)       | 52.339           | 9,8%      | 4,1%      |
+
+`radar.py` **ya hace lo correcto**: `vol_z` / `iv_z` / `pcr_z` son z-scores, con
+guarda de liquidez por `percentil_vol`, cruce accion+opciones ("Institucional
+probable") y confirmacion sectorial. Esta medicion lo confirma, no lo cambia.
+
+### 4. Las tres familias son casi independientes (hecho robusto)
+
+Jaccard: volumen<->precio 0,17 / volumen<->opciones 0,14 / precio<->opciones 0,15.
+De 1.122 alertas de opciones, **753 (67%) no las ve ni el volumen ni el precio**
+-- identico al 68% que dio una muestra piloto de 10 tickers. Es el resultado mas
+reproducible de todo el ejercicio.
+
+**Pero la exclusividad solo vale si lo que marca tiene consecuencia medible, y la
+direccion no la tiene.** Informacion exclusiva sobre algo sin consecuencia sigue
+siendo informacion sobre nada. Por eso no alcanzo para justificar la vista.
+
+### Decision
+
+No se construye el panel. `radar.py` ya cubre ~80% de lo propuesto y con el
+criterio correcto; lo unico que agregaria es el volumen de contratos call/put
+como z-scores separados -- una columna, no una vista.
+
+Si alguna vez se retoma, dos condiciones no negociables segun lo medido:
+umbrales por **z-score** (nunca multiplo fijo) y rotulo de **"comportamiento
+inusual"**, sin ninguna indicacion de direccion.

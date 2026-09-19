@@ -148,3 +148,24 @@ reparten los 25 y se desperdicia cuota). La AV key vive en el .env de Oracle.
   ruedas por lado (1-10). Tres paneles (precio USD, precio %, volumen x prom 50),
   ventana pre+post superpuesta por trimestre, dia 0 marcado. Detalle en la
   seccion "Ventana y filtros de la vista".
+
+## ESTADO MEDIDO 15/9/2026: la tabla quedo ATRASADA -- correr el backfill
+
+Diagnostico al 15/9/2026 (aparecio de costado midiendo alertas, Tarea 22):
+
+- **114 de 200 tickers NO tienen ningun `announcement_date` posterior al 2026-07-01.**
+- Anuncios por mes en la tabla: 2026-04: 105 | 2026-05: 84 | 2026-06: 9 |
+  2026-07: 82 | **2026-08: 4**. Agosto con 4 registros es claramente incompleto.
+- Ejemplos: CAT (ultimo 2026-04-30), AMD (2026-05-05), NVDA (2026-05-20),
+  WMT (2026-05-21), AVGO (2026-06-03), MU (2026-06-24).
+
+Causa: el incremental no se viene corriendo y el backfill es cuota-limitado
+(key free, 25/dia) -> hacen falta varias corridas en dias distintos para los 114.
+
+Doble impacto: (1) la vista muestra menos trimestres de los que existen, y (2)
+**cualquier analisis que necesite EXCLUIR los dias de balance queda con un filtro
+parcial** -- que es exactamente lo que limito la medicion de la Tarea 22 (el panel
+marco solo 4% de ticker-dias tocados por un balance cuando lo esperable era ~11%).
+
+Arreglo: `refresh_earnings_historico.py --status` y despues `--backfill`
+(reanudable, <=20 por corrida, `--target local`), repitiendo dias hasta vaciar.
