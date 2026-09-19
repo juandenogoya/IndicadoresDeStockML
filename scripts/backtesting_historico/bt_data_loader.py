@@ -10,6 +10,18 @@ Estrategias y tablas que necesitan:
     TECH_SECTOR_v1 : indicadores_tecnicos + precios_diarios + activos
     COMBO_v1       : + features_precio_accion + features_market_structure
     SMC_v1         : precios_diarios + features_market_structure + features_precio_accion
+
+HISTORIA (17/9/2026, Tarea 23 -- docs/estructura_velas.md):
+    historia="vieja": features_market_structure + patrones de features_precio_accion,
+        como se diseno. Esa historia de estructura mira N ruedas al futuro.
+    historia="nueva": estructura con swings CONFIRMADOS (features_estructura, o
+        src/indicators/estructura.py al vuelo si la ventana no es 5 ni 10) y patrones
+        de features_velas. Las columnas de volumen siguen de features_precio_accion
+        (no miran al futuro). `ventana` = N de la estructura que usa SMC (se expone con
+        los nombres *_10 que lee la estrategia); COMBO usa siempre N=5.
+
+LOCAL-only (Plan C): antes cargaba .env.local con override, que setea DATABASE_URL
+y manda get_engine a Railway, donde las tablas de mercado estan congeladas.
 """
 
 import sys
@@ -21,18 +33,14 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-try:
-    from dotenv import load_dotenv
-    if os.path.exists(os.path.join(ROOT, ".env")):
-        load_dotenv(os.path.join(ROOT, ".env"))
-    if os.path.exists(os.path.join(ROOT, ".env.local")):
-        load_dotenv(os.path.join(ROOT, ".env.local"), override=True)
-except ImportError:
-    pass
+os.environ.pop("DATABASE_URL", None)
 
 from sqlalchemy import text
 from src.data.database import get_engine
 from src.utils.trading_calendar import is_trading_day
+
+HISTORIAS = ("vieja", "nueva")
+_COLS_SMC = ("estructura", "choch_bull", "choch_bear", "bos_bull", "dist_sl", "dist_sh")
 
 # Dias calendario adicionales antes de `desde` para cubrir lookbacks:
 #   SMC: 12 dias calendario de CHoCH/BOS
@@ -83,11 +91,18 @@ class BtDataLoader:
     LOGICAS_FPA   = {"smc_estructura", "combo_tech_candle"}
     LOGICAS_SECTOR = {"tecnico_sectorial", "combo_tech_candle"}
 
-    def __init__(self, engine, desde: date, hasta: date, logica: str):
+    def __init__(self, engine, desde: date, hasta: date, logica: str,
+                 historia: str = "vieja", ventana: int = 10):
+        if historia not in HISTORIAS:
+            raise ValueError(f"historia debe ser una de {HISTORIAS}")
+        if historia == "vieja" and ventana != 10:
+            raise ValueError("la historia vieja solo tiene la ventana 10 (y la 5 de COMBO)")
         self.engine  = engine
         self.desde   = desde
         self.hasta   = hasta
         self.logica  = logica
+        self.historia = historia
+        self.ventana  = ventana
         self._desde_carga = desde - timedelta(days=BUFFER_DIAS)
 
         # DataFrames (None hasta llamar a cargar())
@@ -152,6 +167,8 @@ class BtDataLoader:
         _log(f"  indicadores_tecnicos: {len(df):,} filas")
 
     def _cargar_fms(self):
+        if self.historia == "nueva":
+            return self._cargar_estructura_nueva()
         with self.engine.connect() as conn:
             df = pd.read_sql(text("""
                 SELECT ticker, fecha,
@@ -166,7 +183,50 @@ class BtDataLoader:
         self._fms = df.set_index(["ticker", "fecha"])
         _log(f"  features_market_structure: {len(df):,} filas")
 
+    def _cargar_estructura_nueva(self):
+        """Estructura con swings confirmados, expuesta con los nombres que leen las estrategias."""
+        n = self.ventana
+        propias = [f"{b}_{n}_pct" if b.startswith("dist_") else f"{b}_{n}" for b in _COLS_SMC]
+        combo = ["bos_bull_5", "choch_bull_5", "bos_bear_5", "choch_bear_5"]
+        if n in (5, 10):
+            cols = sorted(set(propias + combo))
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(f"""
+                    SELECT ticker, fecha, {", ".join(cols)}
+                    FROM features_estructura
+                    WHERE fecha BETWEEN :desde AND :hasta
+                    ORDER BY ticker, fecha
+                """), conn, params={"desde": self._desde_carga, "hasta": self.hasta})
+            origen = "features_estructura"
+        else:
+            # Ventana sin tabla: al vuelo sobre TODA la historia (la invariancia vale
+            # para el mismo inicio de datos; cortar en desde cambiaria los swings).
+            from src.indicators import estructura
+            with self.engine.connect() as conn:
+                px = pd.read_sql(text("""
+                    SELECT ticker, fecha, high, low, close FROM precios_diarios
+                    WHERE fecha <= :hasta AND close > 0 AND high > 0 AND low > 0 AND open > 0
+                    ORDER BY ticker, fecha
+                """), conn, params={"hasta": self.hasta})
+            partes = [estructura.calcular_estructura(g, ventanas=sorted({n, 5}))
+                      for _, g in px.groupby("ticker", sort=True)]
+            df = pd.concat(partes, ignore_index=True)
+            df["fecha"] = pd.to_datetime(df["fecha"]).dt.date
+            df = df[(df["fecha"] >= self._desde_carga) & (df["fecha"] <= self.hasta)]
+            df = df[["ticker", "fecha"] + sorted(set(propias + combo))]
+            origen = f"estructura.py al vuelo (N={n})"
+
+        df["fecha"] = pd.to_datetime(df["fecha"]).dt.date
+        if n != 10:
+            # Copia, no renombre: con N=5 los *_5 los sigue necesitando COMBO.
+            for p in propias:
+                df[p.replace(f"_{n}", "_10")] = df[p]
+        self._fms = df.set_index(["ticker", "fecha"])
+        _log(f"  estructura NUEVA ({origen}): {len(df):,} filas")
+
     def _cargar_fpa(self):
+        if self.historia == "nueva":
+            return self._cargar_velas_nuevas()
         with self.engine.connect() as conn:
             df = pd.read_sql(text("""
                 SELECT ticker, fecha,
@@ -182,6 +242,37 @@ class BtDataLoader:
         self._fpa = df.set_index(["ticker", "fecha"])
         _log(f"  features_precio_accion: {len(df):,} filas")
 
+    def _cargar_velas_nuevas(self):
+        """Patrones de features_velas + volumen de features_precio_accion + vela alcista del precio."""
+        with self.engine.connect() as conn:
+            df = pd.read_sql(text("""
+                SELECT v.ticker, v.fecha,
+                       CASE WHEN p.close > p.open THEN 1 ELSE 0 END AS es_alcista,
+                       v.patron_engulfing_bull, v.patron_engulfing_bear,
+                       v.patron_hammer, v.patron_shooting_star,
+                       GREATEST(v.patron_marubozu_bull, v.patron_marubozu_bear) AS patron_marubozu,
+                       f.vol_price_confirm, f.vol_price_diverge, f.vol_spike, f.up_vol_5d
+                FROM features_velas v
+                JOIN precios_diarios p ON p.ticker = v.ticker AND p.fecha = v.fecha
+                LEFT JOIN features_precio_accion f ON f.ticker = v.ticker AND f.fecha = v.fecha
+                WHERE v.fecha BETWEEN :desde AND :hasta
+                ORDER BY v.ticker, v.fecha
+            """), conn, params={"desde": self._desde_carga, "hasta": self.hasta})
+        df["fecha"] = pd.to_datetime(df["fecha"]).dt.date
+        self._fpa = df.set_index(["ticker", "fecha"])
+        _log(f"  velas NUEVAS (features_velas + volumen de features_precio_accion): {len(df):,} filas")
+
+    def retornos_universo(self) -> pd.Series:
+        """
+        Retorno diario del universo equal-weight (media de los retornos de los tickers
+        con precio en ambas ruedas), sobre los dias simulados. Referencia "comprar todo".
+        """
+        close = self._pd["close"].unstack("ticker").sort_index()
+        close = close[close.index <= self.hasta]
+        ret = close.pct_change(fill_method=None).mean(axis=1)
+        dias = set(self._trading_days)
+        return ret[[d in dias for d in ret.index]].dropna()
+
     def _cargar_activos(self):
         with self.engine.connect() as conn:
             df = pd.read_sql(text("""
@@ -193,11 +284,18 @@ class BtDataLoader:
         _log(f"  activos: {len(self._act)} tickers con sector")
 
     def _calcular_trading_days(self) -> list[date]:
-        """Lista de dias habiles NYSE en [desde, hasta]."""
+        """
+        Dias habiles NYSE en [desde, hasta] CON precios cargados.
+
+        trading_calendar solo tiene feriados 2025-2027: antes de 2025 un feriado
+        pasaba como dia habil sin precios y la equity de ese dia valuaba las
+        posiciones al precio de entrada (saltos falsos de drawdown).
+        """
+        con_precio = set(self._pd.index.get_level_values("fecha")) if self._pd is not None else set()
         dias = []
         d = self.desde
         while d <= self.hasta:
-            if is_trading_day(d):
+            if is_trading_day(d) and d in con_precio:
                 dias.append(d)
             d += timedelta(days=1)
         return dias

@@ -12,15 +12,19 @@ Logica de resample:
     - fecha_semana = ULTIMO DIA HABIL real (no siempre viernes)
     - n_dias = cantidad de dias habiles en la semana (1-5)
 
-Semana incompleta (semana en curso):
+Semana incompleta:
     - Excluida automaticamente para no tener datos parciales.
-    - Se detecta comparando fecha_semana con el lunes de la semana actual.
+    - Se decide POR DATO (17/9/2026): la ultima semana cuenta si su ultimo dato es
+      la ultima rueda habil NYSE de esa semana. Antes se comparaba con el lunes de
+      HOY, y la rutina del viernes a la noche dejaba afuera la semana recien
+      cerrada. Regla unica en src/utils/weekly_tf.excluir_semana_incompleta.
 """
 
 import pandas as pd
 import psycopg2.extras
 from datetime import date
 from src.data.database import get_connection, query_df
+from src.utils.weekly_tf import excluir_semana_incompleta
 
 
 # ─────────────────────────────────────────────────────────────
@@ -68,12 +72,8 @@ def resample_a_semanal(df_diario: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-    # ── Excluir semana en curso (incompleta) ─────────────────────
-    hoy = pd.Timestamp.today().normalize()
-    lunes_actual = hoy - pd.Timedelta(days=hoy.weekday())  # lunes de esta semana
-    weekly = weekly[
-        pd.to_datetime(weekly["fecha_semana"]) < lunes_actual
-    ].copy()
+    # ── Excluir la ultima semana si esta incompleta en los datos ─
+    weekly = excluir_semana_incompleta(weekly).copy()
 
     # ── Tipos ────────────────────────────────────────────────────
     weekly["fecha_semana"] = pd.to_datetime(weekly["fecha_semana"]).dt.date

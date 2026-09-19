@@ -88,3 +88,47 @@ def test_rsi_macd_semanal_directo():
     out = weekly_tf.rsi_macd_semanal(closes, fecha_semana=date(2026, 1, 2))
     assert out["fecha"] == date(2026, 1, 2)
     assert out["rsi"] is not None and out["macd"] is not None
+
+
+# -- semana completa por DATO, no por reloj (17/9/2026) ---------------------------------
+
+def _dias_habiles(desde: date, hasta: date) -> list[dict]:
+    filas, d, close = [], desde, 100.0
+    while d <= hasta:
+        if d.weekday() < 5:
+            close += 1.0
+            filas.append({"fecha": d, "close": close})
+        d += timedelta(days=1)
+    return filas
+
+
+def test_ultima_rueda_de_semana():
+    assert weekly_tf.ultima_rueda_de_semana(date(2026, 9, 14)) == date(2026, 9, 18)  # lunes
+    assert weekly_tf.ultima_rueda_de_semana(date(2026, 9, 19)) == date(2026, 9, 25)  # sabado -> semana siguiente
+    assert weekly_tf.ultima_rueda_de_semana(date(2026, 4, 1)) == date(2026, 4, 2)    # Viernes Santo 3/4
+
+
+def test_semana_con_dato_del_viernes_cuenta_aunque_hoy_sea_viernes():
+    # La rutina del viernes a la noche: antes se excluia por reloj.
+    sem = weekly_tf.resample_close_semanal(pd.DataFrame(
+        _dias_habiles(date(2026, 8, 3), date(2026, 9, 11))))
+    assert sem["fecha_semana"].iloc[-1] == date(2026, 9, 11)
+
+
+def test_semana_sin_el_viernes_se_excluye():
+    sem = weekly_tf.resample_close_semanal(pd.DataFrame(
+        _dias_habiles(date(2026, 8, 3), date(2026, 9, 10))))
+    assert sem["fecha_semana"].iloc[-1] == date(2026, 9, 4)
+
+
+def test_semana_de_viernes_santo_cierra_el_jueves():
+    filas = [f for f in _dias_habiles(date(2026, 3, 2), date(2026, 4, 2))]
+    sem = weekly_tf.resample_close_semanal(pd.DataFrame(filas))
+    assert sem["fecha_semana"].iloc[-1] == date(2026, 4, 2)
+
+
+def test_semanas_anteriores_no_se_tocan_aunque_les_falte_un_dia():
+    filas = [f for f in _dias_habiles(date(2026, 8, 3), date(2026, 9, 11))
+             if f["fecha"] != date(2026, 8, 21)]          # falta un viernes en el medio
+    sem = weekly_tf.resample_close_semanal(pd.DataFrame(filas))
+    assert date(2026, 8, 20) in set(sem["fecha_semana"])

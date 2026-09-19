@@ -54,8 +54,9 @@ DICCIONARIO = {
         "umbral":  "CHoCH bull->Alcista, bear->Bajista; estructura 1/-1/0",
     },
     "smc_semanal": {
-        "formula": "Misma SMC pero sobre barras SEMANALES (tendencia_1w). Calculada "
-                   "al vuelo: resample W-FRI de precios_diarios + market_structure_1w.",
+        "formula": "Misma SMC pero sobre barras SEMANALES (tendencia_1w), con swings "
+                   "CONFIRMADOS (existen 10 semanas despues de su barra). Calculada al "
+                   "vuelo: resample W-FRI de precios_diarios + estructura.py.",
         "ventana": "10 semanas (estrategico)",
         "fuente":  "precios_diarios -> resample semanal (NO usa features_market_structure_1w)",
         "umbral":  "CHoCH bull->Alcista, bear->Bajista; estructura 1/-1/0",

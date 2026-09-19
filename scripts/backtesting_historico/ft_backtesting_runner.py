@@ -6,7 +6,16 @@ Uso:
     python scripts/backtesting_historico/ft_backtesting_runner.py \
         --estrategia TECH_SECTOR_v1 \
         --desde 2025-06-01 --hasta 2025-12-31 \
-        [--dry-run] [--verbose] [--reset]
+        [--dry-run] [--verbose] [--quiet] [--reset] \
+        [--historia vieja|nueva] [--ventana N]
+
+    --historia nueva: estructura con swings CONFIRMADOS y patrones de vela clasicos
+    (Tarea 23, docs/estructura_velas.md). La vieja mira N ruedas al futuro.
+    --ventana: N de la estructura de SMC (solo historia nueva; default 10).
+    Las variantes no default se registran con sufijo en el nombre de la instancia.
+
+LOCAL-only: antes cargaba .env.local con override y get_engine iba a Railway, donde
+las tablas de mercado estan congeladas desde el Plan C.
 
 Flujo:
     1. INIT: verificar schema, registrar instancia en bt_hist_estrategias
@@ -28,14 +37,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-try:
-    from dotenv import load_dotenv
-    if os.path.exists(os.path.join(ROOT, ".env")):
-        load_dotenv(os.path.join(ROOT, ".env"))
-    if os.path.exists(os.path.join(ROOT, ".env.local")):
-        load_dotenv(os.path.join(ROOT, ".env.local"), override=True)
-except ImportError:
-    pass
+os.environ.pop("DATABASE_URL", None)
 
 from sqlalchemy import text
 from src.data.database import get_engine
@@ -77,11 +79,16 @@ def log(msg: str, verbose: bool = True):
 
 # ── Registro de instancia ─────────────────────────────────────────────────────
 
+def sufijo_variante(historia: str, ventana: int) -> str:
+    """'' para la variante original (historia vieja, N=10); si no '_nueva_N10', etc."""
+    return "" if (historia == "vieja" and ventana == 10) else f"_{historia}_N{ventana}"
+
+
 def registrar_instancia(conn, estrategia: str, desde: date, hasta: date,
-                         n_tickers: int, dry_run: bool) -> int:
+                         n_tickers: int, dry_run: bool, sufijo: str = "") -> int:
     """Inserta o retorna el ID de la instancia en bt_hist_estrategias."""
     cfg  = ESTRATEGIAS[estrategia]
-    nombre = f"{estrategia}_{desde}_{hasta}"
+    nombre = f"{estrategia}_{desde}_{hasta}{sufijo}"
 
     row = conn.execute(text("""
         SELECT id FROM bt_hist_estrategias
@@ -116,9 +123,9 @@ def registrar_instancia(conn, estrategia: str, desde: date, hasta: date,
     return result.scalar()
 
 
-def reset_instancia(conn, estrategia: str, desde: date, hasta: date):
+def reset_instancia(conn, estrategia: str, desde: date, hasta: date, sufijo: str = ""):
     """Borra resultados anteriores de la instancia para volver a correrla."""
-    nombre = f"{estrategia}_{desde}_{hasta}"
+    nombre = f"{estrategia}_{desde}_{hasta}{sufijo}"
     row = conn.execute(text("""
         SELECT id FROM bt_hist_estrategias WHERE nombre = :n AND fecha_bt_inicio = :d AND fecha_bt_fin = :h
     """), {"n": nombre, "d": desde, "h": hasta}).fetchone()
@@ -506,12 +513,13 @@ def run_smc(bt_id: int, loader: BtDataLoader,
 
 # ── Imprimir resumen en consola ───────────────────────────────────────────────
 
-def imprimir_resumen(pm: BtPositionManager, estrategia: str, desde: date, hasta: date):
+def imprimir_resumen(pm: BtPositionManager, estrategia: str, desde: date, hasta: date,
+                     loader: BtDataLoader = None, variante: str = ""):
     ops     = pm.operaciones_cerradas
     resumen = pm.resumen_metricas()
     print()
     print("=" * 60)
-    print(f"RESUMEN: {estrategia}  [{desde} -> {hasta}]")
+    print(f"RESUMEN: {estrategia}{variante}  [{desde} -> {hasta}]")
     print("=" * 60)
     print(f"  Capital inicial:    $100,000.00")
     print(f"  Capital final:      ${pm.capital_total():>12,.2f}")
@@ -522,6 +530,11 @@ def imprimir_resumen(pm: BtPositionManager, estrategia: str, desde: date, hasta:
     print(f"  Total operaciones:  {resumen['total_operaciones']:>8d}")
     print(f"  Dias prom posicion: {resumen['dias_promedio_pos']:>8.1f} dias habiles")
     print(f"  Sharpe simplif.:    {resumen['sharpe_simplificado']:>8.4f}")
+    if ops:
+        media = sum(o["pnl_pct"] or 0 for o in ops) / len(ops)
+        print(f"  Retorno medio/op:   {media:>+8.3f}%")
+    if loader is not None:
+        _imprimir_vs_universo(pm, loader)
 
     # Distribucion de motivos de salida
     motivos: dict[str, int] = {}
@@ -535,6 +548,35 @@ def imprimir_resumen(pm: BtPositionManager, estrategia: str, desde: date, hasta:
             print(f"    {m:<25s} {n:>4d}")
     print("=" * 60)
     print()
+
+
+def _imprimir_vs_universo(pm: BtPositionManager, loader: BtDataLoader):
+    """Retorno total y por anio contra el universo equal-weight, y exposicion media."""
+    import pandas as pd
+    met = pd.DataFrame(pm.metricas_diarias)
+    if met.empty:
+        return
+    met = met.set_index("fecha")
+    eq = met["capital_total"].astype(float)
+    ret_est = eq.pct_change()
+    ret_est.iloc[0] = eq.iloc[0] / pm.capital_inicial - 1
+    ret_uni = loader.retornos_universo().reindex(ret_est.index).fillna(0.0)
+    expo = (met["capital_inmovilizado"].astype(float) / eq).mean() * 100
+    tot_u = ((1 + ret_uni).prod() - 1) * 100
+    print(f"  Universo eq-weight: {tot_u:>+8.2f}%   (exposicion media de la estrategia {expo:.0f}%)")
+    print()
+    print(f"  {'Anio':<6s} {'Estrategia':>11s} {'Universo':>10s} {'Diferencia':>11s} "
+          f"{'Exposicion':>11s} {'Estr/expo':>10s}")
+    anios = pd.Index([d.year for d in ret_est.index])
+    expo_dia = (met["capital_inmovilizado"].astype(float) / eq).to_numpy()
+    for anio in sorted(set(anios)):
+        m = anios == anio
+        r_e = ((1 + ret_est[m]).prod() - 1) * 100
+        r_u = ((1 + ret_uni[m]).prod() - 1) * 100
+        e_a = expo_dia[m].mean()
+        por_expo = r_e / e_a if e_a > 0 else float("nan")
+        print(f"  {anio:<6d} {r_e:>+10.2f}% {r_u:>+9.2f}% {r_e - r_u:>+10.2f}pp "
+              f"{e_a * 100:>10.0f}% {por_expo:>+9.2f}%")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -556,6 +598,13 @@ def main():
                         help="Log detallado por dia")
     parser.add_argument("--reset",    action="store_true",
                         help="Borra resultados anteriores y vuelve a correr")
+    parser.add_argument("--quiet",    action="store_true",
+                        help="Sin log por dia (tambien en --dry-run)")
+    parser.add_argument("--historia", choices=["vieja", "nueva"], default="vieja",
+                        help="vieja = features_market_structure (mira al futuro); "
+                             "nueva = swings confirmados + velas clasicas (Tarea 23)")
+    parser.add_argument("--ventana",  type=int, default=10,
+                        help="N de la estructura de SMC (solo historia nueva)")
     args = parser.parse_args()
 
     desde    = date.fromisoformat(args.desde)
@@ -563,14 +612,15 @@ def main():
     estrategia = args.estrategia
     logica     = ESTRATEGIAS[estrategia]["logica"]
     dry_run    = args.dry_run
-    verbose    = args.verbose or dry_run
+    verbose    = (args.verbose or dry_run) and not args.quiet
+    sufijo     = sufijo_variante(args.historia, args.ventana)
 
     engine = get_engine()
 
     # ── RESET ────────────────────────────────────────────────────────────────
     if args.reset:
         with engine.connect() as conn:
-            reset_instancia(conn, estrategia, desde, hasta)
+            reset_instancia(conn, estrategia, desde, hasta, sufijo)
 
     # ── VERIFICAR SCHEMA ─────────────────────────────────────────────────────
     with engine.connect() as conn:
@@ -584,8 +634,9 @@ def main():
 
     # ── BULK LOAD ────────────────────────────────────────────────────────────
     print()
-    log(f"Iniciando BT: {estrategia}  [{desde} -> {hasta}]  dry_run={dry_run}", True)
-    loader = BtDataLoader(engine, desde, hasta, logica)
+    log(f"Iniciando BT: {estrategia}{sufijo}  [{desde} -> {hasta}]  dry_run={dry_run}", True)
+    loader = BtDataLoader(engine, desde, hasta, logica,
+                          historia=args.historia, ventana=args.ventana)
     loader.cargar()
 
     n_tickers = len(loader.sector_map) if logica in ("tecnico_sectorial", "combo_tech_candle") \
@@ -595,7 +646,7 @@ def main():
     bt_id = -1
     if not dry_run:
         with engine.connect() as conn:
-            bt_id = registrar_instancia(conn, estrategia, desde, hasta, n_tickers, dry_run)
+            bt_id = registrar_instancia(conn, estrategia, desde, hasta, n_tickers, dry_run, sufijo)
         log(f"Instancia registrada: bt_id={bt_id}", True)
     else:
         bt_id = 0
@@ -620,7 +671,7 @@ def main():
         log("DRY RUN: resultados calculados en memoria, sin escritura.", True)
 
     # ── RESUMEN ──────────────────────────────────────────────────────────────
-    imprimir_resumen(pm, estrategia, desde, hasta)
+    imprimir_resumen(pm, estrategia, desde, hasta, loader, sufijo)
 
 
 if __name__ == "__main__":

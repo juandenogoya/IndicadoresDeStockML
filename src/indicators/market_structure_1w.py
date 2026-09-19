@@ -20,10 +20,11 @@ Ventanas en 1W:
     N=5  : ventana de 11 semanas (~2.5 meses) — tactico
     N=10 : ventana de 21 semanas (~5 meses)   — estrategico
 
-Nota sobre deteccion de pivots:
-    Se usa rolling(2*N+1, center=True), incluye N barras futuras.
-    Correcto para training historico; las N ultimas semanas quedaran sin
-    confirmacion (NaN) — igual que en 1D.
+OJO -- mismo defecto que market_structure.py (medido 17/9/2026): los pivots
+    usan N semanas futuras y las ultimas N semanas NO quedan en NaN (se marcan
+    pivots provisionales). La estructura_10 de la ultima semana cerrada difiere de
+    la confirmada el 27,6% de las veces. Reemplazo: src/indicators/estructura.py
+    con tope_dias=TOPE_DIAS_SEMANAL. Detalle: docs/estructura_velas.md sec. 6.
 """
 
 import numpy as np

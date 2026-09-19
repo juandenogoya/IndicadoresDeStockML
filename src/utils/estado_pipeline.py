@@ -104,6 +104,13 @@ TABLAS = (
     # toda la historia: no sirve de reloj.
     Tabla("features_sector", "fecha", "Features sector",
           True, "cron_paso2_features.bat", None),
+    # features_estructura / features_velas (17/9/2026, Tarea 23): historia de
+    # estructura y velas sin informacion futura, en paralelo a las dos de arriba.
+    # Todavia no son insumo de ninguna decision -> no criticas.
+    Tabla("features_estructura", "fecha", "Estructura (sin futuro)",
+          False, "cron_paso2_features.bat", "calculado_en"),
+    Tabla("features_velas", "fecha", "Velas (sin futuro)",
+          False, "cron_paso2_features.bat", "calculado_en"),
     Tabla("alertas_scanner", "precio_fecha", "Scanner ML",
           True, "cron_paso3_scanner.bat", "created_at"),
     Tabla("opciones_snapshot", "fecha_snapshot", "Opciones (crudo)",

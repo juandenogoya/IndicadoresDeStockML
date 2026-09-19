@@ -11,6 +11,8 @@ precios_semanales / features_market_structure_1w (pipeline 1W deprecado,
 congeladas). Ahora resamplea W-FRI y calcula la estructura SMC semanal en el
 momento, reusando la logica pura de src (igual que el dashboard). Asi el
 contexto MTF del Telegram queda SIEMPRE fresco sin mantener tablas 1W.
+Desde el 17/9/2026 la estructura sale de src/indicators/estructura.py (swings
+confirmados) y la semana completa se decide por dato (weekly_tf).
 
 Funciones:
     get_contexto_mtf(ticker) -> dict : {"tendencia_1w": ..., "tendencia_1m": ...}
@@ -29,7 +31,11 @@ BAJISTA = "bajista"
 NEUTRAL = "neutral"
 
 UMBRAL_1M_PCT = 2.0   # tendencia_1m: >+2% alcista, <-2% bajista
-_DIAS_HISTORIA = 540  # ~75 semanas: suficiente para SMC semanal ventana 10
+# ~3 anios. Con swings CONFIRMADOS (17/9/2026) cada swing semanal existe 10 semanas
+# despues de su barra y la estructura necesita 2 de cada tipo. Medido sobre los 200
+# tickers contra la historia completa: 540 dias coincide en 121/200, 730 en 180/200,
+# 1095 en 200/200.
+_DIAS_HISTORIA = 1100
 _MIN_SEMANAS_SMC = 21 # 2*10+1: minimo para pivots de la ventana 10
 
 
@@ -68,7 +74,7 @@ def get_contexto_mtf_batch(tickers: list[str]) -> dict[str, dict]:
 
     from src.data.database import query_df
     from src.data.resample_weekly import resample_a_semanal
-    from src.indicators.market_structure_1w import _calcular_ticker_1w
+    from src.indicators.estructura import TOPE_DIAS_SEMANAL, calcular_estructura
 
     desde = date.today() - timedelta(days=_DIAS_HISTORIA)
     placeholders = ", ".join(f"'{t}'" for t in tickers)
@@ -107,13 +113,16 @@ def get_contexto_mtf_batch(tickers: list[str]) -> dict[str, dict]:
                 elif ret <= -UMBRAL_1M_PCT:
                     resultado[ticker]["tendencia_1m"] = BAJISTA
 
-        # tendencia_1w: estructura SMC (ventana 10) sobre barras semanales
+        # tendencia_1w: estructura SMC (ventana 10) sobre barras semanales, con
+        # swings CONFIRMADOS (17/9/2026): market_structure_1w marcaba swings
+        # provisionales en las ultimas 10 semanas y la estructura que se veia
+        # cambiaba al confirmarse el 27,6% de las veces (docs/estructura_velas.md).
         if len(sem) >= _MIN_SEMANAS_SMC:
             try:
                 df_w = sem.rename(columns={"fecha_semana": "fecha"})[
                     ["fecha", "open", "high", "low", "close", "volume"]
                 ].copy()
-                ms = _calcular_ticker_1w(df_w)
+                ms = calcular_estructura(df_w, ventanas=(10,), tope_dias=TOPE_DIAS_SEMANAL)
                 resultado[ticker]["tendencia_1w"] = _estructura_a_tendencia(
                     ms["estructura_10"].iloc[-1]
                 )

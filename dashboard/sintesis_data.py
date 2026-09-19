@@ -127,8 +127,9 @@ def _semanal_bundle(ticker: str) -> dict:
     Calcula TODO lo del timeframe superior AL VUELO desde precios_diarios local,
     resampleando a W-FRI una sola vez (semana en curso excluida):
       - tecnico semanal: RSI14 + MACD (la ultima semana cerrada)
-      - smc_semanal: estructura SMC sobre barras semanales (tendencia_1w; reusa
-        _calcular_ticker_1w de market_structure_1w, sin tocar las tablas _1w)
+      - smc_semanal: estructura SMC sobre barras semanales (tendencia_1w; desde el
+        17/9/2026 con swings confirmados de src/indicators/estructura.py, sin tocar
+        las tablas _1w; docs/estructura_velas.md sec. 6)
       - mensual: retorno de 4 semanas -> tendencia_1m (Alcista/Bajista/Neutral)
 
     No depende de indicadores_tecnicos_1w / features_market_structure_1w /
@@ -166,14 +167,13 @@ def _semanal_bundle(ticker: str) -> dict:
     out["tecnico"] = rsi_macd_semanal(sem["close"], fecha_sem)
 
     # 2. SMC semanal (tendencia_1w): estructura sobre barras semanales.
-    # _calcular_ticker_1w espera columnas fecha/open/high/low/close/volume.
     if len(sem) >= 21:  # ventana 10 necesita 2*10+1 barras para pivots
         try:
-            from src.indicators.market_structure_1w import _calcular_ticker_1w
+            from src.indicators.estructura import TOPE_DIAS_SEMANAL, calcular_estructura
             df_w = sem.rename(columns={"fecha_semana": "fecha"})[
                 ["fecha", "open", "high", "low", "close", "volume"]
             ].copy()
-            ms = _calcular_ticker_1w(df_w)
+            ms = calcular_estructura(df_w, ventanas=(10,), tope_dias=TOPE_DIAS_SEMANAL)
             ult = ms.iloc[-1]
             out["smc_semanal"] = {
                 "fecha":         fecha_sem,

@@ -12,7 +12,17 @@ nivel de modulo).
 Resample (homogeneo con src/data/resample_weekly.resample_a_semanal):
     - Anchor viernes (W-FRI): cada semana va de sabado a viernes.
     - Close = ultimo cierre de la semana; fecha_semana = ultimo dia habil real.
-    - Semana en curso (incompleta) EXCLUIDA para no calcular sobre parciales.
+    - Semana incompleta EXCLUIDA para no calcular sobre parciales.
+
+Semana completa = POR DATO, no por reloj (17/9/2026, docs/estructura_velas.md sec. 6):
+    Antes se excluia la semana que contiene HOY. Con la rutina corriendo el viernes a
+    la noche con el dato del viernes, la semana recien cerrada quedaba afuera y el
+    semanal atrasaba una semana; un sabado con el viernes faltante tomaba como
+    cerrada una semana parcial. Ahora la ultima semana cuenta si su ultimo dato es
+    la ultima rueda habil NYSE de esa semana (trading_calendar: un Viernes Santo la
+    cierra el jueves). trading_calendar cubre 2025-2027: fuera de ese rango un
+    feriado de viernes solo atrasa la semana hasta que llega el dato siguiente.
+    Es la unica regla: la usa tambien resample_weekly.
 
 Indicadores (mismos periodos que config.py / dashboard):
     RSI 14 | MACD 12/26/9 sobre el close semanal.
@@ -20,8 +30,12 @@ Indicadores (mismos periodos que config.py / dashboard):
 Si los periodos cambian en config.py, actualizar tambien aca (modulo autonomo).
 """
 
+from datetime import date, timedelta
+
 import pandas as pd
 import ta
+
+from src.utils.trading_calendar import is_trading_day
 
 # Periodos estandar (homogeneo con config.py; replicados para mantener el
 # modulo autonomo, igual que clasificacion_tecnica.py).
@@ -45,10 +59,34 @@ def _f(val):
     return None if pd.isna(f) else f
 
 
+def ultima_rueda_de_semana(d) -> date:
+    """Ultimo dia habil NYSE de la semana W-FRI (sabado a viernes) que contiene `d`."""
+    d = pd.Timestamp(d).date()
+    dia = d + timedelta(days=(4 - d.weekday()) % 7)   # el viernes de esa semana
+    while not is_trading_day(dia):
+        dia -= timedelta(days=1)
+    return dia
+
+
+def excluir_semana_incompleta(weekly: pd.DataFrame, col: str = "fecha_semana") -> pd.DataFrame:
+    """
+    Saca la ULTIMA semana si su ultimo dato no es la ultima rueda habil de esa semana.
+    `weekly` ordenado ascendente, con `col` = ultimo dia con dato de cada semana.
+    Las semanas anteriores ya terminaron: no se tocan aunque les falte un dia.
+    """
+    if weekly is None or len(weekly) == 0:
+        return weekly
+    ultima = pd.Timestamp(weekly[col].iloc[-1]).date()
+    if ultima < ultima_rueda_de_semana(ultima):
+        return weekly.iloc[:-1].copy()
+    return weekly
+
+
 def resample_close_semanal(df_diario: pd.DataFrame) -> pd.DataFrame:
     """
-    Resamplea precios diarios a cierres semanales (W-FRI), excluyendo la semana
-    en curso. Solo necesita columnas [fecha, close] (el RSI/MACD usan el close).
+    Resamplea precios diarios a cierres semanales (W-FRI), excluyendo la ultima
+    semana si esta incompleta en los datos (excluir_semana_incompleta). Solo
+    necesita columnas [fecha, close] (el RSI/MACD usan el close).
 
     Returns:
         DataFrame [fecha_semana (date), close (float)] ordenado ASC.
@@ -68,10 +106,7 @@ def resample_close_semanal(df_diario: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-    # Excluir semana en curso (incompleta).
-    hoy = pd.Timestamp.today().normalize()
-    lunes_actual = hoy - pd.Timedelta(days=hoy.weekday())
-    weekly = weekly[pd.to_datetime(weekly["fecha_semana"]) < lunes_actual].copy()
+    weekly = excluir_semana_incompleta(weekly).copy()
 
     weekly["fecha_semana"] = pd.to_datetime(weekly["fecha_semana"]).dt.date
     weekly["close"] = weekly["close"].astype(float)

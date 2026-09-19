@@ -299,6 +299,26 @@ def paso_actualizar_features_db() -> dict:
     return {"pa": len(df_pa), "ms": len(df_ms)}
 
 
+def paso_actualizar_estructura_velas_db() -> None:
+    """
+    Paso 2c: features_estructura + features_velas (Tarea 23).
+
+    Historia de estructura de mercado y patrones de vela SIN informacion futura, en
+    tablas paralelas a features_market_structure / features_precio_accion (que miran
+    N ruedas al futuro; docs/estructura_velas.md). Todavia no las lee ninguna
+    decision: si falla, avisa y el Paso 2 sigue. chequeo_rutina las informa como
+    no criticas.
+    """
+    try:
+        from scripts.compute_estructura_velas import computar
+        st = computar(verbose=False)
+        log(f"  Estructura/velas OK: {st['filas_estructura']:,} filas desde {st['desde_min']} | "
+            f"ultima rueda {st['ultima']} ({st['tickers']} tickers)")
+    except Exception:
+        log(f"  [WARN] features_estructura/velas no se actualizaron (no frena el paso):\n"
+            f"{traceback.format_exc()[:500]}")
+
+
 # Ruedas que el Paso 2 recalcula en scoring_tecnico y features_sector. No alcanza
 # con la ultima: si el Paso 1 quedo PARCIAL (la rutina sigue con hasta 10 tickers
 # pendientes) la rueda se calculo sin ellos y hay que rehacerla cuando lleguen.
@@ -743,6 +763,9 @@ def cmd_features():
         log(f"  ERROR CRITICO en features sectoriales:\n{traceback.format_exc()}")
         sys.exit(1)
 
+    log("\n[2c] features_estructura + features_velas (historia sin futuro, Tarea 23)...")
+    paso_actualizar_estructura_velas_db()
+
     log("\n  Paso 2 finalizado.")
     log("=" * 55)
 
@@ -825,6 +848,9 @@ def cmd_all():
             f"({st['tickers_ultima']} tickers)")
     except Exception:
         log(f"  ERROR en features sectoriales (continua):\n{traceback.format_exc()[:300]}")
+
+    log("\n[1c/4] features_estructura + features_velas (Tarea 23)...")
+    paso_actualizar_estructura_velas_db()
 
     log("\n[2/4] Scanner de alertas...")
     try:

@@ -435,6 +435,13 @@ def recomputar_derivadas_bulk(desde):
     procesar_features_precio_accion()
     procesar_features_market_structure()
 
+    # features_estructura / features_velas (Tarea 23): el Paso 2 solo escribe las
+    # ruedas nuevas porque la historia no cambia... salvo cuando se corrige
+    # precios_diarios, que es justo este caso.
+    log("Recomputando features_estructura + features_velas (historia completa)...")
+    from scripts.compute_estructura_velas import computar
+    computar(completo=True, verbose=False)
+
     log(f"Backfill z-scores de acciones desde {desde}...")
     from src.utils.zscore_pipeline import backfill_zscore_tickers
     n = backfill_zscore_tickers(desde=desde)

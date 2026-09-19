@@ -16,10 +16,16 @@ Para cada ventana N en [5, 10] (12 features x 2 = 24 total):
     bos_bull_N, bos_bear_N -- break of structure (confirma tendencia)
     choch_bull_N, choch_bear_N -- change of character (posible reversion)
 
-Nota sobre deteccion de pivots:
-    Se usa rolling(2*N+1, center=True), es decir ventana simetrica que
-    incluye N barras futuras.  Correcto para training historico; las
-    N ultimas barras de cada ticker quedaran sin confirmacion (NaN).
+OJO -- LA HISTORIA DE ESTE MODULO MIRA N BARRAS AL FUTURO (medido 17/9/2026):
+    Los pivots se detectan con rolling(2*N+1, center=True) y se anotan en la
+    barra del pivot, cuando recien se conocen N barras despues. NO sirve para
+    entrenar, validar ni backtestear: en la tabla guardada un swing high da
+    -4,7% de exceso a 5 ruedas y los modelos ML dan AUC 0,65 contra 0,52 con lo
+    que se sabia cada dia. Ademas, con min_periods=n+1 las ultimas N barras NO
+    quedan en NaN: se marcan pivots provisionales que pueden desaparecer al dia
+    siguiente. La version con swings confirmados es src/indicators/estructura.py.
+    Se conserva sin cambios porque la usan los modelos v1/v2 en vivo durante la
+    Etapa 4. Detalle: docs/estructura_velas.md.
 """
 
 import numpy as np
