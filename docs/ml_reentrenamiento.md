@@ -5,6 +5,24 @@ por decision del usuario. Config final decidida (ver seccion 8). El modelo V3
 actual sigue en produccion sin cambios.
 Estado operativo vivo: AGENDA.md Tarea 20. Resultados crudos: reportes/ml_walkforward/.
 
+**OJO (17/9/2026): los numeros de las secciones 8 y 8c estan INFLADOS.** Las 24
+features de market structure de `features_market_structure` miran 10 ruedas al
+futuro. Con lo que se sabia cada dia, v1 y v2 dan AUC ~0,52. Ver seccion 10 y
+docs/estructura_velas.md.
+
+**Y la conclusion es mas fuerte que "los numeros no valen" (seccion 10.1):** el
+intento de v3 con features honestas ya se corrio con particion y compuertas
+pre-registradas y NO pasa -- AUC media 0,5099 en 6 folds purgados, contra 0,6189 con la
+tabla que mira al futuro en los MISMOS folds. La ventaja que este documento midio no
+existe con datos honestos. Antes de volver a entrenar hay que cambiar la hipotesis
+(label relativo, otro horizonte), no los umbrales.
+
+**Por que da 0,51 (seccion 10.2, medido 17/9/2026):** ninguna familia de features que
+describa al ticker aporta; lo unico que mueve el AUC es el contexto sectorial, que es
+regimen. El label absoluto tiene base rate de 0,30 a 0,69 segun el trimestre. Inventario
+completo de features, fuentes de la DB y la familia de valuacion:
+[features_ml.md](features_ml.md).
+
 Este documento captura el analisis del ML actual, las decisiones de diseno
 (que se hace y por que) y el esquema de 5 fases para reentrenar. Es conocimiento
 NO derivable del codigo: performance en vivo, rechazo empirico de los modelos
@@ -68,8 +86,25 @@ solo split por sector mide si el sector subio en esa ventana, no habilidad.
 Raiz: el LABEL de retorno ABSOLUTO hace que el modelo persiga la deriva del
 sector. Un label RELATIVO al sector (batir la mediana del sector a 20d) o
 triple-barrier lo haria robusto al regimen.
+**MEDIDO el 17/9/2026 (features_ml.md sec. 9):** base rate del label absoluto por
+trimestre entre 0,302 y 0,694 (desvio 0,1204); el relativo al universo del dia, 0,496-0,500
+(desvio 0,0019).
 
 ### 2.5 Los modelos sectoriales estan rechazados por evidencia
+
+**OJO (17/9/2026): el head-to-head de abajo se midio con `features_market_structure`,
+que mira 10 ruedas al futuro, y el sesgo NO era neutral** -- con mas filas agrupadas el
+global explota mejor la fuga que un sectorial chico, asi que la comparacion lo
+favorecia por algo que no era su habilidad. La conclusion se RE-MIDIO con features
+honestas (docs/estructura_velas.md sec. 9.7-9.8) y **sobrevive, ahora por la razon
+correcta**: sobre 96.534 predicciones fuera de muestra en 6 folds purgados, ningun
+sector discrimina (mejor: Basic Materials AUC 0,5446 con IC95 [0,476; 0,614], que
+incluye 0,50; peor: Industrials 0,4761 con 1 de 6 folds por encima de 0,50), y la
+dispersion de AUC ENTRE sectores (0,0225) es un tercio de la dispersion DENTRO de cada
+sector entre ventanas (0,0581): lo que parece un sector bueno es la ventana que te toco
+mirar. Por INDUSTRIA no se prueba: de 72 industrias, 13 tienen 5 o mas tickers y 31
+tienen uno solo.
+
 El challenger V3 desplego el modelo GLOBAL en los 6 sectores (tipo='global' en
 `modelos_produccion`). Ningun sectorial gano. Tendencia: V1 Financials sectorial
 ganaba, V2 tambien, V3 CERO sectoriales. A mas datos pooled, el global domina.
@@ -104,6 +139,13 @@ La lectura NO es "hacer modelos sectoriales" (pierden), sino que la
 CONFIABILIDAD de la probabilidad del global varia por sector -> ponderar/umbral
 por sector. CAVEAT: sale de 1 sola ventana, sectores con n<20 -> hay que validar
 con walk-forward antes de fijar un peso.
+
+**VALIDADO Y NEGATIVO (17/9/2026)**: se hizo ese walk-forward con features honestas
+(6 folds, 96.534 filas fuera de muestra; docs/estructura_velas.md sec. 9.8) y el orden
+de esta tabla NO se reproduce. Financial Services, el mejor spread de aca (+7,3), da
+AUC 0,5065 y lift 0,98 -- el decil alto acierta MENOS que la base. El unico que se
+repite es Industrials, malo en las dos mediciones. Conclusion: no hay peso sectorial
+que fijar, porque la variacion por sector es ruido temporal.
 
 ### 2.7 Bug de taxonomia (arreglar antes de reentrenar)
 - SECTORES_ML (config) = {Financials, Consumer Staples, Consumer Discretionary,
@@ -401,3 +443,122 @@ META-APRENDIZAJE (cierra el loop): tanto el techo del ML (seccion 8) como el
 bloqueo de las features de opciones vienen de LO MISMO -- falta de informacion
 across regimenes. Hoy no hay con que subir el edge predictivo; el valor esta en
 el ensamble de señales finas + usos descriptivos, y en acumular datos con paciencia.
+
+## 10. Addendum -- leakage en las features de market structure (17/9/2026)
+
+Detalle, metodo y plan: docs/estructura_velas.md (secciones 4 y 10).
+
+`market_structure._calcular_estructura_n` detecta swings con una ventana centrada
+(`rolling(2N+1, center=True)`) y los registra en su propia barra, cuando recien se
+conocen N barras despues. Las 24 features de estructura de `features_market_structure`
+(la tabla que JOINean `trainer_v3`, `walkforward_ml.cargar_dataset` y
+`entrenar_ml_v2`) usan informacion de las 10 ruedas siguientes. En vivo el scanner
+calcula sobre las barras hasta la rueda: ahi no hay futuro.
+
+Medido sobre 44.663 filas (60 tickers, 2023-08 -> 2026-08), mismas filas y mismas 29
+features no estructurales, cambiando solo las 24 de estructura:
+
+| Tramo | v1 guardada | v1 real | v2 guardada | v2 real |
+|---|---|---|---|---|
+| 2023-08 -> 2025-01 (fuera del entrenamiento v1) | 0,655 | 0,520 | 0,650 | 0,518 |
+| 2025-01 -> 2026-04 (v1 entreno aca) | 0,635 | 0,516 | 0,657 | 0,521 |
+| 2026-04 -> 2026-08 (fuera del entrenamiento v1) | 0,645 | 0,516 | 0,667 | 0,525 |
+
+Lo que invalida de este documento:
+- Sec. 2.3: la concentracion en `dias_sh_10` / `dias_sl_10` no es "fragilidad de
+  timing": son las columnas que traen el futuro (swing high hace 0 dias = techo que
+  despues cayo).
+- Sec. 8, Fases 2-4: el edge del walk-forward (AUC 0,60, decil alto 64,5%, t=11,35,
+  "techo de las 53 features"), la eleccion de motor, el rechazo del ponderador y la
+  comparacion de labels se midieron con esas features. Las conclusiones pueden
+  sostenerse o no; los numeros no valen.
+- Sec. 8c: el holdout de la v2 (AUC 0,641, decil 72,8%), su compuerta, los cortes
+  equivalentes y la comparacion v1/v2 del mismo tramo.
+
+Lo que sigue valiendo: la performance EN VIVO (sec. 2.2, con la salvedad de 8b) y el
+forward testing, porque en vivo las features no tienen futuro. Con las features reales
+queda una ventaja chica: decil alto de la v1 55,7% de acierto contra 51,2% de base.
+
+Consecuencia: ningun reentrenamiento ni validacion sobre `features_market_structure`
+hasta tener la historia con swings confirmados (docs/estructura_velas.md, Fase 2).
+El modelo v3 (Fase 3) audita las 53 features con el test de invariancia y fija la
+particion por fecha con embargo antes de correr (hoy `features_ml.segmento` parte por
+ticker y los segmentos se pisan en fechas; lo usa `trainer_v3`).
+
+### 10.1 El intento de v3 CORRIDO y su resultado (17/9/2026)
+
+Hecho: `scripts/ml/entrenar_ml_v3.py` con la particion y las compuertas
+pre-registradas en docs/estructura_velas.md sec. 9.5, sobre `features_ml` JOIN
+`features_estructura` (swings confirmados, invariantes). Resultado completo en la
+seccion 9.6 de ese doc.
+
+| Brazo (6 folds purgados en el 80% de desarrollo) | AUC media | Folds > 0,52 |
+|---|---|---|
+| 53 features, estructura que mira al futuro (control) | 0,6189 | 6/6 |
+| 53 features, estructura CONFIRMADA | 0,5133 | 3/6 |
+| 29 features, sin estructura (ablacion) | 0,5099 | 3/6 |
+
+**No pasa la compuerta** (pedia AUC media >= 0,54 y > 0,52 en 5 de 6 folds). Los dos
+folds mas recientes, los de mas datos, caen por debajo de 0,50. El lockbox
+(2025-07-15 -> 2026-08-13) quedo SIN ABRIR, disponible para una hipotesis nueva.
+
+Que agrega esto a la seccion 10: no es solo que los NUMEROS de las secciones 2.3, 8 y
+8c no valgan; es que **la ventaja que median no existe cuando las features son
+honestas**. El motor (RF global), el label absoluto y las 53 features, que es la
+configuracion que este documento congelo, dan AUC ~0,51 sobre 6 ventanas
+independientes. Antes de volver a entrenar hay que cambiar la HIPOTESIS, no los
+umbrales: label relativo al universo del dia en vez de absoluto (sec. 2.4), horizonte
+mas corto que 20 ruedas, o abandonar la prediccion a plazo fijo y quedarse con las
+estrategias de reglas con salidas, que es lo unico que paso su backtest
+(docs/estructura_velas.md sec. 9.3).
+
+Las features NO estructurales quedaron auditadas numericamente en el paso 0
+(`scripts/ml/auditar_invariancia_features.py`): invariancia exacta (diferencia maxima
+0,00e+00 en 12 tickers x 8 cortes) y **skew de ventana cero** -- el dataset sale de la
+historia completa y el scanner recalcula con las ultimas 500 barras, y los indicadores
+recursivos ya convergieron. No hay train/serve skew por ventana.
+
+### 10.2 Por que da 0,51: que aporta, que no, y el label (17/9/2026)
+
+Detalle completo, tablas y reglas: [features_ml.md](features_ml.md). Reproducible con
+`scripts/ml/analizar_features_ml.py`. Lo que cambia respecto de este documento:
+
+**1. Ninguna familia que describa al ticker aporta (ablacion, mismos 6 folds).** Quitando
+cada familia del set de 53: indicadores -0,0018 (sin ellos MEJORA), engineered -0,0007,
+flags de estructura -0,0000, scoring +0,0002, distancias a SMAs +0,0006, estructura
++0,0035, z-scores sectoriales +0,0037. La unica que mueve algo son las 5 de CONTEXTO
+sectorial (+0,0126; sin ellas el modelo da 0,5007) -- y esas valen lo mismo para todos
+los tickers de un sector en una fecha: son regimen, no seleccion. Ni siquiera son
+consistentes: la base les gana en 4 de 6 folds.
+
+Esto corrige la lectura de la sec. 2.3 ("el modelo se apoya en dos contadores de
+timing"): con features honestas no se apoya en nada que distinga a un ticker de otro.
+
+**2. El label mide el regimen.** Base rate del label absoluto por trimestre: 0,302 (2023Q3)
+a 0,694 (2025Q2). Juzgando la MISMA probabilidad con un label relativo (retorno por
+encima de la mediana del universo de la rueda), el AUC cae de 0,5133 a 0,5007 y el rango
+entre folds se comprime de 0,468-0,565 a 0,469-0,522: lo que parecia senal en los folds
+1-2 era regimen. El label relativo no crea senal, pero mide con la mitad del ruido
+(IC95 +-0,021 contra +-0,043). Un modelo ENTRENADO con label relativo todavia no se
+probo.
+
+**3. Los folds no son comparables.** Folds 1-5 con 122 tickers, fold 6 con 196: los 74-76
+incorporados en 2024-04 aparecen en el ultimo holdout casi sin haber estado en el train.
+El lockbox tiene el mismo problema. El techo lo pone `precios_diarios`: 19 tickers
+desde 2020-01, 122 desde 2021-01, 200 recien desde 2024-04. Hay que pre-registrar el
+UNIVERSO ademas de las fechas.
+
+**4. La valuacion fundamental no aporta a esta pregunta.** `fundamentales_sec_multiplos_d`
+es point-in-time correcto (0 filas con un balance publicado despues de la fecha), pero el
+PER cubre el 58% de las filas y su ausencia es un proxy de region y sector (27,7% son
+tickers sin SEC, 9,9% empresas con perdida). PER, earnings yield, P/S y FCF yield, crudos
+o como percentil transversal: AUC 0,49-0,51, IC95 incluye 0,50. El unico indicio
+(percentil transversal de EV/EBITDA, 6/6 folds) va en contra del valor -- lo caro subio
+mas -- sobre un 34% de filas sesgado por sector, y con 24 comparaciones un 6/6 aparece
+por azar el ~31% de las veces.
+
+**Implicancia para este documento.** La "config final congelada" de la sec. 8 (RF global,
+53 features, label absoluto) queda sin respaldo como punto de partida. Un modelo nuevo
+empieza por el label (relativo al universo del dia) y el universo (pre-registrado), y
+recien despues por las features: las familias sin usar con cobertura completa son flujo
+de volumen, sorpresa de volumen y eventos de balance (features_ml.md sec. 11).

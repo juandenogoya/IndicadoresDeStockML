@@ -60,8 +60,23 @@ EN_MAX_TRAIN = 60000
 # Carga
 # ------------------------------------------------------------------
 
-def cargar_dataset() -> pd.DataFrame:
-    """features_ml JOIN features_market_structure, solo filas con label."""
+# Tablas de estructura. "vieja" = features_market_structure, cuya historia mira N
+# ruedas al futuro (docs/estructura_velas.md sec. 4): sirve para REPRODUCIR lo que se
+# entreno (v1/v2), no para entrenar algo nuevo. "nueva" = features_estructura, swings
+# confirmados e invariantes; es la que usa el modelo v3.
+TABLAS_ESTRUCTURA = {"vieja": "features_market_structure", "nueva": "features_estructura"}
+
+
+def cargar_dataset(estructura: str = "vieja") -> pd.DataFrame:
+    """
+    features_ml JOIN la tabla de estructura elegida, solo filas con label.
+
+    estructura="vieja" es el DEFAULT a proposito: entrenar_ml_v2.py importa esta
+    funcion y su resultado tiene que seguir siendo reproducible.
+    """
+    if estructura not in TABLAS_ESTRUCTURA:
+        raise ValueError(f"estructura={estructura!r}, esperaba {sorted(TABLAS_ESTRUCTURA)}")
+    tabla_ms = TABLAS_ESTRUCTURA[estructura]
     ms_cols = ", ".join(f"fms.{c}" for c in FEATURE_COLS_MS)
     sql = f"""
         SELECT fm.ticker, fm.sector, fm.fecha, fm.close, fm.atr14, fm.momentum,
@@ -77,7 +92,7 @@ def cargar_dataset() -> pd.DataFrame:
                fm.rsi_sector_avg, fm.adx_sector_avg, fm.retorno_1d_sector_avg,
                {ms_cols}
         FROM features_ml fm
-        JOIN features_market_structure fms
+        JOIN {tabla_ms} fms
           ON fm.ticker = fms.ticker AND fm.fecha = fms.fecha
         WHERE fm.label_binario IS NOT NULL
         ORDER BY fm.fecha, fm.ticker
