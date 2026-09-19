@@ -50,7 +50,11 @@ Documentacion que existe hoy en docs/:
                             y su interpretacion (para re-tunear a futuro)
 - docs/reportes.md        : modulo scripts/reports/ -- generador de PDF e
                             infografias para compartir analisis en X
-- docs/estrategias_ft.md  : estrategias de forward testing
+- docs/estrategias_ft.md  : estrategias de forward testing (spec conceptual de cada
+                            logica, registro de instancias activas y tabla de
+                            instancias DISCONTINUADAS con el motivo y el link al
+                            cierre). Criterios de alta/baja: este archivo, patrones
+                            criticos, "Alta y baja de estrategias FT" 
 - docs/earnings_reaccion.md : vista "Reaccion a balances" del dashboard +
                             tabla earnings_historico. Fecha de anuncio por Q
                             desde Alpha Vantage (la variable que faltaba: no la
@@ -70,12 +74,55 @@ Documentacion que existe hoy en docs/:
                             reabrir concurso de algoritmos, lineal+calibracion como
                             controles, walk-forward PURGADO (no split unico),
                             ponderador sectorial validado o peso=1. 5 fases con
-                            compuertas. PREVIO a codear.
+                            compuertas. OJO: los numeros de las secciones 8 y 8c
+                            estan inflados por el leakage de market structure
+                            (addendum sec. 10) y, mas fuerte, el intento de v3 con
+                            features honestas NO PASA la compuerta pre-registrada
+                            (sec. 10.1, 17/9/2026): AUC 0,51 contra 0,62 con la
+                            tabla que mira al futuro. Sin cambiar la HIPOTESIS
+                            (label relativo, otro horizonte) no hay v3. Por que da
+                            0,51: sec. 10.2 y docs/features_ml.md.
+- docs/estructura_velas.md : revision MEDIDA (17/9/2026) de velas y estructura de
+                            mercado (SMC), diario y semanal. La historia de
+                            features_market_structure mira 10 ruedas al futuro
+                            (swings con ventana centrada): ML v1/v2 dan AUC 0,65
+                            con ella y 0,52 con lo que se sabia cada dia. Velas:
+                            envolvente que no envuelve (73%), martillo sin
+                            contexto; ningun patron anticipa retorno. Impacto por
+                            consumidor, plan de 4 fases (swings confirmados en
+                            paralelo -> ML v3 -> migrar consumidores), particion
+                            de datos para la v3 (walk-forward en el 80% + lockbox
+                            20%) y reglas (test de invariancia). Fases 1-2 HECHAS:
+                            modulos estructura.py/velas.py + tablas paralelas. Las
+                            senales de entrada SMC solas no tienen ventaja; el
+                            backtest con salidas esta hecho (sec. 9.3). Sec. 12:
+                            AUDITORIA de las 3 tablas de features contra el OHLCV
+                            (velas y estructura correctas al 100%; los patrones de
+                            precio_accion mal definidos y 2 columnas que inventan
+                            valores en las costuras de backfill).
+- docs/features_ml.md     : inventario MEDIDO (17/9/2026) de las 53 features del ML
+                            (tabla de origen, descripcion, calculo), cuales aportan
+                            (ablacion por familia: ninguna que describa al ticker;
+                            solo el contexto sectorial, que es regimen), redundancia,
+                            las 71 tablas de la DB con su historia y su cobertura
+                            sobre el dataset (el techo lo pone precios_diarios: 122
+                            tickers desde 2021, los 200 recien desde 2024-04), el
+                            label absoluto que mide el regimen (base 0,30-0,69 por
+                            trimestre), la familia de valuacion/PER (no aporta) y la
+                            seleccion propuesta para modelos nuevos. Leer ANTES de
+                            proponer features o un modelo nuevo.
 - docs/bots_alpaca.md     : arquitectura de produccion de los 3 bots Alpaca
                             (Plan B): masticada senales_bot_diaria, cerebro
                             COMPARTIDO src/strategies/, adapters src/trading/,
                             mapeo bot->cuenta->tabla, guard de frescura, decisiones.
-- docs/forward_testing/   : detalle de forward testing
+- docs/forward_testing/   : detalle de forward testing. Incluye ANALISIS_SALIDAS.md
+                            (19/9/2026): que hizo el precio despues de cada salida
+                            de FT contra el universo (ninguna se distingue del
+                            azar), la anatomia de la salida de TECH_SECTOR_v1 y sus
+                            pasos 1 (quitar condiciones) y 2 (grilla de pesos, 589
+                            reglas), y la de SMC_v1 (96 combinaciones de stop, CHoCH,
+                            estructura y time stop): ninguna se confirma. Leer ANTES
+                            de tocar una regla de salida.
 - docs/infografia_fundamental.md : spec de diseno de la infografia fundamental
                             para X/redes (formato 4:5, layout 5 bloques, set de
                             indicadores por perfil banco/no-banco, decisiones).
@@ -148,12 +195,28 @@ Documentacion que existe hoy en docs/:
                             FCF). Ancla al ultimo Q con income real (evita el stub
                             recien reportado). Motor: make_ficha_empresa.py.
 - docs/checklist_recovery_manual.md : flujos de recovery manual
+- docs/perfiles_carteras.md : segmentacion del universo en 4 perfiles de riesgo
+                            (Conservadora/Moderada/Arriesgada/Especulativa) por
+                            COMPORTAMIENTO cuantitativo (percentil de ATR% multi-TF
+                            + beta + drawdown), con el sector como contexto y
+                            fuente del flag de excepcion. Fases 0-5 hechas.
+                            Motor: compute_perfiles_carteras.py -> perfiles_ticker.
+                            SECCION 15 (15/9/2026) = el Proyecto 2 (rotacion) medido
+                            y DESCARTADO: por que el volumen agregado por cartera es
+                            ruido y que haria falta para retomarlo (historia de
+                            snapshots -> drift, no volumen).
 - dashboard/README.md     : spec del Dashboard (informe descriptivo por ticker).
                             v1 + Fase 2 v1 desarrollados 28/5/2026 en rama
                             feature/dashboard: Streamlit local (modos Informe y
                             Radar del dia), export JPG (informe) y PDF (papel de
                             trabajo). Corre bajo el venv. Ver memory/dashboard.md
-                            ("Como correrlo / retomarlo").
+                            ("Como correrlo / retomarlo"). Incluye la seccion
+                            "Alertas de comportamiento inusual" (15/9/2026): la
+                            medicion sobre 13.863 ticker-dias que decidio NO
+                            construir una vista nueva, y las 2 reglas que deja para
+                            cualquier alerta futura -- umbral por Z-SCORE (nunca
+                            multiplo fijo) y SIN indicacion de direccion (medido:
+                            la direccion no existe a 5 ruedas).
 
 Politica de documentacion: un doc de dominio se crea SOLO cuando hay
 conocimiento real que no se puede derivar leyendo el codigo (ej.
@@ -370,6 +433,106 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - Una estrategia nueva en paralelo (ej. ML_SCANNER_v2) no corta a la vieja: se
   comparan en el mismo periodo.
 
+### Alta y baja de estrategias FT -- como se decide y que queda escrito (17/9/2026)
+Destilado de las altas de SMC_v3 y de las bajas de COMBO_v1 y SMC_v2. Leer ANTES de
+proponer, desplegar o apagar una estrategia. Detalle: docs/estrategias_ft.md,
+docs/forward_testing/README.md y las fichas de docs/forward_testing/estrategias/.
+
+**Una estrategia existe para responder UNA pregunta.** Se escribe en la ficha ANTES de
+desplegarla ("?agregar X mejora la seleccion?"), junto con el CONTROL con el que se va
+a comparar: la misma logica base sin X. Sin control de la misma familia no hay
+conclusion posible -- comparar contra otra logica mide el mercado del tramo.
+
+**Toda version nueva va EN PARALELO y la vieja sigue como control.** No se reemplaza
+una logica en su lugar: se crea una instancia nueva con su id y las dos corren los
+mismos dias. Los ids no se reutilizan (la historia cuelga del id).
+
+**Antes de desplegar una regla nueva: backtest con entradas Y SALIDAS.** Medir el
+retorno forward de la senal de ENTRADA a plazo fijo es una prueba de PREDICCION y no
+evalua una estrategia de reglas: SMC y COMBO leen la estructura para entrar y para
+salir. Se pre-registra por escrito, antes de correr: periodo, variantes, metricas y la
+REGLA DE LECTURA (que resultado cuenta como "pasa"). La usada: gana plata en el total
+Y le gana al universo equal-weight ajustado por exposicion (retorno / exposicion
+media) en al menos 4 de los 6 tramos anuales. Declarar que no hay costos y cuantas
+operaciones por anio hace (960/anio con costos no es lo mismo que 80/anio).
+
+**Reglas fijas no tienen sesgo de "el modelo vio los datos", pero los PARAMETROS si.**
+Elegidos mirando resultados son sobreajuste hecho a mano. Corolario: si dos variantes
+del mismo parametro empatan en el backtest (N=5 y N=3), NO se elige la mejor: van las
+dos a FT y decide la operacion real.
+
+**Para dar de baja hacen falta las tres:**
+1. la pregunta de la estrategia ya tiene respuesta y es "no aporta";
+2. evidencia de dos mediciones independientes que apuntan al mismo lado (backtest de
+   anios + FT contra el control), o una medicion de fondo que explique por que no
+   puede aportar (ej. ningun patron de vela tiene exceso distinto de cero);
+3. no es un problema de calibracion: mover el umbral no cambia un aporte medido en cero.
+**Con la potencia estadistica de FT hay que ser honesto**: con 27 o 450 operaciones la
+diferencia contra el control casi nunca es distinguible de cero (IC95 incluye el cero).
+Eso se ESCRIBE, y la baja se apoya en el backtest y en los insumos, no en el resultado
+de FT. **Una regla que nunca dispara no es una regla**: la salida por agotamiento de
+SMC_v2 no se activo ni una vez en 94 ruedas. Contar activaciones antes de creerle algo.
+**NO son motivo de baja por si solos**: un mal tramo, o ser peor que una estrategia de
+otra logica.
+
+**Que queda cuando se da de baja** (nada se borra):
+- la FICHA con el cierre: periodo exacto, parametros con los que corrio, metricas
+  (equity, max DD, Sortino, ops, aciertos, expectancy, profit factor), tabla de
+  motivos de salida, los motivos de la baja, **que NO dice el cierre** y como se
+  reabriria;
+- la historia en `ft_operaciones` / `ft_equity_diaria`, con las posiciones abiertas
+  liquidadas al ultimo cierre con `motivo_salida = ESTRATEGIA_DISCONTINUADA` (salida
+  ARTIFICIAL, etiquetada para poder excluirla). Sin liquidar, la equity se seguiria
+  marcando a mercado para siempre sin nadie que decida;
+- `ft_estrategias.activa = FALSE` (el bot no puede operar aunque lo corran suelto);
+- la entrada en `ft_setup_estrategias.ESTRATEGIAS` con la clave `discontinuada` y el
+  motivo (no se re-inserta, pero los parametros no se pierden);
+- el bloque del bot en `ft_run_diario.bat` como comentario con el motivo;
+- el registro en `ft_cambios` (tipo INFRA, `cambia_decisiones=FALSE`);
+- el codigo del bot, sin borrar.
+Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-run`).
+
+### Analisis de salidas FT: cruzar con `ft_cambios` y enumerar la regla (19/9/2026)
+- **La historia de TECH_SECTOR_v1 antes del 29/5/2026 no mide su regla**: hasta el
+  arreglo `fix_score_cero_salida` a la consulta de salida le faltaba el close y el score
+  daba 0 todos los dias (357 de 412 salidas "SCORE_DEGRADADO_0.0" tenian score real
+  >= 4). Toco tambien a TECH_SECTOR_v2 y OPTIONS v1/v2. La ficha de la v1 lo diagnostico
+  como "exit binario" y la v2 se diseno sobre esa premisa. Antes de analizar la historia
+  de una estrategia, cortar las ventanas que `ft_cambios` marca como bug.
+- **Un score ponderado con umbral es una regla de si/no.** En TECH_SECTOR_v1 ningun
+  score cae entre 3,5 y 4,0: salir con <= 3,5 es exactamente dejar de cumplir la entrada
+  (SMA200 y SMA50 y 2 de 3 entre SMA21/MACD/RSI) y los pesos no mueven ninguna salida.
+  Antes de "ajustar ponderadores", enumerar las combinaciones (`src/utils/ft_salidas`).
+- Las salidas se miden contra el universo, en desvios del ticker y con el DIA como
+  unidad. Al 19/9 ninguna salida de ninguna estrategia de FT se distingue de salir al
+  azar. Cualquier palanca se elige con el backtest de anios, no con los meses de FT.
+- Resultados de cada corrida en `reportes/analisis_salidas/AAAAMMDD_<etiqueta>/` (fuera
+  de git, con `parametros.json`); los numeros que importan quedan en el doc.
+- **Paso 1 de TECH_SECTOR_v1 (19/9, pre-registrado): sacar SMA21, MACD o RSI de la salida
+  NO mejora.** Entradas fijas del motor 2021-2026 (4.902), salida re-simulada: sin SMA21
+  el exceso por operacion no cambia (-0,02 pp, IC95 [-0,16; +0,11]) y la cola empeora
+  (p5 -6,37% -> -8,07%). La salida rapida es control de riesgo. La re-simulacion se valido
+  antes contra las salidas reales de FT (paso 0). Relajar una salida se juzga por la cola.
+- **Paso 2 (19/9, pre-registrado): ninguna combinacion de pesos mejora la salida.** Grilla
+  de pesos {0; 1; 1,5; 2; 3} por condicion, SMA200 obligatoria o con peso -> 589 reglas;
+  metrica = exceso contra el universo en las 10 ruedas DESPUES de salir, seleccion 2021-24 y
+  confirmacion 2025-26. 0 de 588 candidatas. Despues de la salida actual la accion hace lo
+  que el universo (post10 -0,20 / +0,12 pp, desvio 7,26). Los pesos no eligen el momento:
+  eligen cuanto se queda la posicion (correlacion +0,95 con la cola) y el orden entre reglas
+  no se sostiene de un periodo al otro (-0,16). La mejor en 2021-24 ("mas peso al RSI") da
+  cero en 2025-26. Con cientos de reglas, leer con seleccion y confirmacion separadas.
+- **SMC_v1 (19/9, pre-registrado): ninguna de 96 salidas se confirma.** La historia de
+  `features_market_structure` mira al futuro -> se reconstruye, rueda por rueda, lo que el bot
+  veia (modulo viejo sobre las ultimas 250 barras; verificado 200/200 contra la tabla y 45/46
+  entradas de FT). CHOCH_BEAR salio primero 1 vez en 920: el trailing stop esta en el mismo
+  swing low y va antes. El time stop de 10 dias (hoy 20) mejora post y tramo en 2021-24 con IC
+  que excluye el cero y va al mismo lado en 2025-26 sin alcanzar; hipotesis sin confirmar.
+- **`earnings_historico` puede ir atrasada** (carga con cuota de Alpha Vantage): al 19/9/2026
+  esta completa hasta el 20/7 (julio-agosto: 86 de 200 tickers). Una re-simulacion que marca
+  balances desde ahi atraviesa balances que el bot evita, y no igual en todas las reglas:
+  cortarla antes (`ft_analisis_salidas_smc.fin_balances`). Invalido el FT de control del
+  analisis de TECH_SECTOR_v1 (sec. 7.1 del doc).
+
 ### alertas_scanner: `scan_fecha` NO es la fecha de datos (incidente 2/9/2026)
 - La fecha de datos de una alerta es **`precio_fecha`** (sobre que cierre se
   calculo). `scan_fecha` y `created_at` son CUANDO CORRIO el scanner. Es la
@@ -436,6 +599,90 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   Registrado en `ft_cambios` (DATOS). Detalle: docs/ml_reentrenamiento.md sec. 8b.
 - Los legacy 03/05/06 (`scripts/legacy_ml/`) se corren desde la raiz con
   `PYTHONPATH=.`: su `sys.path` apunta a `scripts/`.
+
+### features_market_structure: la HISTORIA mira 10 ruedas al futuro (medido 17/9/2026)
+- `market_structure._calcular_estructura_n` (y la copia `_1w`) detecta swings con
+  `rolling(2N+1, center=True)` y los registra en SU barra, cuando recien se conocen
+  N barras despues. El Paso 2 recalcula la tabla entera cada dia: cada fila historica
+  queda escrita con lo que paso despues. En la historia guardada, un swing high da
+  -4,7% de exceso a 5 ruedas; con lo que se sabia ese dia, ~0.
+- `min_periods=n+1`: la ULTIMA barra si se marca (swing provisional, max de las
+  ultimas 11) y puede desaparecer al dia siguiente. El docstring dice NaN: es falso.
+- Lo que opera hoy NO mira el futuro: scanner y bots FT usan la ultima fila. Lo
+  contaminado: entrenamiento y validacion de ML v1/v2 (AUC 0,65 guardada vs 0,52
+  real), walk-forward de la Tarea 20, backtests SMC/COMBO, historia en dashboard/MCP.
+- REGLA: no entrenar, validar ni backtestear sobre esta tabla. La historia sin futuro
+  es `features_estructura` (swings CONFIRMADOS, `src/indicators/estructura.py`) y
+  `features_velas` (`src/indicators/velas.py`), en paralelo desde el 17/9/2026 y todavia
+  sin consumidores de decision. Toda feature nueva pasa el test de invariancia:
+  `calcular(datos[:t+1]).iloc[-1] == calcular(datos).iloc[t]`. Misma familia que
+  `scan_fecha` y `features_sector`. Detalle y plan: docs/estructura_velas.md.
+- Con historia sin futuro ninguna senal de entrada SMC, sola y a plazo fijo, elige
+  acciones mejores que el universo (doc sec. 9.2). Eso NO evalua las estrategias SMC /
+  COMBO como operan (salidas estructurales). Backtest 2021-09 -> 2026-09 con
+  entradas y salidas (doc sec. 9.3): SMC_v1 con N=10 da +61% con la historia vieja y
+  +13,5% con la nueva (dependia del futuro); con N=5 / N=3 confirmados da ~+58-60% y
+  pasa la regla pre-registrada. COMBO no mejora por las velas (TECH_SECTOR sin velas
+  +24,4% vs COMBO +22,3%). Sin costos. Cualquier cambio de regla se valida en FT.
+- ML v3 CORRIDO y NO PASA (17/9/2026, doc sec. 9.6): con `features_estructura` (honesta)
+  la config congelada de la Tarea 20 da AUC media **0,5099** en 6 folds purgados (3/6 por
+  encima de 0,52; los dos folds con MAS datos quedan debajo de 0,50), y las 24 features de
+  estructura aportan +0,0035 de AUC -> no entran. Control con los mismos folds y la tabla
+  vieja: **0,6189** (6/6). El brazo de 29 features da identico en las dos corridas, lo que
+  valida el montaje. **No hay modelo v3 desplegable; el lockbox (2025-07-15 -> 2026-08-13)
+  quedo SIN ABRIR** para una hipotesis nueva. Los ~11 puntos de AUC del modelo eran el
+  look-ahead. FT_ML_SCANNER_v1/v2 siguen corriendo: en vivo leen la ultima fila, sin futuro,
+  y su resultado en FT es la medicion honesta -- lo que quedo sin respaldo es el "AUC 0,65".
+- Y NO es por ser un modelo GLOBAL (doc sec. 9.7-9.8, pre-registrado): sobre las 96.534
+  predicciones fuera de muestra de esos folds, ningun sector discrimina (mejor Basic
+  Materials AUC 0,5446 con IC95 [0,476; 0,614] que incluye 0,50; peor Industrials 0,4761
+  con 1/6 folds > 0,50) y la dispersion ENTRE sectores (0,0225) es un tercio de la
+  dispersion DENTRO del sector entre ventanas (0,0581): lo que parece un sector bueno es
+  la ventana de 6 meses que toco mirar. Por eso NO se entrenan modelos sectoriales (esto
+  confirma el rechazo de ml_reentrenamiento sec. 2.5, cuyo head-to-head estaba medido con
+  las features contaminadas) y por industria no se prueba: 13 industrias con 5+ tickers,
+  31 con uno solo. Lo que queda por cambiar es la HIPOTESIS (label relativo al universo,
+  horizonte mas corto), no el alcance del modelo.
+- Y NO es por falta de features (17/9/2026, docs/features_ml.md): quitando cada familia del
+  set de 53 en los mismos folds, ninguna que describa al TICKER aporta (sin los 4
+  indicadores base el AUC MEJORA); lo unico que mueve el AUC es el contexto sectorial
+  (+0,0126), que vale lo mismo para todo el sector en una fecha: es regimen. El label
+  absoluto `retorno_20d > +1%` tiene base rate de 0,302 a 0,694 segun el trimestre: la
+  pregunta la contesta el mercado. REGLAS para un modelo nuevo: (1) se empieza por el
+  label (relativo al universo del dia) y por pre-registrar el UNIVERSO (hoy el fold 6
+  tiene 196 tickers y los otros 122), no por las features; (2) una feature que vale lo
+  mismo para todos los tickers de una fecha no puede ordenar tickers; (3) mirar la
+  direccion y el retorno por decil, no solo el AUC (el unico indicio de la familia de
+  valuacion, EV/EBITDA, va AL REVES del valor: lo caro subio mas); (4) contar las
+  comparaciones: con 24 pruebas un 6/6 folds aparece por azar el ~31% de las veces.
+- DECIDIDO con ese resultado (17/9/2026, doc sec. 9.4): **alta** de `FT_SMC_v3_N5` y
+  `FT_SMC_v3_N3` (ids 12 y 13; misma regla de FT_SMC_v1 leyendo `features_estructura` +
+  `features_velas`; las dos ventanas en paralelo porque el N no se elige mirando el
+  backtest; FT_SMC_v1 sigue como control) y **baja** de `FT_COMBO_v1` (las velas no
+  aportan) y `FT_SMC_v2` (peor equity, filtros sobre insumos sin valor, su salida nueva
+  nunca disparo). Ver "Alta y baja de estrategias FT" arriba.
+
+### features_precio_accion: patrones mal definidos y valores INVENTADOS (auditado 17/9/2026)
+- `scripts/manual/auditar_features_tablas.py` recomputa las 3 tablas de features desde
+  `precios_diarios` (las 3 reproducen exacto) y audita cada definicion con una
+  implementacion INDEPENDIENTE contra el OHLCV. `features_velas` y `features_estructura`:
+  100% en todo. `features_precio_accion`: el 71% de las envolventes no envuelve (solo
+  compara tamano de cuerpo), el 52% de los martillos son hanging man y el marubozu no
+  tiene direccion. Los patrones salen de `features_velas`; no se reparan en origen. Los
+  leen todavia FT_SMC_v1 (a proposito, es el control), scanner, Telegram, dashboard y
+  MCP (Fase 4 de docs/estructura_velas.md).
+- **Valores inventados**: `tendencia_velas = velas_alcistas_5d.fillna(0)*2-5` escribe -5
+  (el maximo bajista) donde no hay 5 barras, y `rango_expansion` (comparacion con NaN ->
+  `astype(int)`) escribe 0. Caen en las COSTURAS DE CADA BACKFILL (32 fechas: las 3
+  cohortes de alta del universo), no en el arranque de la serie, y se van a repetir en el
+  proximo backfill. Ademas `tendencia_velas` es exactamente `2*velas_alcistas_5d - 5`:
+  cero informacion. Lo que SI esta bien: flujo de volumen (`ad_flow`, `chaikin_mf_20`,
+  `up_vol_5d`, `vol_ratio_5d`) y microestructura (`clv`, `gap_apertura_pct`,
+  `rango_rel_atr`), la familia sin usar que propone docs/features_ml.md.
+- REGLA: "la tabla reproduce el codigo" no es "la tabla esta bien". Un `fillna(0)` o un
+  `astype(int)` sobre NaN no falla: escribe un numero plausible donde no hay dato. Correr
+  el auditor despues de un backfill, de `splits.py corregir` o de tocar
+  velas/estructura/precio_accion. Detalle: docs/estructura_velas.md sec. 12.
 
 ### Splits -- precios_diarios NO se re-ajusta hacia atras (21/7/2026)
 - El pipeline diario solo trae los dias NUEVOS (ya ajustados por Yahoo). Cuando
@@ -562,14 +809,24 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `scripts/migrations/clean_ticker_fantasma_se.py` | Limpieza generica ticker fantasma |
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
-| `scripts/manual/ft_run_diario.bat` | Corre los 11 bots de Forward Testing en local (FT_ML_SCANNER_v2 desde el 14/9/2026, bloque [1b/10]; sale 1 sin operar si el scanner no trajo la v2) + reporte HTML + precomputo de veredictos del dashboard. El push de senales_bot_diaria se saco el 13/9/2026 (bots Alpaca apagados). Sale 0 OK / 1 el guard freno / 2 algun bot fallo. Con `RUTINA_ORQUESTADA=1` (lo setea rutina_diaria) no pausa ni se registra solo; suelto se anota en `rutina_corridas` |
+| `scripts/manual/ft_run_diario.bat` | Corre los 11 bots ACTIVOS de Forward Testing en local (FT_ML_SCANNER_v2 desde el 14/9/2026, bloque [1b/11], sale 1 sin operar si el scanner no trajo la v2; FT_SMC_v3_N5/N3 desde el 17/9/2026, bloques [3b/11] y [3c/11]; los bloques de COMBO_v1 y SMC_v2 quedaron comentados con el motivo de la baja) + reporte HTML + precomputo de veredictos del dashboard. El push de senales_bot_diaria se saco el 13/9/2026 (bots Alpaca apagados). Sale 0 OK / 1 el guard freno / 2 algun bot fallo. Con `RUTINA_ORQUESTADA=1` (lo setea rutina_diaria) no pausa ni se registra solo; suelto se anota en `rutina_corridas` |
 | `scripts/manual/rutina_diaria.bat` (+ `.py`) | La rutina diaria COMPLETA (13/9/2026): sync opciones + purga, Paso 1, Paso 2, Paso 3 y ft_run_diario, en orden. Si falla el Paso 1 con mas de 10 tickers pendientes, el 2 o el 3, FRENA antes de los bots; el sync sigue. Log por paso en `logs/rutina/AAAAMMDD_HHMM/` + `resumen.txt`, registro en `rutina_corridas`, resumen por Telegram con los tickers pendientes y su ultimo dato. `--desde pasoN` / `--sin-telegram`. El .py tambien es el ejecutor de cada .bat de paso (`paso <clave>`, `correr --nombre recovery_incremental`): codigo de salida REAL (0 OK, 2 avisos, 1 error) |
 | `src/utils/rutina.py` | Modulo PURO de la rutina: orden de pasos, politica ante una falla, clasificacion del Paso 1 (PARCIAL vs caida, via `recovery_incremental.py --resumen-json`), resumen de texto y mensaje de Telegram |
 | `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py`. Informa ademas los HUECOS en el medio de la serie (ultimas 252 ruedas de precios/indicadores/features; avisa, no frena; excepciones verificadas en `HUECOS_CONOCIDOS`; `--solo-huecos`) y la ultima corrida de cada paso (`rutina_corridas`) |
 | `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
 | `src/utils/estado_pipeline.py` | Modulo PURO del diagnostico de la rutina (sin DB ni Streamlit). Registro de tablas -> etiqueta / si es INSUMO de decisiones / que .bat la arregla, mas `diagnosticar()` y `resumen()`. FUENTE UNICA: lo comparten chequeo_rutina.py y la banda de estado del dashboard, para que no haya dos definiciones de "estan alineados los datos". **`Tabla.columna` es SIEMPRE la fecha de DATOS**; el reloj de corrida va aparte en `columna_registro` y se informa pero NO entra en el diagnostico (ver patrones criticos: incidente 2/9/2026) |
+| `src/indicators/estructura.py` / `src/indicators/velas.py` | Modulos PUROS (numpy+pandas) de estructura de mercado con swings CONFIRMADOS (el swing existe N barras despues de su barra; sin swings provisionales) y patrones de vela con definicion clasica y contexto. INVARIANTES por test: la fila de una fecha no cambia con barras nuevas. Reemplazo en paralelo de market_structure.py (historia con futuro) y de los patrones de precio_accion.py. Sirven para diario y semanal (`tope_dias`). Los usa ya el semanal de mtf_context y del dashboard. Ver docs/estructura_velas.md |
+| `scripts/compute_estructura_velas.py` | Escribe `features_estructura` + `features_velas` (LOCAL). Calcula sobre la historia completa de cada ticker (segundos) y persiste desde la primera rueda que falta, con 10 de solape; ticker sin filas se escribe entero. `--crear --completo` (carga inicial) / `--tickers` / `--dry-run` / `--status`. Paso 2c de cron_diario (no frena si falla); `splits.py corregir` lo corre con `--completo` |
+| `scripts/ml/entrenar_ml_v3.py` | Fase 3a de la Tarea 23: entrena y valida el modelo v3 sobre `features_estructura` con la particion y compuertas PRE-REGISTRADAS (doc sec. 9.5). Walk-forward purgado de 6 folds en el 80% de desarrollo, dos brazos (53 vs 29 features), lockbox del 20% final que solo se abre si pasa la compuerta 1. `--solo-wf` / `--dry-run` / `--estructura vieja` (control de diagnostico). RESULTADO: no pasa, no hay v3, lockbox sin abrir |
+| `scripts/ml/screen_sectorial_v3.py` | Paso 1 de la pregunta sectorial (solo lee las predicciones fuera de muestra del walk-forward): AUC/lift/exceso por sector con IC95 calculado sobre las 6 mediciones POR FOLD (la fila no es unidad independiente: dentro de un fold comparten mercado) + prueba de heterogeneidad (dispersion entre sectores vs dentro del sector). Sale 2 si ningun sector califica. RESULTADO: ninguno |
+| `scripts/ml/auditar_invariancia_features.py` | Auditoria numerica de las 29 features NO estructurales (solo lee): invariancia `calcular(datos[:t+1]).iloc[-1] == calcular(datos).iloc[t]` y skew de ventana (dataset con historia completa vs scanner con las ultimas 500 barras). Las dos dan diferencia 0,00e+00 |
+| `scripts/ml/analizar_features_ml.py` | Mediciones de docs/features_ml.md (solo lee): inventario de las 71 tablas, historia real por ticker, cobertura de cada fuente sobre el dataset, redundancia, composicion de los folds, base rate por trimestre (label absoluto vs relativo) y familia valor/PER contra los dos labels. `--seccion ablacion` (~20 min) quita cada familia del set de 53 y re-corre los 6 folds registrados (importa particion y folds de entrenar_ml_v3). IC95 sobre las mediciones POR FOLD |
+| `scripts/manual/auditar_features_tablas.py` | Audita features_velas / features_estructura / features_precio_accion contra el OHLCV (solo lee): reproducibilidad, definiciones con implementacion INDEPENDIENTE, swings reales + invariancia, valores inventados. Sale 0 si velas y estructura pasan todo y las 3 reproducen; los defectos de precio_accion se informan como CONOCIDOS. Correrlo despues de un backfill o de `splits.py corregir` |
+| `scripts/ml/medir_leakage_estructura.py` / `scripts/ml/medir_valor_velas.py` | Mediciones de la Tarea 23 (solo leen): tabla vieja vs lo que se sabia ese dia (loop por rueda, ~13 s/ticker), impacto en AUC de ML v1/v2, semanal, valor de eventos con swings confirmados y regla de entrada de FT_SMC (`--solo FG`, compuerta de la Fase 2); patrones de vela viejos vs clasicos |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor, REGISTRA el split en `splits_aplicados` (misma transaccion, fecha real de Yahoo o `--fecha-ejecucion`) y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
+| `scripts/forward_testing/ft_bot_smc_v3.py` (+ `ft_scoring_estructura.py`) | Estrategias FT_SMC_v3_N5 / FT_SMC_v3_N3 (`--ventana 5\|3`): la MISMA regla de FT_SMC_v1 (el score se importa de `ft_scoring`, no se reimplementa) leyendo `features_estructura` (swings CONFIRMADOS) + `features_velas`. El loader aliasa las columnas de N a los nombres `*_10` que espera el score, ancla el lookback a la ultima rueda de DATOS (no al reloj) y valida que la ventana este persistida. Ver docs/forward_testing/estrategias/SMC_v3.md |
+| `scripts/oneshot/discontinuar_estrategias_ft.py` | Baja de una estrategia FT (generico): liquida las posiciones abiertas al ultimo cierre con `motivo_salida=ESTRATEGIA_DISCONTINUADA`, `activa=FALSE` y imprime el cierre en numeros para la ficha. `--dry-run` / `--estrategias`. Se uso el 17/9/2026 con FT_COMBO_v1 y FT_SMC_v2. Despues: `ft_compute_equity.py --rebuild`, `ft_cambios.py add` y sacar el bot del .bat |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
 | `src/utils/ft_metricas.py` | Modulo PURO de metricas de riesgo (max DD, Sharpe con IC95%, Sortino, IR, beta) y de trade (expectancy, profit factor, payoff). Sin DB ni config |
 | `src/utils/ft_tramos.py` | Modulo PURO para MEDIR UN CAMBIO: corta la historia de cada estrategia en tramos por `ft_cambios` y compara antes/despues contra un GRUPO DE CONTROL (las no afectadas, mismos dias) y contra el universo, con IC95 de Welch; expectancy en diferencia-en-diferencias. INSUFICIENTE sin numero por debajo de 20 ruedas / 10 ops por lado. Tambien `ic95_bootstrap` (Sortino). Ver docs/forward_testing/METRICAS.md sec. 12 |
@@ -583,6 +840,8 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 | `src/trading/senales_adapter.py` / `ejecucion_bot.py` | Adapters Alpaca: data (masticada->cerebro) + ejecucion (alpaca_client + posiciones_bot*/operaciones_bot*) |
 | `scripts/forward_testing/ft_reporte_html.py` | Reporte HTML autocontenido de FT (reportes/ft_reporte.html). Incluye la seccion "Antes y despues de cada cambio" (lee `ft_cambios`, calcula con `ft_tramos`): un bloque por cambio que corta, tramo vigente por estrategia y marcas. Y la seccion "ML v1 vs v2: por que difieren" (`ft_comparar`), que si falla deja el aviso sin tumbar el reporte |
 | `src/utils/ft_comparar.py` | Modulo PURO de la Etapa 3f: POR QUE DIFIEREN FT_ML_SCANNER_v1 y v2 (no cual rinde mas). Senales sobre las MISMAS filas de alertas_scanner (ambas / solo v1 / solo v2 por rueda, Jaccard, retorno real a 5/20 ruedas y exceso contra el universo de la rueda; decide exclusivas v2 contra exclusivas v1), atribucion (tickers fuera del entrenamiento de la v1, nivel que dio la otra version, sector), operaciones compartidas/exclusivas, oportunidades que dejo afuera el tope y cartera pareada. INSUFICIENTE sin numero: 10 senales EN 5 RUEDAS distintas (14 exclusivas de una sola rueda son una sola observacion de mercado) / 10 ops / 20 ruedas. `tablas()` = el texto comun del .md y el HTML. Ver docs/forward_testing/METRICAS.md sec. 13 |
+| `scripts/forward_testing/ft_analisis_salidas.py` (+ `src/utils/ft_salidas.py`) | Analisis de SALIDAS de FT (solo lee; docs/forward_testing/ANALISIS_SALIDAS.md). `panorama` = que hizo el precio despues de cada salida, contra el universo y en desvios del ticker, IC95 por dia, clasificacion a tiempo/temprano/indiferente vs salir al azar; `balances` = eventos unicos contra todos los balances del tramo; `tech_sector_v1` = combinaciones de la regla, ventana del bug del score 0,0 y que condicion disparo cada salida. Excluye las ventanas de `ft_cambios` que invalidan la historia. Escribe en `reportes/analisis_salidas/AAAAMMDD_<etiqueta>/`. `p0` (la re-simulacion reproduce a FT), `p1` (quitar condiciones) y `p2` (grilla de pesos: 589 reglas re-simuladas vectorizadas, con control interno contra la maquina del paso 0; seleccion 2021-24 / confirmacion 2025-26 / FT de control) son los pasos pre-registrados de TECH_SECTOR_v1. El modulo puro tiene la regla de la v1 como funcion de sus 5 condiciones, las variantes del paso 1 (`VARIANTES`) y la grilla del paso 2 como mascaras de 32 estados (`reglas_grilla`) |
+| `scripts/forward_testing/ft_analisis_salidas_smc.py` (+ `src/utils/ft_salidas_smc.py`) | Analisis de SALIDAS de FT_SMC_v1 (solo lee; ANALISIS_SALIDAS.md sec. 10). Reconstruye rueda por rueda lo que el bot veia en `features_market_structure` (su historia mira al futuro): modulo viejo sobre las ultimas 250 barras, en paralelo, ~26 min, copia en `reportes/analisis_salidas/cache/` que se reusa mientras no haya rueda nueva (`--recalcular`). `--seccion p0` (fidelidad contra FT + anatomia) / `grilla` (96 combinaciones de stop, CHoCH, estructura rota y time stop; todas las senales, muestra con tope de 5 y FT de control) / `todas`. Corta la re-simulacion donde `earnings_historico` deja de estar completa (`fin_balances`). El modulo puro tiene la regla del bot con sus prioridades (`primera_salida`, referencia) y la version vectorizada (`salidas_reglas`), verificadas iguales por test y en cada corrida |
 | `scripts/forward_testing/ft_comparar_ml.py` | Carga y reporte de la comparacion v1 vs v2 (`reportes/ft_comparar_ml.md`; `--desde`, default el inicio de la v2). Solo lee. Los retornos salen de `precios_diarios` por `precio_fecha`, NO de `retorno_Nd_real` (sin llenar desde mayo). Entrenados en la v1 = tickers con precio hasta fin de 2021 (123; `modelo_asignado` da 125). La seccion del HTML usa su `cargar_insumos()` |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
 | `scripts/refresh_earnings_historico.py` | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` (llena faltantes+desactualizados, <=20/corrida), sin flags = incremental, `--ticker X` (alta), `--status`, `--target local\|railway`. Backfill inicial corre en Oracle->Railway (cron temporal); incremental en Windows (target local). Ver docs/earnings_reaccion.md |
@@ -631,7 +890,22 @@ Las criticas:
 - `universo_cambios` -- log de alta/baja (ticker, accion ALTA/BAJA, fecha, sector,
   motivo, detalle JSONB). local+Railway. Auditoria/reproducibilidad point-in-time.
 - `precios_diarios` (OHLCV) | `indicadores_tecnicos`
-- `features_precio_accion` | `features_market_structure`
+- `features_precio_accion` | `features_market_structure` (OJO: su historia mira 10
+  ruedas al futuro, ver patrones criticos). En `features_precio_accion` los PATRONES de
+  vela estan mal definidos y `tendencia_velas` / `rango_expansion` inventan valores en las
+  costuras de backfill (auditado, docs/estructura_velas.md sec. 12); el flujo de volumen
+  y la microestructura de la vela si estan bien
+- `features_estructura` | `features_velas` (LOCAL, 17/9/2026) -- reemplazo en PARALELO
+  de las dos anteriores, sin informacion futura (invariantes). Las 24 columnas de
+  estructura con swings confirmados (`is_sh_N` = se confirmo HOY un swing) para N=5 y
+  N=10, mas 12 de N=3 (36 en total; `estructura.VENTANAS_TABLA`, agregadas para
+  FT_SMC_v3_N3/N5), y 11 patrones clasicos con contexto (hammer/hanging_man,
+  shooting_star/inverted_hammer, envolventes que envuelven, marubozu con direccion).
+  PK (ticker, fecha). Las escribe el Paso 2c (`compute_estructura_velas.py`); agregar
+  una ventana nueva NO rehace la tabla (`--crear` hace ADD COLUMN IF NOT EXISTS, y
+  despues `--completo` rellena). Consumidores de decision: FT_SMC_v3_N5 y FT_SMC_v3_N3
+  (via `ft_scoring_estructura.py`); el scanner, los modelos v1/v2 y el resto de FT
+  siguen en las tablas viejas
 - `alertas_scanner` (col: `scan_fecha`, `precio_fecha`). Desde el 13/9/2026 (Etapa 3d)
   lleva ademas `ml_prob_v2` / `ml_modelo_v2` / `alert_score_v2` / `alert_nivel_v2`:
   el modelo ML v2 calculado EN PARALELO en la misma fila (mismas senales de price
@@ -642,6 +916,11 @@ Las criticas:
   tiene RETENCION de 10 dias (purga verificada post-sync, 20/7/2026); la historia
   completa vive en LOCAL. Sin retencion crecia ~19 MB/dia y detuvo Railway por
   limite de consumo (incidente 20/7).
+  **TECHO DE HISTORIA: las dos arrancan el 2026-04-18** (99 ruedas al 14/9/2026).
+  Lo previo es irrecuperable (Yahoo solo expone la chain vigente) -> **no hay base
+  de 52 semanas para opciones hasta ~abril/2027**. Cualquier ventana de referencia
+  de opciones queda en ~40-60 ruedas y dentro de UN regimen: declararlo. Al cruzar
+  opciones con precio/volumen de la accion (1.300+ ruedas), esta es la limitante.
 - `opciones_sector_zscore_diario` (PCR_vol+vol agregados por sector, z-score)
 - `opciones_pcr_plazo_diario` (PCR vol/OI + muros S/R por ventana corto/medio/largo,
   por ticker; fuente src/utils/opciones_plazo.py). `precio_sub` = precio de
@@ -899,7 +1178,8 @@ docs/checklist_recovery_manual.md, CASO E.
       rodante). Recompute DB->local, sin red. Ver docs/fuentes_fundamentales.md.
 3. status_local.bat         (verificar 0 tickers desactualizados)
 4. cron_diario --step features  (features PA/SMC + scoring_tecnico y features_sector
-                                 de las ultimas 10 ruedas, insumo del scanner)
+                                 de las ultimas 10 ruedas, insumo del scanner;
+                                 2c: features_estructura/velas, no frena si falla)
 5. cron_diario --step scanner   (generar alertas)
 ```
 

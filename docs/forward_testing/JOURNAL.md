@@ -879,6 +879,187 @@ scripts/cron_diario.py (_agregar_v2)
 **Registro**: ft_cambios ml_scanner_v2_lanzamiento (MODELO, estrategia 11, rueda 14/9)
 y scanner_v2_en_paralelo (INFRA, marca sobre la v1, rueda 14/9)
 
+### 2026-09-17 — DECISION
+**Baja de FT_COMBO_v1 y FT_SMC_v2: lo que agregaban no aporta**
+
+Las dos se dieron de baja el mismo dia, con la rueda de datos 2026-09-16: posiciones
+liquidadas al cierre con `motivo_salida = ESTRATEGIA_DISCONTINUADA`, `activa = FALSE`,
+bots fuera de `ft_run_diario.bat` y codigo conservado. Script:
+`scripts/oneshot/discontinuar_estrategias_ft.py`.
+
+**COMBO_v1** (id 5, 28/4 -> 16/9, 98 ruedas). Lo unico que agrega sobre
+TECH_SECTOR_v1 es el `candle_score_5d` como desempate y filtro. Medido de dos formas
+independientes, no aporta:
+- backtest 5 anios con entradas y salidas: COMBO +19,9% (vieja +22,3%) contra
+  TECH_SECTOR_v1 sin velas **+24,4%**; ninguna pasa la regla pre-registrada (2/6 anios);
+- en vivo, mismas 98 ruedas: equity **-0,09%** contra **+2,29%** del control.
+  Por operacion -0,108% (n=452) contra +0,015% (n=750): diferencia -0,123%,
+  IC95 [-0,919%; +0,674%], NO distinguible de cero.
+Debajo de todo, la medicion de fondo: ningun patron de vela tiene exceso distinguible
+de cero sobre 148.000 velas. Equity final 99.901,60 (-0,10%), 477 operaciones, 33,3%
+de aciertos, profit factor 0,996.
+
+**SMC_v2** (id 7, 4/5 -> 16/9, 94 ruedas). Peor equity de las once: **-5,46%** contra
+**+2,36%** de SMC_v1 en los mismos dias. La tabla de salidas es el diagnostico: la
+salida por agotamiento (su cambio estrella, tres condiciones AND) **no disparo ni una
+vez**; sin time stop, la unica salida propia que actuo fue el trailing SL, 15
+operaciones a -4,55% de media (-9.994 USD). Sus tres agregados se apoyan en velas
+agregadas y en estructura sin confirmar, que es lo que la Tarea 23 midio sin valor.
+Nunca tuvo backtest. Expectancy -170,67 USD por operacion, profit factor 0,54.
+
+**Honestidad estadistica**: ninguna de las dos diferencias contra su control es
+distinguible de cero en FT (452 y 27 operaciones). La baja se apoya en el backtest de
+5 anios (COMBO) y en que los insumos no tienen valor medido (las dos), no en el
+resultado de FT.
+
+**Razon / Hipotesis**: una estrategia existe para responder una pregunta; si la
+respuesta esta y es "no aporta", seguir corriendola gasta rutina y ensucia el tablero.
+**Efecto esperado**: 11 bots activos en vez de 11 (salen 2, entran 2). Ninguna otra
+estrategia se ve afectada: no comparten capital ni decisiones.
+**Resultado real**: cerrado. Las fichas quedan como registro con periodo, parametros,
+metricas y motivos.
+**Ref**: docs/forward_testing/estrategias/COMBO_v1.md (seccion Cierre);
+docs/forward_testing/estrategias/SMC_v2.md (seccion Cierre);
+docs/estructura_velas.md sec. 9.3; scripts/oneshot/discontinuar_estrategias_ft.py
+**Registro**: ft_cambios combo_v1_discontinuada (INFRA, estrategia 5, rueda 16/9) y
+smc_v2_discontinuada (INFRA, estrategia 7, rueda 16/9)
+
+### 2026-09-17 — LANZAMIENTO
+**FT_SMC_v3_N5 y FT_SMC_v3_N3: la regla de SMC sobre estructura CONFIRMADA**
+
+Fase 2b de la Tarea 23. Dos instancias nuevas ($100.000 cada una, ids 12 y 13) con la
+MISMA regla de FT_SMC_v1 -- mismo score (se importa de `ft_scoring`, no se
+reimplementa), mismos filtros, mismo trailing SL, mismas salidas, mismo time stop de
+20 dias -- leyendo `features_estructura` (swings confirmados, invariantes) y
+`features_velas` (patrones clasicos con contexto) en vez de
+`features_market_structure` y `features_precio_accion`.
+
+**Por que**: la v1 lee swings de ventana centrada. En vivo no ve el futuro (usa la
+ultima fila), pero esa ultima fila es un swing PROVISIONAL que puede desaparecer
+manana, y su historia no es reproducible. El backtest pre-registrado
+(2021-09 -> 2026-09, universo equal-weight +86,21%) midio:
+
+| Variante | Retorno | Anios que le gana al universo (por expo) | Veredicto |
+|---|---|---|---|
+| SMC_v1 historia vieja N=10 | +61,13% | 4/6 | pasa, con futuro |
+| SMC_v1 historia nueva N=10 | +13,51% | 2/6 | NO pasa |
+| historia nueva N=5 | +59,76% | 4/6 | pasa |
+| historia nueva N=3 | +58,22% | 4/6 | pasa |
+
+**Por que dos y no una**: N=5 y N=3 empatan en el total y difieren por anio (N=3
+flojo en 2024 y 2026, N=5 en 2021). Elegir el mejor mirando el backtest seria
+sobreajuste; estaba pre-registrado que el N se decide en FT.
+
+**Diferencia adicional, del lado correcto**: el lookback de 12 dias se ancla a la
+ultima rueda de DATOS y no a `CURRENT_DATE`. Con el reloj, una corrida atrasada mira
+menos ruedas de las que dice mirar (misma familia que `fecha_datos`).
+
+**Razon / Hipotesis**: la lectura de estructura sirve si la confirmacion es rapida;
+lo que no servia era N=10 sin informacion futura.
+**Efecto esperado**: mas operaciones que la v1 (446 y 521 contra 328 en 5 anios de
+backtest) y entradas distintas. Contra el control (FT_SMC_v1, que sigue corriendo),
+igual o mejor si la hipotesis vale.
+**Resultado real**: (a medir; minimos de muestra 20 ruedas y 10 operaciones por lado.
+Con ~70-100 operaciones por anio, son varios meses)
+**Ref**: docs/forward_testing/estrategias/SMC_v3.md;
+scripts/forward_testing/ft_bot_smc_v3.py; scripts/forward_testing/ft_scoring_estructura.py;
+src/indicators/estructura.py; docs/estructura_velas.md sec. 9.3
+**Registro**: ft_cambios smc_v3_estructura_confirmada (PARAMETRO, estrategias 12 y 13,
+rueda 16/9)
+
+### 2026-09-19 — EXPLORACION
+**Analisis de salidas: panorama de FT y anatomia de TECH_SECTOR_v1**
+Supuesto (propuesta del usuario): la entrada es correcta y no se toca; se mide si salir
+ese dia fue mejor que seguir adentro, contra el universo y en desvios del ticker, con el
+dia como unidad. Sobre 2.047 salidas validas: **ninguna salida de ninguna estrategia se
+distingue de salir al azar** (todos los IC95 incluyen el cero). Los stops asoman como
+"temprano" (no significativo). Las salidas por balance parecen "a tiempo" pero son 111
+eventos (no 350) y la mediana de todos los balances del universo es igual: es la
+temporada. En SMC_v1, CHoCH bajista y estructura rota nunca dispararon (0 de 41).
+TECH_SECTOR_v1: antes del 29/5 su salida era el bug del score 0,0 (357 de 412 salidas no
+debian ocurrir) y la ficha lo habia diagnosticado como problema de la regla; la v2 se
+motivo en ese diagnostico. Con los pesos actuales el score es una regla de si/no: salir
+con <= 3,5 es dejar de cumplir la entrada, y los pesos no mueven ninguna salida. La SMA21
+participa en el 65% de las salidas; el RSI > 68 hace vender acciones que se ponen fuertes.
+**Razon / Hipotesis**: si la entrada no distingue, la salida arma el resultado.
+**Efecto esperado**: ninguno sobre las estrategias (solo lectura).
+**Resultado real**: paso 1 (sin SMA21 como hipotesis principal, sin MACD y sin RSI como
+comparaciones) PRE-REGISTRADO, sin correr.
+**Ref**: docs/forward_testing/ANALISIS_SALIDAS.md; scripts/forward_testing/ft_analisis_salidas.py;
+src/utils/ft_salidas.py; reportes/analisis_salidas/20260919_exploratorio/
+**Registro**: no corresponde (no cambia decisiones)
+
+### 2026-09-19 — RESULTADO
+**TECH_SECTOR_v1, paso 1: sacar la SMA21 de la salida NO mejora**
+Pre-registrado (ANALISIS_SALIDAS.md sec. 6). Paso 0: la regla actual re-simulada sobre las
+341 entradas reales cerradas de FT reproduce la salida real en el 74% (misma rueda), +47
+atrasos de la rutina; de las 41 restantes, 36 son el momento del balance (igual en todas
+las variantes), 4 datos corregidos despues y 1 split. Paso 1: 4.902 entradas del motor
+2021-2026, fijas, salida re-simulada. sin_sma21: diferencia -0,02 pp por operacion IC95
+[-0,16; +0,11], cola p5 -6,37% -> -8,07%, 38% mas dias en posicion -> NO PASA. sin_macd y
+sin_rsi tampoco. En las entradas reales de FT, sin_sma21 habria costado -0,84 pp IC95
+[-1,31; -0,36]. La salida rapida es control de riesgo sin costo en el promedio.
+**Razon / Hipotesis**: la SMA21 dispara el 65% de las salidas por lo rapido que se pierde.
+**Efecto esperado**: ninguno (la v1 no cambia).
+**Resultado real**: refutada. La v1 sigue como esta.
+**Ref**: docs/forward_testing/ANALISIS_SALIDAS.md sec. 7;
+reportes/analisis_salidas/20260919_tech_sector_v1_p1/
+**Registro**: no corresponde (no cambia decisiones)
+
+### 2026-09-19 — RESULTADO
+**TECH_SECTOR_v1, paso 2: ninguna combinacion de pesos mejora la salida**
+Pedido del usuario: medir la SALIDA en si (que hace el precio despues de la orden de
+salida), mover palancas (quitar SMA21/RSI/MACD) y ponderadores (mas peso a SMA50 o al RSI,
+SMA200 no obligatoria), comparar con el FT de control. "Definir pesos es arbitrario":
+grilla. Pre-registrado (ANALISIS_SALIDAS.md sec. 8.1): pesos {0; 1; 1,5; 2; 3} por
+condicion, SMA200 obligatoria o con peso, umbral 3,5 -> 589 reglas distintas, sobre las
+4.955 entradas del motor. Metrica principal: exceso contra el universo en las 10 ruedas
+DESPUES de la salida, pareado contra la regla actual; seleccion 2021-24, confirmacion
+2025-26, FT de control. Control interno: 19.820 de 19.820 salidas iguales a la maquina
+validada. Salida actual: post10 -0,20 / +0,12 / -0,58 pp (seleccion / confirmacion / FT)
+con 7,26 pp de desvio: despues de salir la accion hace lo que el universo.
+**0 de 588 reglas son candidatas**: 215 bajan el post sin empeorar el tramo, pero todas
+empeoran la cola 1,7 a 3,3 puntos, y en 2025-26 ninguna mantiene el tramo. La mejor en la
+seleccion es "mas peso al RSI" (-0,23 pp, IC que apenas excluye el cero) y en la
+confirmacion da +0,02; en FT +0,63 y el tramo -1,00 pp (IC excluye el cero). La grilla es
+una sola dimension: cuanto se queda la posicion (correlacion +0,95 con la cola); el orden
+de la seleccion no se sostiene en la confirmacion (correlacion -0,16).
+**Razon / Hipotesis**: los ponderadores del score, elegidos a mano, podrian estar sacando
+en malos momentos.
+**Efecto esperado**: ninguno (la v1 no cambia).
+**Resultado real**: refutada. Los pesos no eligen el momento de salir, eligen cuanto se
+queda; salir mas rapido mejora la cola en los tres periodos y el tramo solo en 2026. La v1
+sigue como esta.
+**Ref**: docs/forward_testing/ANALISIS_SALIDAS.md sec. 8;
+reportes/analisis_salidas/20260919_tech_sector_v1_p2/
+**Registro**: no corresponde (no cambia decisiones)
+
+### 2026-09-19 — RESULTADO
+**SMC_v1: ninguna combinacion de salida se confirma; el time stop corto es la mejor pista**
+Mismo metodo que TECH_SECTOR_v1, pedido del usuario (con el stop como palanca: aca es la
+salida estructural, 29% de las salidas en FT). Pre-registrado (ANALISIS_SALIDAS.md sec. 10.4).
+La historia de `features_market_structure` mira al futuro: se reconstruyo, rueda por rueda,
+lo que el bot veia (26 min). Paso 0: ultima rueda = tabla 200/200, entradas 45/46, stop final
+27/27. El paso 0 encontro que `earnings_historico` esta completa hasta el 20/7/2026 (de
+julio-agosto, 86 de 200 tickers) -> enmienda antes de correr la grilla: la re-simulacion se
+corta el 13/7. Grilla: stop (trailing 10 / trailing 5 / fijo / sin) x CHoCH x estructura rota
+x time stop (10/15/20/30/45/sin), 96 reglas sobre 920 entradas (todas las senales) + 503 con
+el tope de 5 + 20 de FT. CHoCH bajista salio primero 1 vez en 920 (el stop va antes);
+estructura rota 19. Seleccion: 50 candidatas; las 3 elegidas son la misma regla (time stop
+10 dias + trailing 5). Confirmacion: post -0,31 IC95 [-0,89; +0,27] -> NO SE CONFIRMA. Time
+stop de 10 dias: seleccion post -0,49 / tramo +0,31 (IC excluyen el cero), confirmacion
+-0,39 / +0,26 (no), con tope -0,42 / +0,18, cola mejor en todas. Sin stop: cola -2,8 puntos.
+**Razon / Hipotesis**: el time stop y las salidas estructurales de SMC_v1 no se habian
+medido nunca con una muestra (el JOURNAL del 18/7 miro 14 time stops).
+**Efecto esperado**: ninguno (la v1 no cambia).
+**Resultado real**: ninguna regla pasa la vara. El time stop corto va al mismo lado en los dos
+periodos sin alcanzar; queda como hipotesis. FT no la podria confirmar (~1.000 operaciones).
+**Correccion**: los numeros del FT de control del analisis de TECH_SECTOR_v1 quedan sin
+respaldo (27 de sus diferencias "por balance" eran anuncios que faltan en la tabla).
+**Ref**: docs/forward_testing/ANALISIS_SALIDAS.md sec. 10 y 7.1;
+reportes/analisis_salidas/20260919_smc_v1/
+**Registro**: no corresponde (no cambia decisiones)
+
 ---
 
 ## Template de entrada
