@@ -957,3 +957,28 @@ control; en SMC_v1 la confirmacion ganaria ~40-45 entradas (+10%) y, para que el
 observado. Queda pendiente para cuando se quiera decidir el time stop corto. Aparte, conviene
 poner al dia `earnings_historico` (carga incremental), que alimenta tambien la vista
 "Reaccion a balances" del dashboard.
+
+### 10.8 Cierre (19/9/2026)
+
+**Decidido con el usuario: el time stop de 10 dias queda como HIPOTESIS y no se lleva a
+FT.** Motivo: el esfuerzo no se paga. FT no puede confirmarla (~1.000 operaciones contra
+las ~100 por anio que hace SMC_v1), la confirmacion 2025-26 no alcanzo la vara
+pre-registrada, y completar las fechas de balance moveria la muestra ~10% cuando haria
+falta 3-4 veces el efecto observado. Queda escrita con sus numeros por si aparece una razon
+nueva para abrirla: seleccion post -0,49 / tramo +0,31 (IC excluyen el cero), confirmacion
+-0,39 / +0,26, cola mejor en todos los cortes.
+
+**Decidido con el usuario: no se aplica el metodo a las demas estrategias por ahora.** Las
+dos analizadas (TECH_SECTOR_v1 y SMC_v1) cubren las dos familias de salida que existen en
+FT -- score con umbral y lista de prioridades estructural -- y las dos dieron lo mismo:
+despues de salir, la accion hace lo que el universo. El metodo y las herramientas quedan
+listos para reusar (`ft_analisis_salidas*.py` + los modulos puros), pero no hay hipotesis
+que justifique correrlos en una tercera.
+
+Lo que esta linea de trabajo deja para el resto del proyecto esta en CLAUDE.md
+("Analisis de salidas FT") y vale mas que el resultado puntual: cruzar con `ft_cambios`
+antes de leer historia, que un score ponderado con umbral es una regla de si/no, que una
+relajacion de salida se juzga por la COLA, y leer con seleccion y confirmacion separadas
+cuando se prueban cientos de reglas.
+
+**Tarea CERRADA.** No queda nada pendiente de esta linea.

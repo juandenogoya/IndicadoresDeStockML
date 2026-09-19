@@ -8,8 +8,10 @@
 **Analisis de salidas (19/9/2026, pre-registrado)**: ninguna de 96 combinaciones de stop,
 CHoCH, estructura rota y time stop se confirma. CHOCH_BEAR y ESTRUCTURA_ROTA casi nunca
 salen primero (1 y 19 de 920 en 2021-2026): el trailing stop esta en el mismo swing low y va
-antes. Un time stop de 10 dias va mejor en los dos periodos sin alcanzar la vara. La salida
-queda como esta. Detalle: [../ANALISIS_SALIDAS.md](../ANALISIS_SALIDAS.md) sec. 10.
+antes. Un time stop de 10 dias va mejor en los dos periodos sin alcanzar la vara: quedo
+como HIPOTESIS y NO se lleva a FT (decision del usuario, 19/9/2026 -- FT no podria
+confirmarla: pide ~1.000 operaciones y la v1 hace ~100 por anio). La salida queda como
+esta. Detalle: [../ANALISIS_SALIDAS.md](../ANALISIS_SALIDAS.md) sec. 10, cierre en 10.8.
 
 ---
 

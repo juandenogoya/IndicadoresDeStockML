@@ -1060,6 +1060,20 @@ respaldo (27 de sus diferencias "por balance" eran anuncios que faltan en la tab
 reportes/analisis_salidas/20260919_smc_v1/
 **Registro**: no corresponde (no cambia decisiones)
 
+### 2026-09-19 — DECISION
+**Se cierra el analisis de salidas: el time stop corto queda como hipotesis**
+Decision del usuario sobre los dos pendientes que dejaba la Tarea 24:
+1. **Time stop de 10 dias en SMC_v1: NO va a FT.** Queda documentado como hipotesis con
+   sus numeros. FT no puede confirmarla (~1.000 operaciones contra ~100/anio de la v1) y la
+   confirmacion 2025-26 no alcanzo la vara pre-registrada. Ninguna regla de produccion se
+   toca; no corresponde registro en `ft_cambios`.
+2. **No se aplica el metodo a otra estrategia por ahora.** Las dos analizadas cubren las dos
+   familias de salida que existen en FT (score con umbral y lista de prioridades
+   estructural) y dieron lo mismo. Las herramientas quedan listas para reusar.
+**Efecto esperado**: ninguno (nada cambia en produccion).
+**Ref**: docs/forward_testing/ANALISIS_SALIDAS.md sec. 10.8
+**Registro**: no corresponde (no cambia decisiones)
+
 ---
 
 ## Template de entrada
