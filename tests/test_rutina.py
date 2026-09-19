@@ -22,14 +22,27 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # ── Orden y politica ──────────────────────────────────────────────────────────
 
 def test_orden_de_la_rutina_y_politica_acordada():
-    assert [p.clave for p in R.PASOS] == ["sync", "paso1", "paso2", "paso3", "ft"]
+    assert [p.clave for p in R.PASOS] == ["sync", "paso1", "paso2", "paso3", "ft",
+                                          "earnings"]
     politica = {p.clave: p.si_falla for p in R.PASOS}
     assert politica == {"sync": R.SEGUIR, "paso1": R.FRENAR, "paso2": R.FRENAR,
-                        "paso3": R.FRENAR, "ft": R.INFORMAR}
+                        "paso3": R.FRENAR, "ft": R.INFORMAR,
+                        "earnings": R.INFORMAR}
+
+
+def test_earnings_va_ultimo_y_no_frena_a_nadie():
+    """Nada de la rutina espera a earnings_historico: no es insumo de decisiones
+    (el filtro de balances de los bots lee earnings_calendar) y es el paso mas
+    lento por la cuota de Alpha Vantage."""
+    assert R.PASOS[-1].clave == "earnings"
+    assert R.debe_seguir(R.paso("earnings"), R.ERROR)
+    # su fecha de DATOS es la del anuncio, no la de la corrida
+    assert R.paso("earnings").columna == "announcement_date"
 
 
 def test_retomar_desde_un_paso():
-    assert [p.clave for p in R.pasos_desde("paso2")] == ["paso2", "paso3", "ft"]
+    assert [p.clave for p in R.pasos_desde("paso2")] == ["paso2", "paso3", "ft",
+                                                        "earnings"]
     with pytest.raises(ValueError):
         R.pasos_desde("paso9")
 

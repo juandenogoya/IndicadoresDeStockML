@@ -22,11 +22,21 @@ RESTRICCION DE CUOTA (key free): 25 llamadas/dia, 5/min. El backfill de ~200
 TRES CASOS, UN MECANISMO (todos "conseguir 1 llamada por ticker que lo necesita"):
     1. backfill inicial  -> tickers SIN filas en earnings_historico.
     2. ticker nuevo      -> idem: al darlo de alta no tiene filas, entra solo.
-    3. incremental       -> tickers cuya proxima fecha (earnings_calendar) ya
-                            paso desde el ultimo fetch -> re-consulta para
-                            apendicear el Q recien reportado.
+    3. incremental       -> tickers que DEBEN un balance segun su propia cadencia
+                            de anuncios -> re-consulta para apendicear el Q nuevo.
 
-    Prioridad: primero los SIN historia (1 y 2), luego los desactualizados (3).
+    Prioridad: primero los SIN historia (1 y 2), luego los atrasados (3), del mas
+    atrasado al menos. Por eso --backfill y el incremental comparten la cola: la
+    unica diferencia entre los tres casos es cuantos quedan por traer.
+
+COMO SE DETECTA EL ATRASO (cambiado 19/9/2026; ver src/utils/earnings_cobertura.py):
+    Antes se preguntaba si earnings_calendar.earnings_date ya habia pasado. Esa
+    tabla guarda SOLO LA PROXIMA fecha: el dia que la empresa reporta, el refresh
+    semanal la reemplaza por la del trimestre siguiente y el ticker no vuelve a
+    aparecer nunca. Medido el 19/9/2026: --status decia "Desactualizados: 0" con
+    108 de 200 tickers debiendo un balance y la tabla frenada en el 3/8. Ahora
+    manda la CADENCIA PROPIA de cada ticker (mediana de dias entre sus anuncios);
+    el calendario se sigue mirando como senal ADICIONAL cuando acierta la ventana.
 
 LOCAL-only. Como AV devuelve historia completa por llamada, cada fetch REEMPLAZA
 la historia del ticker (upsert por (ticker, fiscal_period_end)); idempotente.
@@ -52,11 +62,13 @@ sys.path.insert(0, ROOT)
 import requests
 from sqlalchemy import create_engine, text
 
+from src.utils import earnings_cobertura as cob
+
 SEP = "=" * 64
 
 AV_URL          = "https://www.alphavantage.co/query"
 DESDE_ANIO      = 2020    # historia minima que queremos (announcement_date >= 2020-01-01)
-MAX_CALLS_DEF   = 20      # margen bajo el tope free de 25/dia
+MAX_CALLS_DEF   = cob.MAX_CALLS_DIA   # margen bajo el tope free de 25/dia (UNA definicion)
 PAUSA_SEG       = 13      # >= 12s entre llamadas => <= 5/min (limite free)
 HTTP_TIMEOUT    = 30
 
@@ -150,28 +162,13 @@ def _api_key() -> str:
 
 # ── Seleccion de tickers a traer ──────────────────────────────────────────────
 
-def universo_local(engine) -> list[str]:
-    with engine.connect() as conn:
-        return [r[0] for r in conn.execute(text(
-            "SELECT ticker FROM activos WHERE activo = TRUE ORDER BY ticker"
-        )).fetchall()]
-
-
-def tickers_sin_historia(engine) -> list[str]:
-    """Universo vivo que NO tiene ninguna fila en earnings_historico."""
-    with engine.connect() as conn:
-        return [r[0] for r in conn.execute(text("""
-            SELECT a.ticker FROM activos a
-            LEFT JOIN earnings_historico e ON e.ticker = a.ticker
-            WHERE a.activo = TRUE AND e.ticker IS NULL
-            ORDER BY a.ticker
-        """)).fetchall()]
-
-
-def tickers_desactualizados(engine) -> list[str]:
+def por_calendario(engine) -> list[str]:
     """
-    Tickers CON historia cuya proxima fecha conocida (earnings_calendar) ya paso
-    respecto de nuestra ultima announcement_date -> hay un Q nuevo por traer.
+    Senal ADICIONAL: tickers cuya proxima fecha conocida (earnings_calendar) ya
+    paso respecto de nuestra ultima announcement_date. Acierta solo si se mira
+    entre el anuncio y el proximo refresh semanal del calendario (que empuja la
+    fecha al trimestre siguiente), asi que no alcanza sola -- pero cuando dispara
+    es exacta y cuesta una query.
     """
     with engine.connect() as conn:
         return [r[0] for r in conn.execute(text("""
@@ -186,6 +183,39 @@ def tickers_desactualizados(engine) -> list[str]:
               AND c.earnings_date  > e.md               -- y es posterior a lo que tenemos
             ORDER BY a.ticker
         """)).fetchall()]
+
+
+def historia_por_ticker(engine) -> dict[str, list]:
+    """
+    {ticker: [announcement_date, ...]} de todo el universo VIVO. Los tickers sin
+    filas entran con lista vacia: la cobertura los cuenta como "sin historia".
+    """
+    with engine.connect() as conn:
+        universo = [r[0] for r in conn.execute(text(
+            "SELECT ticker FROM activos WHERE activo = TRUE ORDER BY ticker"
+        )).fetchall()]
+        filas = conn.execute(text("""
+            SELECT e.ticker, e.announcement_date
+            FROM earnings_historico e
+            JOIN activos a ON a.ticker = e.ticker AND a.activo = TRUE
+        """)).fetchall()
+    hist = {t: [] for t in universo}
+    for t, d in filas:
+        hist[t].append(d)
+    return hist
+
+
+def cola_pendiente(engine) -> tuple[list[str], "cob.Cobertura"]:
+    """
+    A quien llamar y por que. Cadencia propia (manda) + la senal del calendario
+    para los que justo cayeron en la ventana buena. Sin duplicados y en orden:
+    primero los que no tienen NADA, despues del mas atrasado al menos.
+    """
+    c = cob.cobertura(historia_por_ticker(engine), date.today())
+    cola = cob.a_traer(c)
+    ya = set(cola)
+    cola += [t for t in por_calendario(engine) if t not in ya]
+    return cola, c
 
 
 # ── Alpha Vantage ─────────────────────────────────────────────────────────────
@@ -276,8 +306,7 @@ def procesar(engine, tickers: list[str], key: str, max_calls: int,
 
 
 def cmd_status(engine):
-    sin = tickers_sin_historia(engine)
-    desa = tickers_desactualizados(engine)
+    cola, c = cola_pendiente(engine)
     with engine.connect() as conn:
         con = conn.execute(text(
             "SELECT COUNT(DISTINCT ticker) FROM earnings_historico")).scalar()
@@ -285,13 +314,12 @@ def cmd_status(engine):
         rango = conn.execute(text(
             "SELECT MIN(announcement_date), MAX(announcement_date) "
             "FROM earnings_historico")).fetchone()
-    log(f"Con historia    : {con} tickers ({tot} filas, "
-        f"{rango[0]} -> {rango[1]})")
-    log(f"Sin historia    : {len(sin)}  {sin[:12]}{' ...' if len(sin) > 12 else ''}")
-    log(f"Desactualizados : {len(desa)}  {desa[:12]}{' ...' if len(desa) > 12 else ''}")
-    dias = -(-len(sin) // MAX_CALLS_DEF) if sin else 0
-    if sin:
-        log(f"Backfill restante: ~{dias} corridas de {MAX_CALLS_DEF} (key free 25/dia).")
+    log(f"Con historia    : {con} tickers ({tot} filas, {rango[0]} -> {rango[1]})")
+    for linea in cob.resumen(c):
+        log(linea)
+    extra = len(cola) - c.pendientes
+    if extra:
+        log(f"(+{extra} que marca earnings_calendar y la cadencia todavia no)")
 
 
 def main():
@@ -329,13 +357,14 @@ def main():
     if args.ticker:
         cola = [args.ticker.upper()]
         modo = f"ticker puntual {cola[0]}"
-    elif args.backfill:
-        # Prioridad: primero los que no tienen NADA, luego los desactualizados.
-        cola = tickers_sin_historia(engine) + tickers_desactualizados(engine)
-        modo = "backfill (sin historia + desactualizados)"
     else:
-        cola = tickers_desactualizados(engine)
-        modo = "incremental (desactualizados)"
+        # Una sola cola para el backfill y el incremental: la diferencia entre
+        # los dos casos es cuantos quedan, no que se busca (ver docstring).
+        cola, c = cola_pendiente(engine)
+        modo = "backfill" if args.backfill else "incremental"
+        modo += " (sin historia + atrasados por cadencia propia)"
+        for linea in cob.resumen(c):
+            log(linea)
 
     log(f"Modo: {modo}")
     if not cola:

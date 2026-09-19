@@ -43,12 +43,56 @@ import pandas as pd
 import streamlit as st
 
 from src.data.database import query_df
+from src.utils import earnings_cobertura as ec
 
 N_DEFAULT  = 7    # ruedas por lado (pre y post) por defecto; slider 1..10
 VOL_BASE_N = 50   # ruedas previas a la ventana para el volumen promedio de ref.
 
 
 # -- Datos --------------------------------------------------------------------
+
+@st.cache_data(show_spinner=False, ttl=600)
+def _cobertura():
+    """
+    Cuan al dia esta earnings_historico, con la MISMA regla que usa el script que
+    la puebla (src/utils/earnings_cobertura): cada ticker debe un balance cuando
+    paso mas que su propia cadencia de anuncios. La vista lo muestra porque un
+    trimestre que falta no se distingue de un trimestre que no existe: sin esto,
+    la pantalla se ve igual de completa con la tabla atrasada.
+    """
+    df = query_df(
+        "SELECT e.ticker, e.announcement_date FROM earnings_historico e "
+        "JOIN activos a ON a.ticker = e.ticker AND a.activo = TRUE", {})
+    universo = query_df("SELECT ticker FROM activos WHERE activo = TRUE", {})
+    hist = {t: [] for t in universo["ticker"]} if not universo.empty else {}
+    for t, d in zip(df.get("ticker", []), df.get("announcement_date", [])):
+        hist.setdefault(t, []).append(d)
+    return ec.cobertura(hist, pd.Timestamp.today().date())
+
+
+def _aviso_cobertura(ticker: str):
+    """Una linea de estado arriba de la vista, y el caso puntual del ticker."""
+    try:
+        cob = _cobertura()
+    except Exception:
+        return          # el estado de la tabla no puede tumbar la vista
+    if cob.al_dia:
+        st.caption(f"Fechas de balances al dia (ultimo anuncio "
+                   f"{cob.al_dia_hasta:%d/%m/%Y}).")
+        return
+    st.caption(f"Fechas de balances: ultimo anuncio cargado "
+               f"{cob.al_dia_hasta:%d/%m/%Y} | {len(cob.deben)} de {cob.total} "
+               f"tickers deben un balance ({cob.corridas} corrida(s) de "
+               f"{ec.MAX_CALLS_DIA}; la rutina nocturna las hace sola).")
+    e = cob.estados.get(ticker)
+    if e is not None and e.debe and e.ultimo is not None:
+        st.warning(
+            f"A {ticker} le falta al menos un balance: el ultimo que tenemos es "
+            f"del {e.ultimo:%d/%m/%Y}, hace {e.dias} dias, y reporta cada "
+            f"~{e.cadencia:.0f}. Los trimestres que faltan NO estan abajo.\n\n"
+            f"Para traerlo ya: `python scripts/refresh_earnings_historico.py "
+            f"--ticker {ticker}`")
+
 
 def _eventos(ticker: str) -> pd.DataFrame:
     return query_df(
@@ -185,6 +229,8 @@ def construir_reaccion(tickers: list):
     # en el informe o en el radar llega ya seleccionado aca (y viceversa).
     ticker = st.sidebar.selectbox("Ticker", tickers, key="ticker",
                                   bind="query-params")
+
+    _aviso_cobertura(ticker)
 
     ev = _eventos(ticker)
     if ev.empty:

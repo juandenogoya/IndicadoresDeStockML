@@ -281,6 +281,14 @@ def correr_paso(p, log, origen, rutina_id=None, dir_trabajo=None, extra=None):
                                  al_leer=_captar_log_ft)
             res["resultado"], res["notas"] = R.clasificar_ft(exit_code)
 
+        elif p.clave == "earnings":
+            # Incremental cuota-aware: trae hasta --max-calls tickers de los que
+            # DEBEN un balance segun su cadencia (src/utils/earnings_cobertura).
+            # Se corta limpio cuando Alpha Vantage avisa que se acabo la cuota.
+            exit_code = ejecutar([PYTHON, _script("refresh_earnings_historico.py"),
+                                  *(extra or [])], log)
+            res["resultado"], res["notas"] = R.clasificar_generico(exit_code)
+
         else:
             raise ValueError(f"paso sin ejecutor: {p.clave}")
     except KeyboardInterrupt:

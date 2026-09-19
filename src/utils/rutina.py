@@ -75,6 +75,13 @@ PASOS = (
          "alertas_scanner", "precio_fecha", "cron_paso3_scanner.bat"),
     Paso("ft", "Forward testing", INFORMAR,
          "ft_equity_diaria", "fecha", "ft_run_diario.bat"),
+    # Va ULTIMO y nunca frena: earnings_historico no es insumo de ninguna decision
+    # (el filtro de balances de los bots lee earnings_calendar), alimenta al
+    # dashboard y a los analisis. Es el paso mas lento en relacion a lo que hace
+    # (~4 min: la key free de Alpha Vantage exige 13s entre llamadas), asi que
+    # nada deberia esperarlo. Con 20 llamadas por noche se pone al dia solo.
+    Paso("earnings", "Fechas de balances (earnings_historico)", INFORMAR,
+         "earnings_historico", "announcement_date", "refresh_earnings_historico.bat"),
 )
 
 # Pasos que se ejecutan sueltos pero no forman parte de la secuencia

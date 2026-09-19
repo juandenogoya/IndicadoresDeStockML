@@ -60,7 +60,11 @@ Documentacion que existe hoy en docs/:
                             desde Alpha Vantage (la variable que faltaba: no la
                             daban earnings_calendar ni fundamentales), regla del
                             dia 0 (pre/post-market), backfill reanudable/cuota-
-                            aware (key free 25/dia). LOCAL-only.
+                            aware (key free 25/dia). LOCAL-only. Incluye el
+                            diagnostico del 19/9/2026: el incremental era CIEGO
+                            (miraba earnings_calendar, que solo guarda la PROXIMA
+                            fecha) y por que la deteccion pasa a ser por CADENCIA
+                            propia, mas el paso nocturno que la mantiene al dia.
 - docs/gestion_universo.md : alta/baja de tickers del universo (Tarea 14).
                             Fuente unica via tabla activos (src/data/universo),
                             CLI universo.py (add/remove/list), insight del backfill
@@ -528,10 +532,36 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
   swing low y va antes. El time stop de 10 dias (hoy 20) mejora post y tramo en 2021-24 con IC
   que excluye el cero y va al mismo lado en 2025-26 sin alcanzar; hipotesis sin confirmar.
 - **`earnings_historico` puede ir atrasada** (carga con cuota de Alpha Vantage): al 19/9/2026
-  esta completa hasta el 20/7 (julio-agosto: 86 de 200 tickers). Una re-simulacion que marca
+  estaba completa hasta el 20/7 (julio-agosto: 86 de 200 tickers). Una re-simulacion que marca
   balances desde ahi atraviesa balances que el bot evita, y no igual en todas las reglas:
   cortarla antes (`ft_analisis_salidas_smc.fin_balances`). Invalido el FT de control del
-  analisis de TECH_SECTOR_v1 (sec. 7.1 del doc).
+  analisis de TECH_SECTOR_v1 (sec. 7.1 del doc). ARREGLADO el 19/9 (ver el patron siguiente);
+  antes de re-correr un analisis con balances, mirar `--status`.
+
+### Una tabla de EVENTOS se vigila por CADENCIA, no por antiguedad (19/9/2026)
+- `earnings_historico` quedo 6 semanas atrasada mientras su propio diagnostico decia
+  "Desactualizados: 0". La deteccion preguntaba si `earnings_calendar.earnings_date` ya
+  habia pasado, pero esa tabla guarda **solo la PROXIMA fecha** de cada ticker y se refresca
+  semanalmente: el dia que la empresa reporta, el refresh la empuja al trimestre siguiente y
+  el ticker no vuelve a figurar como desactualizado NUNCA. La ventana de deteccion era el
+  hueco entre el anuncio y el proximo refresh. Corriendo el incremental todas las noches
+  tampoco habria traido nada.
+- **Entre temporadas de balances, "vieja" es lo correcto**: por eso una tabla de eventos no
+  se vigila con un umbral de antiguedad (y por eso `earnings_historico` NO entra en
+  `estado_pipeline`, que mide alineacion de ruedas). Se vigila con la CADENCIA PROPIA de
+  cada fila-sujeto: la mediana de dias entre sus eventos, que es un hecho suyo. Modulo puro
+  `src/utils/earnings_cobertura.py`, FUENTE UNICA del script y del dashboard. Mediana y no
+  promedio (un cierre fiscal corrido deja un intervalo raro); margen 15%; con cadencia FIJA
+  un semestral daria falso positivo todos los trimestres.
+- Misma familia que `scan_fecha`, `features_sector` y `fecha_datos`: un guard que nunca falla
+  y devuelve un numero plausible. Si un diagnostico da 0 problemas, comprobar que PUEDE dar
+  distinto de 0.
+- El dato faltante no avisa solo: **la vista se ve igual de completa con la tabla atrasada**
+  (un trimestre que falta no se distingue de uno que no existe). Por eso la vista ahora
+  muestra la cobertura y avisa si al ticker elegido le falta un balance.
+- Nasdaq sirve para dias PASADOS y no tiene cuota, pero no reemplaza a Alpha Vantage aca:
+  devuelve el trimestre fiscal como MES y `time` siempre `'time-not-supplied'` -> se pierde
+  `report_time` y con el la regla del dia 0 (post-market = la rueda siguiente).
 
 ### alertas_scanner: `scan_fecha` NO es la fecha de datos (incidente 2/9/2026)
 - La fecha de datos de una alerta es **`precio_fecha`** (sobre que cierre se
@@ -810,7 +840,7 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `scripts/oneshot/clean_railway_may12.py` | One-shot one-off (archivado en scripts/oneshot/) |
 | `scripts/manual/check_fecha.py` | CLI valida dia habil NYSE |
 | `scripts/manual/ft_run_diario.bat` | Corre los 11 bots ACTIVOS de Forward Testing en local (FT_ML_SCANNER_v2 desde el 14/9/2026, bloque [1b/11], sale 1 sin operar si el scanner no trajo la v2; FT_SMC_v3_N5/N3 desde el 17/9/2026, bloques [3b/11] y [3c/11]; los bloques de COMBO_v1 y SMC_v2 quedaron comentados con el motivo de la baja) + reporte HTML + precomputo de veredictos del dashboard. El push de senales_bot_diaria se saco el 13/9/2026 (bots Alpaca apagados). Sale 0 OK / 1 el guard freno / 2 algun bot fallo. Con `RUTINA_ORQUESTADA=1` (lo setea rutina_diaria) no pausa ni se registra solo; suelto se anota en `rutina_corridas` |
-| `scripts/manual/rutina_diaria.bat` (+ `.py`) | La rutina diaria COMPLETA (13/9/2026): sync opciones + purga, Paso 1, Paso 2, Paso 3 y ft_run_diario, en orden. Si falla el Paso 1 con mas de 10 tickers pendientes, el 2 o el 3, FRENA antes de los bots; el sync sigue. Log por paso en `logs/rutina/AAAAMMDD_HHMM/` + `resumen.txt`, registro en `rutina_corridas`, resumen por Telegram con los tickers pendientes y su ultimo dato. `--desde pasoN` / `--sin-telegram`. El .py tambien es el ejecutor de cada .bat de paso (`paso <clave>`, `correr --nombre recovery_incremental`): codigo de salida REAL (0 OK, 2 avisos, 1 error) |
+| `scripts/manual/rutina_diaria.bat` (+ `.py`) | La rutina diaria COMPLETA (13/9/2026): sync opciones + purga, Paso 1, Paso 2, Paso 3, ft_run_diario y (19/9/2026) `earnings`, en orden. Si falla el Paso 1 con mas de 10 tickers pendientes, el 2 o el 3, FRENA antes de los bots; el sync sigue. Log por paso en `logs/rutina/AAAAMMDD_HHMM/` + `resumen.txt`, registro en `rutina_corridas`, resumen por Telegram con los tickers pendientes y su ultimo dato. `--desde pasoN` / `--sin-telegram`. El .py tambien es el ejecutor de cada .bat de paso (`paso <clave>`, `correr --nombre recovery_incremental`): codigo de salida REAL (0 OK, 2 avisos, 1 error) |
 | `src/utils/rutina.py` | Modulo PURO de la rutina: orden de pasos, politica ante una falla, clasificacion del Paso 1 (PARCIAL vs caida, via `recovery_incremental.py --resumen-json`), resumen de texto y mensaje de Telegram |
 | `scripts/manual/chequeo_rutina.py` | Guard de coherencia de la rutina diaria (LOCAL). Distingue ANTIGUEDAD (todo viejo pero alineado = la convencion del proyecto, NO frena) de MEZCLA (tablas con fechas distintas entre si = decisiones con datos cruzados, SI frena). Reporta que .bat arregla cada tabla y aparte el caso IRRECUPERABLE (falta el crudo de opciones). Lo corre `ft_run_diario.bat` despues del paso [0b] y ANTES del primer bot; `set FT_IGNORAR_FRESCURA=1` lo saltea. Motor puro: `src/utils/estado_pipeline.py`. Informa ademas los HUECOS en el medio de la serie (ultimas 252 ruedas de precios/indicadores/features; avisa, no frena; excepciones verificadas en `HUECOS_CONOCIDOS`; `--solo-huecos`) y la ultima corrida de cada paso (`rutina_corridas`) |
 | `src/utils/contexto_sectorial.py` | Modulo PURO (stdlib) con los sectores que quedan SIN features sectoriales (Real Estate n=3, Utilities n=1) y la marca "Sin contexto sectorial". FUENTE UNICA: la importan el productor (`sector_features` arma su WHERE desde la constante), `feature_calculator` (las 11 columnas), el scanner, Telegram y el MCP. La marca se DERIVA del sector en cada lectura -- sin columna nueva y retroactiva sobre toda la historia de `alertas_scanner` |
@@ -844,8 +874,9 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `scripts/forward_testing/ft_analisis_salidas_smc.py` (+ `src/utils/ft_salidas_smc.py`) | Analisis de SALIDAS de FT_SMC_v1 (solo lee; ANALISIS_SALIDAS.md sec. 10). Reconstruye rueda por rueda lo que el bot veia en `features_market_structure` (su historia mira al futuro): modulo viejo sobre las ultimas 250 barras, en paralelo, ~26 min, copia en `reportes/analisis_salidas/cache/` que se reusa mientras no haya rueda nueva (`--recalcular`). `--seccion p0` (fidelidad contra FT + anatomia) / `grilla` (96 combinaciones de stop, CHoCH, estructura rota y time stop; todas las senales, muestra con tope de 5 y FT de control) / `todas`. Corta la re-simulacion donde `earnings_historico` deja de estar completa (`fin_balances`). El modulo puro tiene la regla del bot con sus prioridades (`primera_salida`, referencia) y la version vectorizada (`salidas_reglas`), verificadas iguales por test y en cada corrida |
 | `scripts/forward_testing/ft_comparar_ml.py` | Carga y reporte de la comparacion v1 vs v2 (`reportes/ft_comparar_ml.md`; `--desde`, default el inicio de la v2). Solo lee. Los retornos salen de `precios_diarios` por `precio_fecha`, NO de `retorno_Nd_real` (sin llenar desde mayo). Entrenados en la v1 = tickers con precio hasta fin de 2021 (123; `modelo_asignado` da 125). La seccion del HTML usa su `cargar_insumos()` |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
-| `scripts/refresh_earnings_historico.py` | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` (llena faltantes+desactualizados, <=20/corrida), sin flags = incremental, `--ticker X` (alta), `--status`, `--target local\|railway`. Backfill inicial corre en Oracle->Railway (cron temporal); incremental en Windows (target local). Ver docs/earnings_reaccion.md |
-| `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market |
+| `scripts/refresh_earnings_historico.py` (+ `scripts/manual/refresh_earnings_historico.bat`) | Puebla earnings_historico (fecha de anuncio por Q) desde Alpha Vantage. REANUDABLE y cuota-aware (key free 25/dia, 5/min): `--backfill` y el incremental comparten UNA cola (sin historia primero, despues del mas atrasado al menos), `--ticker X` (alta), `--status` (informa la cobertura real), `--target local\|railway`. Desde el 19/9/2026 corre SOLO como ultimo paso de la rutina (paso `earnings`, INFORMAR: nunca frena; ~4,5 min por las pausas de 13s). Ver docs/earnings_reaccion.md |
+| `src/utils/earnings_cobertura.py` | Modulo PURO (stdlib): quien DEBE un balance y cuan al dia esta `earnings_historico`, por CADENCIA propia de cada ticker (mediana de dias entre sus anuncios, margen 15%) y no por antiguedad absoluta. `cadencia` / `estado` / `cobertura` / `a_traer` / `resumen`. FUENTE UNICA del script que la puebla y de la vista del dashboard. Ver el patron critico "Una tabla de EVENTOS se vigila por CADENCIA" |
+| `dashboard/earnings_reaccion.py` | Vista "Reaccion a balances": ventana simetrica pre+post (N ruedas por lado, 1-10) alrededor del balance. 3 paneles (precio USD, precio %, volumen x prom 50). Filtros por anio y trimestre (Q1-Q4). Dia 0 ajustado por pre/post-market. Muestra la COBERTURA de la tabla y avisa si al ticker elegido le falta un balance (`_aviso_cobertura`, via src/utils/earnings_cobertura): un trimestre que falta no se distingue de uno que no existe |
 | `scripts/manual/refresh_fundamentales.bat` | Refresh fundamentales (income/balance/cashflow/valuation) desde yahooquery. LOCAL-only, manual. ~3.5 min. Encadena 5 pasos derivados: ratios -> ticker_pais -> vs_sector -> **multiplos_px -> vs_sector --valuacion-px** (los 2 ultimos agregados 27/8/2026: sin ellos el trimestre nuevo queda sin `*_px` y el dashboard muestra la valuacion vacia). `set REFRESH_NO_PAUSE=1` para correrlo desatendido |
 | `scripts/refresh_fundamentales.py` | Motor del refresh fundamentales (4 tablas, 8 Q, UPSERT con restatements) |
 | `scripts/manual/refresh_fundamentales_sec.bat` (+ `scripts/refresh_fundamentales_sec.py`) | Refresh de la fuente SEC XBRL (PARALELA a yahooquery, LOCAL-only, ~147 tickers USA). INCREMENTAL: consulta `submissions` (~164 KB) y solo baja `companyfacts` (~4 MB) si cambio el accession del ultimo 10-Q/10-K -> sin balances nuevos mueve ~24 MB en vez de ~522 MB. REQUIERE `SEC_USER_AGENT` en el .env (SEC devuelve 403 sin User-Agent con mail de contacto). `--solo-normalizar` / `--forzar` / `--tickers` / `--dry-run`. ENCADENA 2 pasos derivados (refresh_acciones_circulacion + compute_sec_multiplos completo), solo si el refresh anduvo; `set SEC_NO_DERIVADOS=1` los saltea (necesario con --solo-normalizar, que es offline). Ver docs/fuentes_fundamentales.md |
@@ -945,7 +976,10 @@ Las criticas:
   Fuente Alpha Vantage EARNINGS (backfill reanudable/cuota-aware, key free
   25/dia). Base de la vista "Reaccion a balances" del dashboard. La variable que
   faltaba: earnings_calendar solo tiene la proxima fecha y fundamentales tiene
-  el CIERRE fiscal, no el anuncio. Ver docs/earnings_reaccion.md
+  el CIERRE fiscal, no el anuncio. NO es insumo de decisiones: el filtro de
+  balances de los bots lee earnings_calendar. La pone al dia sola el paso
+  `earnings` de la rutina; su atraso se mide por CADENCIA propia
+  (src/utils/earnings_cobertura), no por antiguedad. Ver docs/earnings_reaccion.md
 - `fundamentales_income_q` | `fundamentales_balance_q` | `fundamentales_cashflow_q`
   | `fundamentales_valuation_q` -- 4 tablas de analisis fundamental trimestral,
   ultimos 8 Q por ticker (income/balance/cashflow + ratios PE/PB/PS/PEG/EV-EBITDA).

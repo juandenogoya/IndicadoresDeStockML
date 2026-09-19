@@ -81,8 +81,30 @@ que lo necesita":
 2. Ticker nuevo     -> idem (al alta no tiene filas). Ademas `universo.py add`
    dispara un `--ticker X` directo (paso 6b); si la cuota estaba agotada, el
    batch lo levanta despues. Doble red, se auto-cura.
-3. Incremental      -> tickers cuya proxima fecha (`earnings_calendar`) ya paso
-   respecto de la ultima `announcement_date` -> apendicea el Q nuevo.
+3. Incremental      -> tickers que DEBEN un balance segun su propia cadencia de
+   anuncios -> apendicea el Q nuevo. Ver "Como se detecta el atraso".
+
+Los tres comparten la MISMA cola (primero los que no tienen nada, despues del
+mas atrasado al menos): la unica diferencia entre ellos es cuantos quedan.
+
+## Como se detecta el atraso: por CADENCIA PROPIA (19/9/2026)
+
+Modulo puro `src/utils/earnings_cobertura.py`, FUENTE UNICA del script que
+puebla la tabla y de la vista del dashboard (para que no haya dos definiciones
+de "esta al dia").
+
+**Una tabla de EVENTOS no se vigila por antiguedad absoluta.** Entre temporadas
+de balances, "el ultimo anuncio es de hace 6 semanas" es lo correcto, no un
+atraso. Lo que si es un hecho del ticker es su CADENCIA: la mediana de dias
+entre sus anuncios. Si paso mas que su cadencia por un margen (`MARGEN = 1.15`,
+~14 dias sobre 91), debe un balance que no tenemos. Mediana y no promedio: un
+cambio de cierre fiscal deja un intervalo raro que el promedio se lleva puesto.
+Con cadencia fija de 91 dias, un semestral (HMY reporta cada 96, otros cada 182)
+daria falso positivo todos los trimestres.
+
+Medido el 19/9/2026 sobre el universo: cadencia mediana 91 dias, los 200
+trimestrales, **108 de 200 tickers debian un balance** con la tabla frenada en
+el 3/8.
 
 ## Ventana y filtros de la vista (dashboard/earnings_reaccion.py)
 
@@ -108,6 +130,73 @@ combinan con AND, ej. Q1 en varios anios = estacionalidad de la reaccion; y
 slider **N de ruedas por lado (1 a 10, default 7)**. La ventana es -N..N-1: el
 dia 0 CUENTA como la primera rueda post. Ventanas truncadas (balance viejo sin N
 ruedas antes, o reciente sin N despues) se muestran con lo que exista.
+
+## Por que se atraso: el incremental era CIEGO (diagnostico 19/9/2026)
+
+No es que no se corriera. **Corriendolo todas las noches tampoco habria traido
+nada**, y eso es lo que hay que recordar de este episodio.
+
+La deteccion preguntaba `earnings_calendar.earnings_date <= CURRENT_DATE AND >
+nuestra ultima announcement_date`. Pero `earnings_calendar` guarda **solo la
+PROXIMA fecha** de cada ticker y la refresca Oracle una vez por semana: el dia
+que la empresa reporta, el refresh siguiente reemplaza esa fecha por la del
+trimestre siguiente y el ticker **no vuelve a aparecer como desactualizado
+nunca**. La unica ventana para detectarlo era el hueco entre el anuncio y el
+proximo refresh del calendario.
+
+Sintoma exacto al 19/9/2026, antes del arreglo:
+
+```
+Con historia    : 200 tickers (5225 filas, 2020-01-14 -> 2026-08-03)
+Sin historia    : 0  []
+Desactualizados : 0  []          <- con 108 de 200 debiendo un balance
+```
+
+`earnings_calendar` tenia las 200 filas con fechas FUTURAS (24/9 -> 6/11,
+refrescada el 14/9): cero candidatos, siempre. Un guard que nunca falla y
+devuelve un numero plausible -- la misma familia que `scan_fecha`,
+`features_sector` y `fecha_datos` (ver CLAUDE.md, patrones criticos).
+
+**Que NO arregla esto**: los meses ya perdidos se recuperan igual (Alpha Vantage
+devuelve la historia completa por llamada), pero mientras estuvo atrasada,
+cualquier analisis que necesitara EXCLUIR los dias de balance corrio con un
+filtro parcial. Paso dos veces: limito la medicion de alertas de la Tarea 22 (el
+panel marco 4% de ticker-dias contra ~11% esperable) y obligo a cortar la
+re-simulacion de salidas de SMC_v1 en el 13/7 (ANALISIS_SALIDAS.md sec. 10.4).
+
+### Nasdaq no reemplaza a Alpha Vantage para esto
+
+El calendario de Nasdaq (`api.nasdaq.com/api/calendar/earnings?date=...`, sin
+key, el mismo que usa `refresh_earnings_calendar.py`) tambien sirve para dias
+PASADOS y no tiene cuota: 3 dias probados el 19/9/2026 devolvieron 284, 532 y 4
+empresas. Tentador, pero **no alcanza como fuente**:
+
+- `fiscalQuarterEnding` viene como MES ("Jun/2026"), no como fecha -> no empata
+  con la PK `fiscal_period_end` sin un mapeo contra `fundamentales_*_q`.
+- `time` viene **siempre** `'time-not-supplied'` en dias pasados -> se pierde
+  `report_time`, y con el la regla del dia 0 para ~la mitad del universo
+  (post-market = la rueda SIGUIENTE). Sin eso la ventana queda corrida un dia,
+  en silencio, justo en el evento que se quiere medir.
+
+Sirve como DISPARADOR gratis (quien reporto y cuando), no como fuente. Hoy no se
+usa: la cadencia propia responde lo mismo sin salir a la red.
+
+## Que corre solo, desde el 19/9/2026
+
+`rutina_diaria.bat` tiene un paso nuevo, **`earnings`, el ultimo de todos**, con
+politica INFORMAR (nunca frena la rutina):
+
+- Va ultimo porque nada lo espera: `earnings_historico` **no es insumo de
+  ninguna decision** (el filtro de balances de los bots lee `earnings_calendar`),
+  alimenta al dashboard y a los analisis.
+- Trae hasta 20 tickers por noche (tope de la key free) con 13s de pausa: ~4,5
+  minutos. Se corta limpio si Alpha Vantage avisa que se acabo la cuota.
+- Con ~4-5 balances por dia en temporada, 20 llamadas por noche sobran para
+  quedar al dia sola. Un atraso de 108 se vacia en ~6 noches.
+- Rehacerlo a mano: `scripts/manual/refresh_earnings_historico.bat`.
+
+Primera corrida (19/9/2026): 20 tickers, 534 filas, la tabla paso de 2026-08-03
+a 2026-08-27; quedaron 88 en cola.
 
 ## Backfill inicial via Oracle (transito por Railway) -- TEMPORAL
 
@@ -141,31 +230,23 @@ reparten los 25 y se desperdicia cuota). La AV key vive en el .env de Oracle.
 - Backfill inicial: en Oracle contra Railway (ver seccion anterior). Manual
   equivalente: `refresh_earnings_historico.py --backfill [--max-calls N]`.
 - Ver que falta: `refresh_earnings_historico.py [--target railway] --status`.
-- Incremental (post-earnings season, Windows->local): `refresh_earnings_historico.py`
-  sin flags. Ticker puntual: `--ticker X` (lo usa universo.py add).
+- Incremental: corre SOLO como ultimo paso de `rutina_diaria.bat` (paso
+  `earnings`). A mano: `scripts/manual/refresh_earnings_historico.bat`, o
+  `refresh_earnings_historico.py` sin flags. Ticker puntual: `--ticker X` (lo
+  usa universo.py add).
 - Vista: dashboard -> "Reaccion a balances" (`dashboard/earnings_reaccion.py`).
   Selector de ticker + filtro de anios + toggle de trimestres Q1-Q4 + slider de
   ruedas por lado (1-10). Tres paneles (precio USD, precio %, volumen x prom 50),
   ventana pre+post superpuesta por trimestre, dia 0 marcado. Detalle en la
   seccion "Ventana y filtros de la vista".
 
-## ESTADO MEDIDO 15/9/2026: la tabla quedo ATRASADA -- correr el backfill
+## Estado medido el 15/9/2026 (lo que disparo el arreglo)
 
-Diagnostico al 15/9/2026 (aparecio de costado midiendo alertas, Tarea 22):
-
-- **114 de 200 tickers NO tienen ningun `announcement_date` posterior al 2026-07-01.**
-- Anuncios por mes en la tabla: 2026-04: 105 | 2026-05: 84 | 2026-06: 9 |
-  2026-07: 82 | **2026-08: 4**. Agosto con 4 registros es claramente incompleto.
-- Ejemplos: CAT (ultimo 2026-04-30), AMD (2026-05-05), NVDA (2026-05-20),
-  WMT (2026-05-21), AVGO (2026-06-03), MU (2026-06-24).
-
-Causa: el incremental no se viene corriendo y el backfill es cuota-limitado
-(key free, 25/dia) -> hacen falta varias corridas en dias distintos para los 114.
-
-Doble impacto: (1) la vista muestra menos trimestres de los que existen, y (2)
-**cualquier analisis que necesite EXCLUIR los dias de balance queda con un filtro
-parcial** -- que es exactamente lo que limito la medicion de la Tarea 22 (el panel
-marco solo 4% de ticker-dias tocados por un balance cuando lo esperable era ~11%).
-
-Arreglo: `refresh_earnings_historico.py --status` y despues `--backfill`
-(reanudable, <=20 por corrida, `--target local`), repitiendo dias hasta vaciar.
+Aparecio de costado midiendo alertas (Tarea 22): 114 de 200 tickers sin ningun
+`announcement_date` posterior al 2026-07-01, y agosto con 4 registros. La causa
+de fondo, encontrada el 19/9, esta arriba ("el incremental era CIEGO"). Queda
+como referencia de como se ve el problema desde afuera: **la vista se ve igual
+de completa con la tabla atrasada** -- un trimestre que falta no se distingue de
+un trimestre que no existe. Por eso ahora la vista muestra la cobertura y avisa
+cuando al ticker elegido le falta un balance (`dashboard/earnings_reaccion.py`,
+`_aviso_cobertura`).
