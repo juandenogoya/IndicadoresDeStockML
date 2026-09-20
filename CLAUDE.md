@@ -538,6 +538,43 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
   analisis de TECH_SECTOR_v1 (sec. 7.1 del doc). ARREGLADO el 19/9 (ver el patron siguiente);
   antes de re-correr un analisis con balances, mirar `--status`.
 
+### Analisis de ENTRADAS FT: medir el PISO DE RUIDO antes de comparar (20/9/2026)
+- **Antes de comparar variantes, aleatorizar la parte arbitraria de la decision.** En
+  TECH_SECTOR_v1 el desempate entre candidatos empatados decide el 42,8% de los
+  sector-ruedas y lo resuelve el ALFABETO (`sort` estable sobre `ORDER BY sector, ticker`;
+  vale para la sectorial, no solo para TECH_v1). Correr la MISMA regla con el desempate
+  sorteado, 20 semillas fijas, da el piso de ruido del experimento: **+16,34% a +26,30% de
+  retorno, ~10 pp**. La mejor de 166 reglas de entrada le gana a la v1 por **+0,90 pp** ->
+  no gano por la regla. La vara se MIDE con 20 corridas, no se supone. Vale para cualquier
+  grilla de este proyecto.
+- **Una grilla sin ajuste por exposicion premia a la regla mas laxa.** Correlacion
+  exposicion media vs ventaja: +0,61 en seleccion y +0,67 en confirmacion. Dividida por
+  exposicion la v1 sale 3a de 166. `exposicion_media_pct` y candidatos por rueda son
+  columnas obligatorias de cualquier fila de grilla.
+- **Enumerar reglas monotonas, no barrer pesos.** Sobre 4 condiciones binarias hay 166
+  reglas monotonas no triviales (Dedekind M(4)=168): cubren TODO lo que cualquier juego de
+  ponderadores puede expresar y **18 mas que ningun score lineal alcanza**. Una grilla de
+  pesos repite la misma decision cientos de veces (en salidas, 3.750 juegos -> 589 reglas).
+  Modulo: `src/utils/ft_entradas.py`.
+- **Variar el filtro, dejar el ranking fijo.** Con reglas booleanas no hay score con que
+  rankear; si varian filtro y ranking a la vez ninguna diferencia es atribuible. El ranking
+  queda en el score ponderado de la v1. El ranking es OTRA palanca, y la banda del sorteo
+  dice que es la mas grande de las dos.
+- **Reusar la maquina validada si el tiempo alcanza.** Se pre-registro una re-simulacion
+  vectorizada nueva y se termino parametrizando `ft_backtesting_runner.py`
+  (`filtro_entrada` / `orden_candidatos` / `registrar_candidatos`, retrocompatible): la
+  fidelidad pasa a ser POR CONSTRUCCION en vez de algo que hay que demostrar. Medir cuanto
+  tarda lo que ya existe antes de decidir escribir un motor. Ese runner no lo usa ningun
+  bot de FT, solo los scripts de analisis -> no va a `ft_cambios`.
+- **Pearson alto con Spearman bajo sobre el mismo par**: la relacion la sostienen los
+  extremos y el orden del medio -- donde viven los candidatos realistas -- no se sostiene
+  (aca +0,586 contra +0,187 entre seleccion y confirmacion). Mismo -0,16 del paso 2 de
+  salidas.
+- **Resultado: 0 de 166 reglas pasan; no hay estrategia nueva.** La v1 le gana al universo
+  ajustado por exposicion en 2 de 6 anios y ninguna regla lo mejora. Leer ANTES de proponer
+  cambiar una condicion de entrada. Detalle, y los pasos 1b/1c DISENADOS Y SIN CORRER:
+  docs/forward_testing/ANALISIS_ENTRADAS.md.
+
 ### Una tabla de EVENTOS se vigila por CADENCIA, no por antiguedad (19/9/2026)
 - `earnings_historico` quedo 6 semanas atrasada mientras su propio diagnostico decia
   "Desactualizados: 0". La deteccion preguntaba si `earnings_calendar.earnings_date` ya

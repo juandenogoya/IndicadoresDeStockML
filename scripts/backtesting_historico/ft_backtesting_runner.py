@@ -273,8 +273,27 @@ def _dias_habiles_entre(fecha_a: date, fecha_b: date, trading_days: list) -> int
 
 
 def run_tech_sector(bt_id: int, loader: BtDataLoader, logica: str,
-                    dry_run: bool, verbose: bool) -> BtPositionManager:
-    """Runner para TECH_SECTOR_v1 y COMBO_v1."""
+                    dry_run: bool, verbose: bool,
+                    filtro_entrada=None, orden_candidatos=None,
+                    registrar_candidatos: bool = True) -> BtPositionManager:
+    """Runner para TECH_SECTOR_v1 y COMBO_v1.
+
+    Los tres ultimos argumentos existen para la grilla de ENTRADAS
+    (scripts/forward_testing/ft_grilla_entradas.py, docs/forward_testing/
+    ANALISIS_ENTRADAS.md sec. 9). Con los tres en su default, el comportamiento es
+    identico al de siempre -- es lo que permite usar este mismo motor, ya validado,
+    en vez de reimplementar uno.
+
+        filtro_entrada:      callable(score, detalle) -> bool. Reemplaza SOLO el
+                             filtro de entrada. Default: score >= SCORE_ENTRADA_TECH.
+                             La SALIDA no se toca nunca.
+        orden_candidatos:    callable(lista) -> lista, aplicada ANTES del sort por
+                             score. Sirve para el control de sorteo: el sort es
+                             estable, asi que el orden previo es el desempate.
+                             Default: el orden del loader, que es alfabetico.
+        registrar_candidatos: False no acumula el log de candidatos (memoria y tiempo;
+                             la grilla no lo usa).
+    """
     pm = BtPositionManager(bt_id, logica, sc.CAPITAL_INICIAL)
     pm.init_sectores(SECTORES_TECH)
 
@@ -285,10 +304,12 @@ def run_tech_sector(bt_id: int, loader: BtDataLoader, logica: str,
         ops_cerradas_dia = 0
 
         # ── a) CIERRES ──────────────────────────────────────────────────────
-        indicadores_hoy = {
-            r["ticker"]: r
-            for r in loader.get_indicadores_fecha(fecha)
-        }
+        # Una sola llamada por dia: get_indicadores_fecha es determinista y cara
+        # (xs + join + iterrows). Antes se la llamaba de nuevo en el bloque de
+        # entradas; reusar la lista no cambia ningun resultado y baja el tiempo de
+        # una corrida a la mitad, que es lo que hace viable la grilla de 186.
+        filas_hoy = loader.get_indicadores_fecha(fecha)
+        indicadores_hoy = {r["ticker"]: r for r in filas_hoy}
         precios_hoy = loader.get_close(fecha)
 
         for ticker in list(pm.posiciones_abiertas.keys()):
@@ -331,19 +352,24 @@ def run_tech_sector(bt_id: int, loader: BtDataLoader, logica: str,
             candle_scores = loader.get_candle_score_5d(fecha)
 
         candidatos = []
-        for r in loader.get_indicadores_fecha(fecha):
+        for r in filas_hoy:
             ticker = r["ticker"]
             if ticker in pm.posiciones_abiertas:
                 continue
             score, detalle = sc.calcular_score_tecnico(r)
-            if score < sc.SCORE_ENTRADA_TECH:
+            if filtro_entrada is None:
+                if score < sc.SCORE_ENTRADA_TECH:
+                    continue
+            elif not filtro_entrada(score, detalle):
                 continue
 
             if es_combo:
                 cs = candle_scores.get(ticker, 0.0)
                 if cs <= sc.CANDLE_SCORE_EXCLUIR_COMBO:
-                    pm.registrar_candidato(bt_id, fecha, ticker, score, False,
-                                          f"candle_score_bajo ({cs:.1f})", r.get("close", 0))
+                    if registrar_candidatos:
+                        pm.registrar_candidato(bt_id, fecha, ticker, score, False,
+                                               f"candle_score_bajo ({cs:.1f})",
+                                               r.get("close", 0))
                     continue
             else:
                 cs = 0.0
@@ -358,7 +384,11 @@ def run_tech_sector(bt_id: int, loader: BtDataLoader, logica: str,
                 "sector":   r.get("sector"),
             })
 
-        # Rankear: score DESC, luego candle_score DESC para COMBO
+        # Rankear: score DESC, luego candle_score DESC para COMBO.
+        # El sort es ESTABLE: entre empatados manda el orden previo, que por defecto es
+        # el del loader (alfabetico). `orden_candidatos` es el unico modo de cambiarlo.
+        if orden_candidatos is not None:
+            candidatos = orden_candidatos(candidatos)
         candidatos.sort(key=lambda x: (-x["score"], -x["cs"]))
 
         for c in candidatos:
@@ -368,20 +398,24 @@ def run_tech_sector(bt_id: int, loader: BtDataLoader, logica: str,
             atr14  = c["atr14"]
 
             if not sector:
-                pm.registrar_candidato(bt_id, fecha, ticker, c["score"], False,
-                                       "sin_sector", close)
+                if registrar_candidatos:
+                    pm.registrar_candidato(bt_id, fecha, ticker, c["score"], False,
+                                           "sin_sector", close)
                 continue
 
             budget = pm.capital_disponible_sector(sector)
             capital_trade = round(budget * sc.POSITION_PCT, 2)
             if capital_trade <= 0:
-                pm.registrar_candidato(bt_id, fecha, ticker, c["score"], False,
-                                       "sin_capital_sector", close)
+                if registrar_candidatos:
+                    pm.registrar_candidato(bt_id, fecha, ticker, c["score"], False,
+                                           "sin_capital_sector", close)
                 continue
 
             puede, motivo_skip = pm.puede_entrar_sector(sector, capital_trade)
             if not puede:
-                pm.registrar_candidato(bt_id, fecha, ticker, c["score"], False, motivo_skip, close)
+                if registrar_candidatos:
+                    pm.registrar_candidato(bt_id, fecha, ticker, c["score"], False,
+                                           motivo_skip, close)
                 continue
 
             sl = close - sc.ATR_MULT_SL * atr14
@@ -389,7 +423,8 @@ def run_tech_sector(bt_id: int, loader: BtDataLoader, logica: str,
 
             pm.abrir(ticker, fecha, close, sl, c["score"], c["detalle"],
                      atr14=atr14, take_profit=tp, sector=sector)
-            pm.registrar_candidato(bt_id, fecha, ticker, c["score"], True, "", close)
+            if registrar_candidatos:
+                pm.registrar_candidato(bt_id, fecha, ticker, c["score"], True, "", close)
 
             if verbose:
                 log(f"  ENTRADA {ticker} [{sector}] score={c['score']} close={close:.2f}", verbose)
@@ -496,7 +531,8 @@ def run_smc(bt_id: int, loader: BtDataLoader,
                 continue
 
             pm.abrir(ticker, fecha, close, sl_precio, c["score"], c["detalle"])
-            pm.registrar_candidato(bt_id, fecha, ticker, c["score"], True, "", close)
+            if registrar_candidatos:
+                pm.registrar_candidato(bt_id, fecha, ticker, c["score"], True, "", close)
 
             if verbose:
                 log(f"  ENTRADA {ticker} SMC score={c['score']} close={close:.2f} SL={sl_precio:.2f}", verbose)
@@ -550,33 +586,57 @@ def imprimir_resumen(pm: BtPositionManager, estrategia: str, desde: date, hasta:
     print()
 
 
-def _imprimir_vs_universo(pm: BtPositionManager, loader: BtDataLoader):
-    """Retorno total y por anio contra el universo equal-weight, y exposicion media."""
+def metricas_vs_universo(pm: BtPositionManager, loader: BtDataLoader) -> dict:
+    """Retorno total y por anio contra el universo equal-weight, y exposicion media.
+
+    Devuelve datos en vez de imprimir, para que la grilla de entradas use EXACTAMENTE
+    el mismo calculo que el resumen. {} si no hay metricas diarias.
+    """
     import pandas as pd
     met = pd.DataFrame(pm.metricas_diarias)
     if met.empty:
-        return
+        return {}
     met = met.set_index("fecha")
     eq = met["capital_total"].astype(float)
     ret_est = eq.pct_change()
     ret_est.iloc[0] = eq.iloc[0] / pm.capital_inicial - 1
     ret_uni = loader.retornos_universo().reindex(ret_est.index).fillna(0.0)
-    expo = (met["capital_inmovilizado"].astype(float) / eq).mean() * 100
-    tot_u = ((1 + ret_uni).prod() - 1) * 100
-    print(f"  Universo eq-weight: {tot_u:>+8.2f}%   (exposicion media de la estrategia {expo:.0f}%)")
-    print()
-    print(f"  {'Anio':<6s} {'Estrategia':>11s} {'Universo':>10s} {'Diferencia':>11s} "
-          f"{'Exposicion':>11s} {'Estr/expo':>10s}")
-    anios = pd.Index([d.year for d in ret_est.index])
     expo_dia = (met["capital_inmovilizado"].astype(float) / eq).to_numpy()
+    anios = pd.Index([d.year for d in ret_est.index])
+
+    por_anio = []
     for anio in sorted(set(anios)):
         m = anios == anio
         r_e = ((1 + ret_est[m]).prod() - 1) * 100
         r_u = ((1 + ret_uni[m]).prod() - 1) * 100
-        e_a = expo_dia[m].mean()
-        por_expo = r_e / e_a if e_a > 0 else float("nan")
-        print(f"  {anio:<6d} {r_e:>+10.2f}% {r_u:>+9.2f}% {r_e - r_u:>+10.2f}pp "
-              f"{e_a * 100:>10.0f}% {por_expo:>+9.2f}%")
+        e_a = float(expo_dia[m].mean())
+        por_anio.append({
+            "anio": int(anio), "estrategia_pct": float(r_e), "universo_pct": float(r_u),
+            "exposicion_pct": e_a * 100,
+            "estr_por_expo_pct": float(r_e / e_a) if e_a > 0 else float("nan"),
+            "uni_por_expo_pct": float(r_u / e_a) if e_a > 0 else float("nan"),
+        })
+    return {
+        "universo_total_pct": float(((1 + ret_uni).prod() - 1) * 100),
+        "exposicion_media_pct": float(expo_dia.mean() * 100),
+        "ret_diario_estrategia": ret_est, "ret_diario_universo": ret_uni,
+        "por_anio": por_anio,
+    }
+
+
+def _imprimir_vs_universo(pm: BtPositionManager, loader: BtDataLoader):
+    d = metricas_vs_universo(pm, loader)
+    if not d:
+        return
+    print(f"  Universo eq-weight: {d['universo_total_pct']:>+8.2f}%   "
+          f"(exposicion media de la estrategia {d['exposicion_media_pct']:.0f}%)")
+    print()
+    print(f"  {'Anio':<6s} {'Estrategia':>11s} {'Universo':>10s} {'Diferencia':>11s} "
+          f"{'Exposicion':>11s} {'Estr/expo':>10s}")
+    for a in d["por_anio"]:
+        print(f"  {a['anio']:<6d} {a['estrategia_pct']:>+10.2f}% {a['universo_pct']:>+9.2f}% "
+              f"{a['estrategia_pct'] - a['universo_pct']:>+10.2f}pp "
+              f"{a['exposicion_pct']:>10.0f}% {a['estr_por_expo_pct']:>+9.2f}%")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

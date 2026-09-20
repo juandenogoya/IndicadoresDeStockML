@@ -1074,6 +1074,61 @@ Decision del usuario sobre los dos pendientes que dejaba la Tarea 24:
 **Ref**: docs/forward_testing/ANALISIS_SALIDAS.md sec. 10.8
 **Registro**: no corresponde (no cambia decisiones)
 
+### 2026-09-19/20 - RESULTADO
+**Analisis de ENTRADAS de TECH_SECTOR_v1: las 166 reglas booleanas, y ninguna pasa**
+Espejo del analisis de salidas: se deja fija la SALIDA de la v1 (y el reparto 5 por sector,
+el sizing y el periodo) y se varia solo la regla de entrada. Paso 0 (anatomia): el filtro
+actual califica a 48,7 candidatos por rueda para 45 lugares, el desempate decide en el
+42,8% de los sector-ruedas y lo resuelve el ALFABETO -- tambien en la sectorial, no solo en
+TECH_v1. Influencia: SMA21 23,88% decide mas que el MACD 16,08% (se queda). Paso 1: se
+enumero el espacio ENTERO -- las 166 reglas monotonas no triviales sobre {SMA50, SMA21,
+MACD, RSI} con SMA200 obligatoria (Dedekind M(4)=168), de las cuales 148 son expresables
+como score ponderado y **18 no las alcanza ningun juego de pesos**. 186 corridas (166
+reglas + 20 sorteos), ~20 s cada una.
+**Razon / Hipotesis**: si distintos ponderadores eligen tickers distintos (paso 0: Jaccard
+0,72-0,96), alguna combinacion de condiciones podria elegir mejor que la v1.
+**Efecto esperado**: ninguno en produccion; el paso 1 era exploratorio y pre-registrado.
+**Resultado real**: **0 de 166 reglas pasan las cuatro condiciones.** Condicion 1
+(seleccion con IC95 que excluye el cero): 0; condicion 3 (superar la banda del sorteo): 0;
+condicion 4 (4 de 6 anios al universo ajustado por exposicion): 0. **El resultado que manda
+es la banda del sorteo**: la MISMA regla con el desempate sorteado da de +16,34% a +26,30%
+(~10 pp, desvio 2,52), contra +0,90 pp de la mejor regla sobre la v1 -- el desempate entre
+candidatos empatados pesa diez veces mas que la regla de entrada. La grilla sin ajustar
+mide exposicion (correlacion +0,61 en seleccion y +0,67 en confirmacion); dividida por
+exposicion la v1 sale 3a de 166. El orden entre reglas no se sostiene entre periodos
+(Spearman +0,187). Colateral: la v1 le gana al universo ajustado por exposicion en 2 de 6
+anios y **ninguna de las 166 lo mejora** (153 dan 2/6, 13 dan 1/6).
+**Desviaciones declaradas**: (1) se pre-registro una re-simulacion vectorizada nueva y se
+termino parametrizando `ft_backtesting_runner.py` (retrocompatible, fidelidad verificada en
+0,000000) -- la fidelidad pasa a ser por construccion; (2) "exceso por operacion con IC95"
+se implemento como diferencia diaria pareada, que es lo que permite la unidad declarada.
+**Ref**: docs/forward_testing/ANALISIS_ENTRADAS.md sec. 5 a 10;
+reportes/analisis_entradas/20260920_paso1/
+**Registro**: no corresponde (no cambia decisiones; el runner no lo usa ningun bot de FT)
+
+### 2026-09-20 - DECISION
+**Se para el analisis de entradas: no hay estrategia nueva y se sigue con las existentes**
+Decision del usuario al cerrar el paso 1. No se despliega nada, no se crea ninguna
+estrategia nueva y no se corre el paso 2 (ponderadores sobre zonas de distancia) por ahora.
+Quedan DISENADOS Y SIN CORRER dos experimentos, escritos para poder retomarlos sin rehacer
+el razonamiento (ANALISIS_ENTRADAS.md sec. 11):
+1. **Paso 1b** -- descomponer la decision en vez del total de cartera: clasificar cada
+   desacuerdo en sustitucion (mide seleccion) contra cupo de mas o de menos (mide
+   exposicion), agrupar las 166 reglas en UNA pregunta para no hacer 1.494 comparaciones, y
+   usar los 20 sorteos como distribucion NULA empirica. Comparar en retorno porcentual y no
+   en dolares: el sizing sale del budget sectorial, que depende de la historia previa.
+2. **Paso 1c** -- factorial entrada x salida, por el canal que ninguno de los dos analisis
+   pudo ver y que el paso 2 de salidas declara sin medir: el efecto de cartera (cupos
+   ocupados mas o menos tiempo). No es 166 x 589 (97.774 corridas, 543 horas): el espacio de
+   salidas ya se midio unidimensional, asi que va una escalera de ~10 tiempos de tenencia
+   (3 a 12 ruedas) mas un time stop, con prediccion direccional escrita antes de correr.
+**Razon / Hipotesis**: el paso 1 no dejo ninguna regla candidata y la palanca con masa que
+si aparecio -- el ranking entre candidatos empatados -- no es un filtro de entrada, asi que
+seguir refinando el filtro no es donde esta el retorno del trabajo.
+**Efecto esperado**: ninguno (nada cambia en produccion).
+**Ref**: docs/forward_testing/ANALISIS_ENTRADAS.md sec. 11.3
+**Registro**: no corresponde (no cambia decisiones)
+
 ---
 
 ## Template de entrada
