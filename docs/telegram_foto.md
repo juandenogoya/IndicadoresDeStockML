@@ -5,8 +5,8 @@ para decidir si vale la pena abrir el chart y revisar a mano.
 
 - Motor puro: `src/utils/foto_ticker.py` (stdlib, tests en `tests/test_foto_ticker.py`)
 - Script: `scripts/manual/telegram_foto.py` (LOCAL-only)
-- Estado: funcionando a mano. **Todavia NO esta en la rutina diaria** (se agrega
-  cuando se haya visto andar unos dias).
+- Estado: **paso `foto` de la rutina diaria desde el 25/9/2026** (antes solo a
+  mano). Corre DESPUES de `ft` y ANTES de `earnings`, con politica INFORMAR.
 
 ## Que NO es
 
@@ -92,7 +92,23 @@ Formato: HTML de Telegram. Los bloques se empaquetan en mensajes de hasta 4000
 caracteres sin partir ninguno (partir un `<pre>` deja HTML invalido y Telegram
 rechaza el mensaje entero), por eso NO se usa `_send_long`.
 
-## Pendiente
+## En la rutina diaria (25/9/2026)
 
-- Incorporarlo a `rutina_diaria` como paso final despues de `ft` (solo
-  informa, nunca frena), una vez validado a mano.
+Paso `foto`, sexto de siete. Decisiones:
+
+- **Despues de `ft`**: necesita los candidatos de esa corrida.
+- **Antes de `earnings`**: ese tarda ~4,5 min por la cuota de Alpha Vantage y no
+  tiene ninguna relacion con la foto. Poniendola antes, el mensaje sale enseguida
+  en vez de esperar el final de la rutina.
+- **INFORMAR**: si Telegram falla o la DB no responde, la rutina sigue. Nada
+  depende de este mensaje.
+- **El codigo 2 no es una falla**: el script sale 2 cuando FT no dejo candidatos.
+  Es un resultado normal (noche sin senales), asi que `rutina.clasificar_foto` lo
+  informa como OK con nota. Con el clasificador generico una noche tranquila
+  habria aparecido como error y el resumen habria pedido arreglar algo que anda.
+- **La tabla del paso es `precios_diarios`** (la rueda sobre la que se arma la
+  foto) y no `ft_candidatos_diarios`, cuya columna `fecha` es la de CORRIDA del
+  bot: `Paso.columna` es siempre la fecha de DATOS.
+
+Rehacerlo suelto: `python scripts/manual/rutina_diaria.py paso foto`, o el script
+directo con sus flags (`--dry-run` para verlo sin enviar).

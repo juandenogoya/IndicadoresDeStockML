@@ -54,6 +54,9 @@ MAX_PENDIENTES_PASO1 = 10
 FT_GUARD = 1        # el guard de coherencia freno: los bots no corrieron
 FT_BOT_FALLO = 2    # los bots corrieron, al menos uno termino con error
 
+# Codigo de salida de telegram_foto.py cuando no hay nada que mandar
+FOTO_SIN_NADA = 2
+
 
 class Paso(NamedTuple):
     clave: str
@@ -75,6 +78,14 @@ PASOS = (
          "alertas_scanner", "precio_fecha", "cron_paso3_scanner.bat"),
     Paso("ft", "Forward testing", INFORMAR,
          "ft_equity_diaria", "fecha", "ft_run_diario.bat"),
+    # Va DESPUES de ft (necesita los candidatos de esa corrida) y ANTES de
+    # earnings, que tarda ~4,5 min y no tiene nada que ver con esto: asi el
+    # mensaje sale enseguida. Solo informa por Telegram; nada lo espera.
+    # La tabla es `precios_diarios` porque la foto se arma sobre la ultima rueda
+    # de datos: `ft_candidatos_diarios.fecha` es la fecha de CORRIDA del bot, y
+    # `Paso.columna` es siempre la fecha de DATOS.
+    Paso("foto", "Foto al cierre por Telegram", INFORMAR,
+         "precios_diarios", "fecha", "telegram_foto.py"),
     # Va ULTIMO y nunca frena: earnings_historico no es insumo de ninguna decision
     # (el filtro de balances de los bots lee earnings_calendar), alimenta al
     # dashboard y a los analisis. Es el paso mas lento en relacion a lo que hace
@@ -170,6 +181,19 @@ def clasificar_ft(exit_code):
         return ERROR, ["el guard de coherencia freno: datos no alineados, los bots NO corrieron"]
     if exit_code == FT_BOT_FALLO:
         return PARCIAL, ["al menos un bot termino con error (ver el log de FT)"]
+    return ERROR, [f"termino con codigo {exit_code}"]
+
+
+def clasificar_foto(exit_code):
+    """
+    El 2 NO es una falla: es "FT no dejo candidatos, no hay nada que fotografiar".
+    Con el clasificador generico una noche tranquila apareceria como error y el
+    resumen pediria arreglar algo que funciona.
+    """
+    if exit_code == 0:
+        return OK, []
+    if exit_code == FOTO_SIN_NADA:
+        return OK, ["sin candidatos de FT: no se envio ninguna foto"]
     return ERROR, [f"termino con codigo {exit_code}"]
 
 

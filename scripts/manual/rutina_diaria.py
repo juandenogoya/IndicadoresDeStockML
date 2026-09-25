@@ -281,6 +281,14 @@ def correr_paso(p, log, origen, rutina_id=None, dir_trabajo=None, extra=None):
                                  al_leer=_captar_log_ft)
             res["resultado"], res["notas"] = R.clasificar_ft(exit_code)
 
+        elif p.clave == "foto":
+            # Mensaje de Telegram con el ESTADO de los candidatos que dejo la
+            # corrida de FT de recien (no es pronostico; ver docs/telegram_foto.md).
+            # Sale 2 cuando no hay nada que mandar, que no es una falla.
+            exit_code = ejecutar([PYTHON, _script("manual", "telegram_foto.py"),
+                                  *(extra or [])], log)
+            res["resultado"], res["notas"] = R.clasificar_foto(exit_code)
+
         elif p.clave == "earnings":
             # Incremental cuota-aware: trae hasta --max-calls tickers de los que
             # DEBEN un balance segun su cadencia (src/utils/earnings_cobertura).
