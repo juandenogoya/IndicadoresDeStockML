@@ -1,6 +1,20 @@
 # SMC_v3 — Documentacion de Estrategia (FT_SMC_v3_N5 y FT_SMC_v3_N3)
 
-**Estado**: ACTIVAS (desde la rueda 2026-09-16)
+**Estado**: ACTIVAS (desde la rueda **2026-09-29**)
+
+> **OJO al leer la historia de estas dos.** Se dieron de alta el 17/9/2026 con la
+> rueda 2026-09-16, pero **no corrieron ni una vez hasta el 29/9**: el bloque que
+> `ft_run_diario.bat` les agrego invocaba al bot con el path corrupto
+> (`scripts<FF>orward_testing<FF>t_bot_smc_v3.py`, dos form feed que dejo un string
+> NO raw al escribir el .bat), asi que Python no encontraba el archivo. Fallaron en
+> las 6 corridas entre el 18/9 y el 29/9 sin dejar una sola operacion, candidato ni
+> posicion. La rutina lo informo como PARCIAL todas las noches, pero la nota decia
+> "al menos un bot termino con error" sin nombrar cual.
+>
+> Consecuencias, para no leerlas mal: **su historia arranca el 2026-09-29**, no el
+> 16/9; las 8 ruedas perdidas NO se reconstruyen (no se simula hacia atras una
+> estrategia de FT); y la comparacion contra FT_SMC_v1, que es su control, empieza
+> ahi. `ft_cambios.smc_v3_estructura_confirmada` quedo corregida a esa fecha.
 **ID en DB**: 12 (`FT_SMC_v3_N5`) y 13 (`FT_SMC_v3_N3`)
 **Control**: [SMC_v1.md](SMC_v1.md) (sigue corriendo sin cambios)
 **Version anterior descartada**: [SMC_v2.md](SMC_v2.md)

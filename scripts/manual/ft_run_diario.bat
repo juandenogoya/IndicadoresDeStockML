@@ -186,7 +186,7 @@ REM  Ver docs/estructura_velas.md sec. 9.3
 echo [3b/11] FT_SMC_v3_N5...
 echo. >> "%LOGFILE%"
 echo --- FT_SMC_v3_N5 --- >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scriptsorward_testingt_bot_smc_v3.py" --ventana 5 >> "%LOGFILE%" 2>&1
+"%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_smc_v3.py" --ventana 5 >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] ft_bot_smc_v3.py --ventana 5 fallo. Ver log.
     SET ERRORS=1
@@ -199,7 +199,7 @@ REM -- BOT 3c - la misma regla con confirmacion mas rapida ------
 echo [3c/11] FT_SMC_v3_N3...
 echo. >> "%LOGFILE%"
 echo --- FT_SMC_v3_N3 --- >> "%LOGFILE%"
-"%PYTHON%" "%ROOT%scriptsorward_testingt_bot_smc_v3.py" --ventana 3 >> "%LOGFILE%" 2>&1
+"%PYTHON%" "%ROOT%scripts\forward_testing\ft_bot_smc_v3.py" --ventana 3 >> "%LOGFILE%" 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] ft_bot_smc_v3.py --ventana 3 fallo. Ver log.
     SET ERRORS=1

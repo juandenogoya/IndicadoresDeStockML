@@ -41,6 +41,22 @@ def test_la_foto_va_despues_de_ft_y_antes_de_earnings():
     assert R.paso("foto").tabla == "precios_diarios"
 
 
+def test_ft_nombra_el_bot_que_fallo():
+    """Sin los [ERROR] del .bat la nota no decia CUAL bot: con uno caido todas las
+    noches el aviso se vuelve ruido (los dos de SMC_v3 estuvieron 6 corridas sin
+    correr, incidente 29/9/2026)."""
+    errores = ["[ERROR] ft_bot_smc_v3.py --ventana 5 fallo. Ver log.",
+               "[ERROR] ft_bot_smc_v3.py --ventana 3 fallo. Ver log."]
+    res, notas = R.clasificar_ft(R.FT_BOT_FALLO, errores)
+    assert res == R.PARCIAL
+    assert "2 bot(s)" in notas[0] and "--ventana 5" in notas[0] and "--ventana 3" in notas[0]
+    # sin la lista, el mensaje generico de siempre (retrocompatible)
+    assert R.clasificar_ft(R.FT_BOT_FALLO) == (R.PARCIAL,
+                                               ["al menos un bot termino con error (ver el log de FT)"])
+    # y un exit 0 no inventa notas aunque le pasen ruido
+    assert R.clasificar_ft(0, errores) == (R.OK, [])
+
+
 def test_foto_sin_candidatos_no_es_una_falla():
     assert R.clasificar_foto(0) == (R.OK, [])
     res, notas = R.clasificar_foto(R.FOTO_SIN_NADA)

@@ -271,15 +271,23 @@ def correr_paso(p, log, origen, rutina_id=None, dir_trabajo=None, extra=None):
             res["resultado"], res["notas"] = R.clasificar_generico(exit_code)
 
         elif p.clave == "ft":
+            # Los `[ERROR] <bot> fallo` que imprime el .bat: sin ellos la nota
+            # decia "al menos un bot termino con error" sin decir CUAL, y con eso
+            # los dos bots de SMC_v3 estuvieron 6 corridas caidos sin que nadie
+            # lo mirara (incidente 29/9/2026).
+            errores_ft = []
+
             def _captar_log_ft(texto):
                 t = texto.strip()
                 if "log_ft" not in res and t.startswith("Log") and ":" in t:
                     res["log_ft"] = t.split(":", 1)[1].strip()
+                if t.startswith("[ERROR]") and t not in errores_ft:
+                    errores_ft.append(t)
             # RUTINA_ORQUESTADA: ft_run_diario no pausa ni se registra por su cuenta.
             exit_code = ejecutar(["cmd", "/c", BAT_FT], log,
                                  env=dict(os.environ, RUTINA_ORQUESTADA="1"),
                                  al_leer=_captar_log_ft)
-            res["resultado"], res["notas"] = R.clasificar_ft(exit_code)
+            res["resultado"], res["notas"] = R.clasificar_ft(exit_code, errores_ft)
 
         elif p.clave == "foto":
             # Mensaje de Telegram con el ESTADO de los candidatos que dejo la

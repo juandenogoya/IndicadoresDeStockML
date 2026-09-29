@@ -174,12 +174,21 @@ def clasificar_paso1(exit_code, resumen):
     return (PARCIAL if notas else OK), notas, pend
 
 
-def clasificar_ft(exit_code):
+def clasificar_ft(exit_code, errores=None):
+    """
+    `errores` = las lineas `[ERROR] <bot> fallo` que imprimio ft_run_diario.bat.
+    Sin ellas la nota decia solo "al menos un bot termino con error": con un bot
+    caido todas las noches, el aviso se vuelve ruido y nadie abre el log. Paso:
+    FT_SMC_v3_N5 y N3 estuvieron 6 corridas sin ejecutarse (29/9/2026).
+    """
     if exit_code == 0:
         return OK, []
     if exit_code == FT_GUARD:
         return ERROR, ["el guard de coherencia freno: datos no alineados, los bots NO corrieron"]
     if exit_code == FT_BOT_FALLO:
+        if errores:
+            return PARCIAL, [f"{len(errores)} bot(s) con error: " +
+                             "; ".join(e.replace("[ERROR]", "").strip() for e in errores)]
         return PARCIAL, ["al menos un bot termino con error (ver el log de FT)"]
     return ERROR, [f"termino con codigo {exit_code}"]
 

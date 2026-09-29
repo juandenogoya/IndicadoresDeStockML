@@ -842,6 +842,21 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
   los CR, dejando el archivo LF-only. Por el mismo motivo `grep -c $'\r'` /
   `cat -A` MIENTEN sobre los finales de linea de un .bat. Para verificar de
   verdad: `tr -cd '\r' < f | wc -c`. Para editar: Python en modo binario.
+- **Binario NO alcanza: el string tambien tiene que ser RAW** (29/9/2026). Un path
+  de Windows esta lleno de escapes que Python interpreta sin avisar: escribir
+  `"scripts\forward_testing\ft_bot_smc_v3.py"` en un literal normal mete DOS form
+  feed (0x0C) en el archivo, porque `\f` es un escape valido. Asi quedaron los dos
+  bloques de FT_SMC_v3 en `ft_run_diario.bat`: CRLF perfectos y el path roto ->
+  Python no encontraba el archivo y **los dos bots no corrieron durante 6 corridas**,
+  del 18/9 al 29/9, sin una sola operacion. Usar `r"..."` / `rb"..."` SIEMPRE.
+  Ojo tambien con `\t \n \r \b \a \v \0 \x` (`scripts\reports`, `\temp`, `\new`...).
+  Guard: `tests/test_bat_integridad.py` rechaza cualquier caracter de control en los
+  .bat del repo.
+- **Un aviso que se repite todas las noches sin decir QUE fallo es ruido**: la rutina
+  informo `ft` PARCIAL las 6 veces con "al menos un bot termino con error (ver el log
+  de FT)" y nadie abrio el log. `clasificar_ft` ahora recibe las lineas `[ERROR]` que
+  imprime el .bat y nombra al bot y su flag. Un guard que detecta y no identifica solo
+  mueve el problema de lugar.
 - **`python ... | tee log` pierde el codigo de salida** (13/9/2026): `%ERRORLEVEL%`
   queda con el del `tee`, que siempre es 0. `recovery_incremental.bat` dijo
   "RECOVERY COMPLETO" con tickers pendientes durante meses (medido: Python sale 3,

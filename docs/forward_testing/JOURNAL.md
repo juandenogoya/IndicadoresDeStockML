@@ -1144,3 +1144,27 @@ Descripcion de que ocurrio o que decidimos.
 **Registro**: ft_cambios <clave> (obligatorio si toca logica, parametros, modelo,
 datos o infra con los que decide alguna estrategia; ver METRICAS.md seccion 12.6)
 ```
+
+### 2026-09-29 — INCIDENTE
+**FT_SMC_v3_N5 y N3 no corrieron nunca: un form feed en el path del .bat**
+Al revisar por que `ft` venia PARCIAL todas las noches: `ft_run_diario.bat` invocaba
+`"%ROOT%scripts\forward_testing\ft_bot_smc_v3.py"` con los dos `\f` convertidos en
+0x0C (form feed). El bloque se escribio desde Python con un string NO raw, donde
+`\f` es un escape valido, y esos bytes quedaron DENTRO del .bat. Sus CRLF estaban
+perfectos (389/389): la regla conocida de editar en binario se habia cumplido, y el
+archivo igual estaba roto.
+**Alcance**: los dos bots fallaron en las 6 corridas del 18/9 al 29/9 -- 0 operaciones,
+0 candidatos, 0 posiciones -- con `activa = TRUE` en la base. Ningun otro bot afectado
+(auditados los 25 .bat del repo: era el unico con caracteres de control).
+**Por que no se vio antes**: el guard SI funciono. El .bat salio 2 y la rutina informo
+PARCIAL las 6 veces, con su Telegram. Pero la nota decia "al menos un bot termino con
+error (ver el log de FT)", sin nombrar cual: repetida cada noche, se volvio ruido.
+**Arreglado**: path reparado (binario + string RAW, CRLF intacto); verificado con
+`--dry-run` (N=5 abriria 4 posiciones, sale 0). La nota ahora nombra al bot y su flag:
+"2 bot(s) con error: ft_bot_smc_v3.py --ventana 5 fallo...". Test nuevo
+`tests/test_bat_integridad.py`: ningun .bat puede tener caracteres de control.
+**Lo que NO se hace**: reconstruir las 8 ruedas perdidas. Las dos estrategias arrancan
+con el cierre del 29/9 (dia habil verificado) y su ficha lo dice.
+**Registro**: `ft_cambios.smc_v3_estructura_confirmada` corregida de 2026-09-16 a
+2026-09-29, con la explicacion en el detalle.
+**Ref**: docs/forward_testing/estrategias/SMC_v3.md; CLAUDE.md "Batch .bat"
