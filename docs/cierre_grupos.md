@@ -10,9 +10,11 @@ TradingView Remix (ver "Origen" al final), sin LLM.
 - Doble clic: `scripts/manual/telegram_cierre.bat` (muestra la vista previa y
   pregunta antes de enviar; con parametros los pasa directo al script)
 - Auditor: `scripts/manual/auditar_cierre_grupos.py` (recalcula por SQL, criterio 1)
-- Rama: `feature/cierre-grupos`. **NO esta en la rutina diaria**: se suma solo si
-  pasa los criterios de abajo. Si no pasa, se documenta el cierre y se duerme
-  (codigo y doc en main, sin conectar, como la linea SEC XBRL).
+- **En la rutina diaria A PRUEBA desde el 14/10/2026** (paso `cierre`, despues de
+  `foto`, INFORMAR: nunca frena; su codigo 2 = "sin datos" se informa como OK).
+  Corre a la par de la foto unas ruedas para el criterio 5; si no aporta se saca el
+  paso (`src/utils/rutina.py`) y se documenta el cierre aca: codigo y doc quedan en
+  main, sin conectar, como la linea SEC XBRL.
 
 ## Que NO es
 
@@ -101,7 +103,7 @@ algo se cambia, se escribe como cambio con su motivo.
 | 2 | Mediana diaria de tickers con cruce: OI 17 (19 ruedas; el 16/9 sin muros de la rueda anterior), SWING 14, SMA 20. Rangos diarios: OI 8-41, SWING 9-27, SMA 13-33 | PASA los 3 |
 | 3 | Mas fuerte: el mas repetido es Energia, 30% de las ruedas (6 de 20; 7 sectores distintos fueron el mas fuerte). Mas debil: Mat. basicos, 40% (8 de 20) | PASA |
 | 4 | 1 mensaje por rueda en las 20; el mas largo 2.208 caracteres | PASA |
-| 5 | Pendiente: lectura del usuario en 5-10 ruedas reales | -- |
+| 5 | Pendiente: lectura del usuario en 5-10 ruedas reales, en la rutina desde el 14/10/2026 | -- |
 
 Comandos: `telegram_cierre.py --evaluar 20` (detalle y los 20 mensajes en
 `reportes/cierre_grupos/20260929_eval_20/`, fuera de git) y
@@ -121,6 +123,14 @@ Comandos: `telegram_cierre.py --evaluar 20` (detalle y los 20 mensajes en
 - Cambio de formato despues de la primera corrida (no toca ningun umbral): la
   distancia de "cerca de un nivel" se muestra con 2 decimales, porque con 1 un
   0,99% se leia "1,0%" dentro de una lista "a menos de 1,0%".
+
+**Primera corrida sobre datos vivos (14/10/2026, rueda 2026-10-13): un CERO FALSO.**
+"Cambio de veredicto (0): ninguno" -- pero no existia la rueda anterior (12/10) en
+`veredictos_universo_diario`, porque el guard freno FT el 13/10 y el veredicto se
+escribe al final de ft_run_diario. Sin rueda contra que comparar, la lista vacia se
+leia como "nadie cambio". Ahora `vigilar` cuenta los tickers comparables y en 0 el
+mensaje lo dice. No toca ningun umbral ni los criterios 1-4 (el auditor vuelve a
+dar 100% en las 20 ruedas al 13/10).
 
 **Lo que NO dice esta evaluacion:** que el mensaje sirva para decidir algo. Los
 criterios 1-4 solo dicen que es correcto, que sus reglas disparan en una

@@ -206,8 +206,13 @@ def vigilar(filas: list, umbral: float = UMBRAL_CERCA_PCT,
         tipo (el nivel mas cercano).
     earnings: [(ticker, ruedas, fecha)] con 1 <= ruedas <= ruedas_earn.
     veredictos: [(ticker, antes, ahora)] cuando cambio.
+    veredictos_comparables: tickers con veredicto en D Y en la rueda anterior.
+        En 0 la lista vacia NO significa "ningun cambio": falta la rueda anterior
+        en veredictos_universo_diario (pasa cuando FT no corrio esa rueda, como
+        el 13/10/2026) y no hay contra que comparar.
     """
     cerca_oi, cerca_sw, earn, vered = [], [], [], []
+    comparables = 0
     for r in filas:
         tk = r["ticker"]
         for destino, pares in ((cerca_oi, (("sop", r.get("sop_dist")), ("res", r.get("res_dist")))),
@@ -221,14 +226,17 @@ def vigilar(filas: list, umbral: float = UMBRAL_CERCA_PCT,
         if n is not None and 1 <= n <= ruedas_earn:
             earn.append((tk, n, r.get("earnings_fecha")))
         a, b = r.get("veredicto_ant"), r.get("veredicto")
-        if a and b and a != b:
-            vered.append((tk, a, b))
+        if a and b:
+            comparables += 1
+            if a != b:
+                vered.append((tk, a, b))
     cerca_oi.sort(key=lambda x: (abs(x[2]), x[0]))
     cerca_sw.sort(key=lambda x: (abs(x[2]), x[0]))
     earn.sort(key=lambda x: (x[1], x[0]))
     vered.sort(key=lambda x: x[0])
     return {"cerca_oi": cerca_oi, "cerca_swing": cerca_sw,
-            "earnings": earn, "veredictos": vered}
+            "earnings": earn, "veredictos": vered,
+            "veredictos_comparables": comparables}
 
 
 # ── Resultado completo ────────────────────────────────────────────────────────
@@ -350,8 +358,12 @@ def bloque_vigilar(res: dict) -> str:
                   f"{_lista(v['earnings'], earn)}")
     ver = lambda x: (f"{_esc(x[0])} {_VERED_CORTO.get(x[1], x[1])}->"
                      f"{_VERED_CORTO.get(x[2], x[2])}")
-    lineas.append(f"Cambio de veredicto ({len(v['veredictos'])}): "
-                  f"{_lista(v['veredictos'], ver)}")
+    if v.get("veredictos_comparables", 1):
+        lineas.append(f"Cambio de veredicto ({len(v['veredictos'])}): "
+                      f"{_lista(v['veredictos'], ver)}")
+    else:
+        lineas.append(f"Cambio de veredicto: sin veredictos de la rueda anterior "
+                      f"({_dm(res['rueda_ant'])}), no hay contra que comparar.")
     lineas.append("sop/res = muro OI, SL/SH = swing low/high; % = distancia del cierre. "
                   "Estado, no pronostico.")
     return "\n".join(lineas)

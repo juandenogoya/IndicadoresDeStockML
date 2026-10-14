@@ -191,3 +191,13 @@ def test_evaluar_excluye_oi_de_ruedas_sin_muros():
     ev = cg.evaluar(resultados)
     assert len(ev["cruces_por_dia"]["OI"]) == 1
     assert len(ev["cruces_por_dia"]["SMA"]) == 2
+
+
+def test_sin_veredictos_de_la_rueda_anterior_no_es_ningun_cambio():
+    """13/10/2026: FT no corrio la rueda del 12/10 y el mensaje decia
+    "Cambio de veredicto (0): ninguno" sin tener contra que comparar."""
+    filas = [_r("A", veredicto="ALCISTA"), _r("B", veredicto="NEUTRAL")]
+    v = cg.vigilar(filas)
+    assert v["veredictos"] == [] and v["veredictos_comparables"] == 0
+    filas = [_r("A", veredicto_ant="ALCISTA", veredicto="ALCISTA")]
+    assert cg.vigilar(filas)["veredictos_comparables"] == 1

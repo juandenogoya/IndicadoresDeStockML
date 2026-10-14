@@ -57,6 +57,9 @@ FT_BOT_FALLO = 2    # los bots corrieron, al menos uno termino con error
 # Codigo de salida de telegram_foto.py cuando no hay nada que mandar
 FOTO_SIN_NADA = 2
 
+# Codigo de salida de telegram_cierre.py cuando la rueda no tiene datos
+CIERRE_SIN_NADA = 2
+
 
 class Paso(NamedTuple):
     clave: str
@@ -86,6 +89,12 @@ PASOS = (
     # `Paso.columna` es siempre la fecha de DATOS.
     Paso("foto", "Foto al cierre por Telegram", INFORMAR,
          "precios_diarios", "fecha", "telegram_foto.py"),
+    # EN EVALUACION desde el 14/10/2026 (docs/cierre_grupos.md, criterio 5): corre
+    # a la par de la foto unas ruedas y se quita si no aporta. Va DESPUES de ft
+    # porque lee veredictos_universo_diario, que se escribe al final de
+    # ft_run_diario. Mismo lugar que la foto: informa, nada lo espera.
+    Paso("cierre", "Cierre por grupo por Telegram (en evaluacion)", INFORMAR,
+         "precios_diarios", "fecha", "telegram_cierre.bat"),
     # Va ULTIMO y nunca frena: earnings_historico no es insumo de ninguna decision
     # (el filtro de balances de los bots lee earnings_calendar), alimenta al
     # dashboard y a los analisis. Es el paso mas lento en relacion a lo que hace
@@ -203,6 +212,15 @@ def clasificar_foto(exit_code):
         return OK, []
     if exit_code == FOTO_SIN_NADA:
         return OK, ["sin candidatos de FT: no se envio ninguna foto"]
+    return ERROR, [f"termino con codigo {exit_code}"]
+
+
+def clasificar_cierre(exit_code):
+    """El 2 NO es una falla: la rueda no tiene datos, no hay cierre que mandar."""
+    if exit_code == 0:
+        return OK, []
+    if exit_code == CIERRE_SIN_NADA:
+        return OK, ["sin datos para la rueda: no se envio el cierre por grupo"]
     return ERROR, [f"termino con codigo {exit_code}"]
 
 
