@@ -975,7 +975,8 @@ Las criticas:
 - `activos` (ticker PK, nombre, sector, industry, activo BOOL, modelo_asignado) --
   FUENTE UNICA del universo. activo=TRUE = universo vivo. Leida via
   src/data/universo.get_universo(). En local Y Railway, sincronizada (dual-write
-  en alta/baja). 200 tickers (HOOD incorporado 18/6).
+  en alta/baja). 199 tickers (HOOD incorporado 18/6; WBD dado de baja 14/10/2026
+  por deslistado, ver docs/gestion_universo.md sec. 8).
 - `universo_cambios` -- log de alta/baja (ticker, accion ALTA/BAJA, fecha, sector,
   motivo, detalle JSONB). local+Railway. Auditoria/reproducibilidad point-in-time.
 - `precios_diarios` (OHLCV) | `indicadores_tecnicos`

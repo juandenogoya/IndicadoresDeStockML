@@ -1168,3 +1168,17 @@ con el cierre del 29/9 (dia habil verificado) y su ficha lo dice.
 **Registro**: `ft_cambios.smc_v3_estructura_confirmada` corregida de 2026-09-16 a
 2026-09-29, con la explicacion en el detalle.
 **Ref**: docs/forward_testing/estrategias/SMC_v3.md; CLAUDE.md "Batch .bat"
+
+### 2026-10-14 — DATOS
+**WBD deslistado: 3 posiciones cerradas con motivo DELISTING y baja del universo**
+Paramount Skydance compro Warner Bros. Discovery en efectivo (31 USD + devengo). Ultima
+rueda real 2026-10-05; la del 2026-10-06 es sintetica (volumen 0). Los bots seguian
+leyendo ese 30,95 como ultimo cierre: las posiciones no iban a cerrar nunca.
+**Cerradas** al ultimo close de precios_diarios (30,95), fecha 2026-10-14, motivo
+`DELISTING` (salida ARTIFICIAL, excluible como ESTRATEGIA_DISCONTINUADA):
+op 2861 TECH_SECTOR_v1 +10,80 USD | op 2868 TECH_SECTOR_v2 +10,80 USD |
+op 2294 TECH_SECTOR_OIEXIT_v1 +334,56 USD (+15,2%). El pago del deal (~31,02) difiere ~0,2%.
+Despues: `ft_compute_equity.py --rebuild` (cuadre OK en todas) y `universo.py remove WBD`
+(soft delete local + Railway; universo 199). La historia de WBD se conserva.
+**Registro**: `ft_cambios.wbd_delisting_cierre` (DATOS, fecha efectiva 2026-10-14, no corta tramos).
+**Ref**: docs/gestion_universo.md sec. 8

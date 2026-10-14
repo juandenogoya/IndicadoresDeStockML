@@ -142,3 +142,43 @@ sector y no se reclasifica).
 - **Primera alta real**: HOOD (Robinhood, Financial Services / Capital Markets),
   18/6/2026 -> universo 199->200. Validado end-to-end (precios/indicadores/
   features/z-scores/fundamentales/vs-sector, local y Railway).
+
+## 8. Primera baja real: WBD, deslistado por compra (14/10/2026)
+
+Paramount Skydance compro Warner Bros. Discovery en efectivo (31 USD por accion
+mas un devengo diario). Ultima rueda real 2026-10-05; la barra del 2026-10-06 es
+SINTETICA (O=H=L=C=30,95, volumen 0). Universo 200 -> 199.
+
+Como se detecto: el Paso 1 de la rutina quedo PARCIAL 6 corridas seguidas con un
+solo ticker pendiente ("WBD, ultimo dato 2026-10-06"). Un ticker que deja de
+cotizar NO falla: devuelve vacio y queda como "pendiente" para siempre.
+
+Lo que un deslistado deja y la baja tiene que resolver:
+- **Posiciones FT que nunca cierran solas.** Los bots deciden con el ultimo cierre
+  disponible del ticker (`fecha_datos`), asi que seguian viendo 30,95 todos los dias:
+  ni stop ni salida, marcadas a mercado a ese precio sin fin. El guard de `remove`
+  aborto con 3 abiertas (TECH_SECTOR_v1, v2 y OIEXIT_v1). Se cerraron al ULTIMO CLOSE
+  de `precios_diarios` (misma convencion que ESTRATEGIA_DISCONTINUADA; el pago del
+  deal difiere ~0,2%) con `motivo_salida = DELISTING` (salida ARTIFICIAL, excluible),
+  registro `ft_cambios.wbd_delisting_cierre` y `ft_compute_equity.py --rebuild`.
+  Recien despues, `remove` sin `--force`.
+- **Opciones "zombie".** Yahoo siguio sirviendo una cadena de WBD despues del cierre
+  (OI cayendo de 1,8 M a 0,4 M), con el precio congelado. Desde el 7/10 esas filas
+  entraban a `opciones_pcr_plazo_diario` con `precio_fuente='snapshot'` y al PCR
+  sectorial de Communication Services. La baja lo corta (el snapshot lee `activos`).
+- `config.ALL_TICKERS`: se quito a mano (el fallback de ultimo nivel lo reincorporaria).
+
+**La historia se CONSERVA** (30.111 filas en 41 tablas locales, ninguna FK hacia
+`activos`: la DB dejaria borrar sin error). Motivos para no hacer hard delete:
+descuadra el cash y la equity de FT; mete SESGO DE SUPERVIVENCIA en todo backtest o
+grilla futura (correr solo sobre las empresas que sobrevivieron); deja sin
+reproducir el entrenamiento ML v2, los `bt_hist_*` y las comparaciones del scanner;
+los agregados sectoriales ya escritos de los pares darian otro numero al
+recalcularse; y el crudo de opciones es irrecuperable. El espacio que se liberaria
+es despreciable.
+
+Receta para el proximo deslistado: (1) confirmar el evento y la ultima rueda real;
+(2) `universo.py remove X --dry-run` para ver el guard; (3) cerrar las posiciones FT
+abiertas al ultimo close con motivo DELISTING + `ft_cambios add` (tipo DATOS) +
+`ft_compute_equity.py --rebuild`; (4) `remove` real; (5) sacarlo de
+`config.ALL_TICKERS` y `universo.py cache`.

@@ -86,7 +86,7 @@ BT_EXTRA_TICKERS = [
     "LYFT", "UBER", "NFLX", "DIS", "AAP",
     # Consumer Discretionary (expansion TV 2026-04-21)
     "MAR", "HLT", "RACE", "CAR", "LEVI", "HOG", "PINS", "TWLO", "ASAN",
-    "WBD", "MBLY",
+    "MBLY",  # WBD: baja 14/10/2026 (deslistado, compra de Paramount)
     # Consumer Staples (additional)
     "UL", "HSY",
     # Consumer Staples (expansion TV 2026-04-21)
