@@ -297,6 +297,13 @@ def correr_paso(p, log, origen, rutina_id=None, dir_trabajo=None, extra=None):
                                   *(extra or [])], log)
             res["resultado"], res["notas"] = R.clasificar_foto(exit_code)
 
+        elif p.clave == "cierre":
+            # Cierre de la rueda leido por sector (EN EVALUACION, docs/cierre_grupos.md).
+            # Se llama al .py y no al .bat: el .bat pregunta antes de enviar.
+            exit_code = ejecutar([PYTHON, _script("manual", "telegram_cierre.py"),
+                                  *(extra or [])], log)
+            res["resultado"], res["notas"] = R.clasificar_cierre(exit_code)
+
         elif p.clave == "earnings":
             # Incremental cuota-aware: trae hasta --max-calls tickers de los que
             # DEBEN un balance segun su cadencia (src/utils/earnings_cobertura).

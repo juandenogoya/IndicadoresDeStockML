@@ -23,11 +23,12 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 def test_orden_de_la_rutina_y_politica_acordada():
     assert [p.clave for p in R.PASOS] == ["sync", "paso1", "paso2", "paso3", "ft",
-                                          "foto", "earnings"]
+                                          "foto", "cierre", "earnings"]
     politica = {p.clave: p.si_falla for p in R.PASOS}
     assert politica == {"sync": R.SEGUIR, "paso1": R.FRENAR, "paso2": R.FRENAR,
                         "paso3": R.FRENAR, "ft": R.INFORMAR,
-                        "foto": R.INFORMAR, "earnings": R.INFORMAR}
+                        "foto": R.INFORMAR, "cierre": R.INFORMAR,
+                        "earnings": R.INFORMAR}
 
 
 def test_la_foto_va_despues_de_ft_y_antes_de_earnings():
@@ -39,6 +40,21 @@ def test_la_foto_va_despues_de_ft_y_antes_de_earnings():
     # la fecha de DATOS de la foto es la rueda sobre la que se arma, no la de
     # corrida del bot (ft_candidatos_diarios.fecha es la de corrida)
     assert R.paso("foto").tabla == "precios_diarios"
+
+
+def test_el_cierre_va_despues_de_ft_y_nunca_frena():
+    """Lee veredictos_universo_diario, que escribe ft_run_diario al final."""
+    claves = [p.clave for p in R.PASOS]
+    assert claves.index("ft") < claves.index("cierre") < claves.index("earnings")
+    assert R.debe_seguir(R.paso("cierre"), R.ERROR)
+    assert R.paso("cierre").tabla == "precios_diarios"
+
+
+def test_cierre_sin_datos_no_es_una_falla():
+    assert R.clasificar_cierre(0) == (R.OK, [])
+    res, notas = R.clasificar_cierre(R.CIERRE_SIN_NADA)
+    assert res == R.OK and notas
+    assert R.clasificar_cierre(1)[0] == R.ERROR
 
 
 def test_ft_nombra_el_bot_que_fallo():
@@ -76,7 +92,7 @@ def test_earnings_va_ultimo_y_no_frena_a_nadie():
 
 def test_retomar_desde_un_paso():
     assert [p.clave for p in R.pasos_desde("paso2")] == ["paso2", "paso3", "ft",
-                                                        "foto", "earnings"]
+                                                        "foto", "cierre", "earnings"]
     with pytest.raises(ValueError):
         R.pasos_desde("paso9")
 
