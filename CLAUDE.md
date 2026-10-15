@@ -126,7 +126,13 @@ Documentacion que existe hoy en docs/:
                             pasos 1 (quitar condiciones) y 2 (grilla de pesos, 589
                             reglas), y la de SMC_v1 (96 combinaciones de stop, CHoCH,
                             estructura y time stop): ninguna se confirma. Leer ANTES
-                            de tocar una regla de salida.
+                            de tocar una regla de salida. Y estrategias/CARTERAS_PERFIL.md
+                            (15/10/2026, CERRADA sin FT): 4 carteras por perfil de
+                            riesgo con el top 3 por familia + SL/TP por perfil; la
+                            seleccion no le gana al azar, en perfiles tranquilos
+                            mantener el perfil gana, y el diagnostico de salidas
+                            (V0-V4) no encontro mejora. Leer ANTES de proponer
+                            carteras por perfil o "salidas por volatilidad".
 - docs/infografia_fundamental.md : spec de diseno de la infografia fundamental
                             para X/redes (formato 4:5, layout 5 bloques, set de
                             indicadores por perfil banco/no-banco, decisiones).
