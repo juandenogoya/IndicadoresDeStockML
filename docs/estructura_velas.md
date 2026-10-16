@@ -275,6 +275,47 @@ entre 22 pruebas. Con lo que se sabia cada dia, BOS y CHoCH tampoco muestran ven
 Conclusion: corregir las velas es un tema de DESCRIBIR bien (dashboard, MCP, Telegram,
 infografias), no de rendimiento. Ninguna definicion debe venderse como senal.
 
+#### 5.4.1 Envolvente que cubre tambien las mechas ("Envolvente +/-", 16/10/2026)
+
+Pregunta: ?una envolvente clasica cuyo rango ademas cubre el high y el low de la vela
+previa (`patron_engulfing_* = 1` y `outside_bar = 1` en `features_velas`) es una senal
+mas fuerte? Muestra: 227.383 velas de `features_velas`, 2020-01-02 -> 2026-10-15,
+todo el universo. Mismo metodo que arriba: exceso vs el promedio del universo del dia,
+media por dia, IC95 sobre los dias; entre parentesis, % de casos que le ganan al
+universo. Los retornos a 20 ruedas se solapan entre dias: el IC es, si acaso, optimista.
+
+| Grupo | n | % velas | Exceso 1d | Exceso 5d | Exceso 20d |
+|---|---|---|---|---|---|
+| Env. alcista (todas) | 7.887 | 3,47% | -0,02 [-0,10; +0,06] (48%) | +0,05 [-0,14; +0,23] (47%) | +0,03 [-0,36; +0,41] (47%) |
+| Env. alcista + (cubre H y L) | 2.919 | 1,28% | +0,08 [-0,04; +0,21] (49%) | +0,22 [-0,07; +0,52] (48%) | +0,48 [-0,12; +1,07] (46%) |
+| Env. alcista sin cubrir H/L | 4.968 | 2,18% | -0,06 [-0,15; +0,03] (48%) | -0,03 [-0,24; +0,18] (47%) | -0,13 [-0,55; +0,29] (47%) |
+| Env. alcista + tras caida | 1.666 | 0,73% | -0,01 [-0,17; +0,16] (49%) | +0,06 [-0,28; +0,40] (48%) | -0,03 [-0,76; +0,70] (45%) |
+| Env. bajista (todas) | 8.911 | 3,92% | -0,04 [-0,11; +0,04] (49%) | +0,01 [-0,17; +0,19] (48%) | +0,25 [-0,14; +0,63] (47%) |
+| Env. bajista - (cubre H y L) | 3.688 | 1,62% | +0,04 [-0,09; +0,17] (51%) | +0,15 [-0,11; +0,42] (50%) | +0,27 [-0,31; +0,84] (48%) |
+| Env. bajista sin cubrir H/L | 5.223 | 2,30% | -0,08 [-0,17; +0,00] (48%) | -0,06 [-0,27; +0,14] (48%) | +0,20 [-0,28; +0,67] (47%) |
+| Env. bajista - tras suba | 2.254 | 0,99% | +0,05 [-0,11; +0,20] (50%) | +0,13 [-0,19; +0,44] (50%) | +0,45 [-0,28; +1,18] (48%) |
+
+Estabilidad por mitades (corte 2024-07-10), exceso a 5 / 20 ruedas:
+
+| Grupo | 1a mitad | 2a mitad |
+|---|---|---|
+| Env. alcista + | n=1.428: +0,37 [-0,02; +0,76] / +0,57 [-0,20; +1,34] | n=1.491: +0,05 [-0,39; +0,48] / +0,36 [-0,57; +1,28] |
+| Env. bajista - | n=1.863: +0,03 [-0,33; +0,38] / +0,09 [-0,63; +0,80] | n=1.825: +0,32 [-0,08; +0,72] / +0,50 [-0,43; +1,43] |
+
+Lectura:
+- Ningun grupo se distingue de cero: todos los IC95 incluyen el cero (24 comparaciones).
+- La alcista + tiene la media mas alta, pero le gana al universo en menos de la mitad
+  de los casos (46-49%) y se achica en la segunda mitad (5d: +0,37 -> +0,05).
+- La bajista - va al REVES de lo que dice su nombre: despues de ella el precio sube un
+  poco MAS que el universo, igual que despues de la alcista +. Lo que tienen en comun
+  las dos es el rango grande (outside bar): lo que se ve es volatilidad, no direccion.
+  Sumar el contexto (tras caida / tras suba) no lo arregla.
+
+Conclusion: cubrir las mechas no convierte la envolvente en senal. Si se quiere mostrar
+(Telegram, dashboard), es una DESCRIPCION ("envolvente con rango completo") y no debe
+presentarse como mas fuerte. No se agrega columna a `features_velas`: se deriva de
+`patron_engulfing_*` y `outside_bar`, que ya estan.
+
 ---
 
 ## 6. Semanal
@@ -787,7 +828,7 @@ Lo que esto cierra y lo que no:
 
 ### Fase 4 -- migrar consumidores (despues de la Etapa 4)
 - Score del scanner, SMC y COMBO (como versiones nuevas en paralelo), dashboard, MCP,
-  Telegram. Re-correr backtests SMC/COMBO. Retirar los modulos `_1w` duplicados.
+  Telegram (bloque "Setups de Vela" HECHO el 16/10/2026, sec. 12.5). Re-correr backtests SMC/COMBO. Retirar los modulos `_1w` duplicados.
 
 ---
 
@@ -978,10 +1019,22 @@ el close mas de 0,5% debajo del maximo real. No es un bug, pero las dos columnas
 | Consumidor | Que lee | Estado |
 |---|---|---|
 | FT_SMC_v1 (`ft_scoring.calcular_score_estructura`) | `patron_engulfing_bull`, `patron_hammer` | A PROPOSITO: es el control de FT_SMC_v3, que lee `features_velas` |
-| Scanner (`feature_calculator`, `17_scanner_alertas.py`) y su Telegram | `patron_hammer`, `patron_engulfing_bull` | pendiente, Fase 4 |
+| Scanner (`feature_calculator`, `17_scanner_alertas.py`): condiciones EV del score | `patron_hammer`, `patron_engulfing_bull` | pendiente, Fase 4 (mueve el `alert_score`: va como version en paralelo) |
+| Telegram del scanner, bloque "Setups de Vela" (`telegram_notifier`) | hammer, envolventes, shooting star | **MIGRADO 16/10/2026** a `features_velas` (ver abajo) |
 | Dashboard (`sintesis_data.py`, `dashboard_sintesis.py`) | envolventes, hammer, shooting star | pendiente, Fase 4 |
 | MCP (`screener`, `overview`, `queries.py`) | los 6 patrones + `tendencia_velas` + `rango_expansion` | pendiente, Fase 4 |
 | FT_COMBO_v1 | score de velas | DISCONTINUADA (17/9/2026) |
+
+**Telegram "Setups de Vela" migrado (16/10/2026).** Primer consumidor de la Fase 4.
+`telegram_notifier.cargar_velas_clasicas` lee `features_velas` por (ticker,
+`precio_fecha`) -- la rueda de los datos, no `scan_fecha` -- y el formatter ya no mira
+los `patron_*` de `features_pa`. Disparador: TSM el 15/10/2026 salio "Envolvente Alc."
+con un cuerpo 415,17-422,25 que no envuelve al previo 430,00-436,25 (el OHLCV coincide
+con TradingView); con la definicion clasica no hay patron. Ese dia la vieja marcaba 103
+tickers. Un ticker sin fila en `features_velas` para su rueda sale sin patron y se avisa
+(no se cae a la tabla vieja). NO cambio: los `patron_*` de `features_pa` siguen
+entrando a las condiciones EV del score del scanner, FT_SMC_v1 sigue en la tabla vieja
+(control), y dashboard/MCP siguen pendientes. Test: `tests/test_telegram_velas.py`.
 
 El modelo ML NO lee ninguna columna de `features_precio_accion`. Los valores inventados
 caen en filas historicas (costuras de backfill), no en la ultima fila que muestran el MCP

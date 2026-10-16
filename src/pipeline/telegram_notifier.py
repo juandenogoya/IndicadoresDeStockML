@@ -4,7 +4,13 @@ Formatea y envia el resumen de alertas del scanner via Telegram.
 
 Dos mensajes por ejecucion:
     1. Scanner ML   : senales no-NEUTRAL con score y ML%
-    2. Setups Vela  : patrones hammer / engulfing / shooting star detectados
+    2. Setups Vela  : patrones hammer / engulfing / shooting star detectados.
+                      Desde el 16/10/2026 salen de features_velas (definicion
+                      clasica, src/indicators/velas.py), leida por ticker +
+                      precio_fecha. NO de los patron_* de features_pa: esos son
+                      los de precio_accion.py (el 71% de sus envolventes no
+                      envuelve) y siguen alimentando el score del scanner, que
+                      este cambio no toca. Ver docs/estructura_velas.md sec. 12.5.
 
 Requiere TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID en .env.
 """
@@ -46,6 +52,7 @@ _PATRON_NOMBRE = {
 
 _PATRONES_ALCISTAS = ["patron_hammer", "patron_engulfing_bull"]
 _PATRONES_BAJISTAS = ["patron_shooting_star", "patron_engulfing_bear"]
+_PATRONES_TELEGRAM = _PATRONES_ALCISTAS + _PATRONES_BAJISTAS
 
 
 # ─────────────────────────────────────────────────────────────
@@ -203,16 +210,69 @@ def formatear_mensaje1_scanner(resultados: List[Dict]) -> str:
 # Mensaje 2: Setups de Vela
 # ─────────────────────────────────────────────────────────────
 
-def formatear_mensaje2_velas(resultados: List[Dict]) -> str:
+def _fecha_datos(r: Dict):
+    """Rueda de la barra del resultado (precio_fecha) como date, o None."""
+    f = r.get("precio_fecha")
+    if f is None:
+        return None
+    return f.date() if hasattr(f, "date") and callable(f.date) else f
+
+
+def cargar_velas_clasicas(resultados: List[Dict]) -> Dict[tuple, Dict[str, int]]:
+    """
+    Lee de features_velas los patrones de la rueda de cada resultado.
+
+    La clave es (ticker, precio_fecha): precio_fecha es la rueda sobre la que
+    se calculo la alerta. scan_fecha es cuando corrio el scanner y con ella se
+    leeria el dia equivocado (patron critico "alertas_scanner: scan_fecha NO es
+    la fecha de datos").
+
+    Returns:
+        {(ticker, date): {patron: 0/1}}. Un par sin fila en features_velas no
+        aparece: ese ticker sale sin patron (y se avisa cuantos fueron).
+    """
+    pares = {(r["ticker"], _fecha_datos(r)) for r in resultados
+             if not r.get("error") and _fecha_datos(r) is not None}
+    if not pares:
+        return {}
+
+    from src.data.database import query_df
+    cols = ", ".join(_PATRONES_TELEGRAM)
+    df = query_df(
+        f"SELECT ticker, fecha, {cols} FROM features_velas "
+        "WHERE ticker = ANY(:tickers) AND fecha = ANY(:fechas)",
+        {"tickers": sorted({t for t, _ in pares}),
+         "fechas": sorted({f for _, f in pares})},
+    )
+    velas = {}
+    for row in df.to_dict("records"):
+        f = row["fecha"]
+        f = f.date() if hasattr(f, "date") and callable(f.date) else f
+        clave = (row["ticker"], f)
+        if clave in pares:
+            velas[clave] = {p: int(row[p] or 0) for p in _PATRONES_TELEGRAM}
+
+    faltan = len(pares) - len(velas)
+    if faltan:
+        print(f"  [WARN] {faltan} tickers sin fila en features_velas para su "
+              f"rueda: salen sin patron en Setups de Vela (correr el Paso 2c).")
+    return velas
+
+
+def formatear_mensaje2_velas(resultados: List[Dict],
+                             velas: Dict[tuple, Dict[str, int]] = None) -> str:
     """
     Genera el mensaje de setups de vela.
 
-    Filtra tickers con patron_hammer, patron_engulfing_bull,
-    patron_shooting_star o patron_engulfing_bear.
+    Los patrones (hammer, envolventes, shooting star) salen de `velas`
+    (cargar_velas_clasicas: features_velas por ticker + precio_fecha), NUNCA de
+    los patron_* que trae cada resultado -- esos son los de precio_accion.py.
+    Sin `velas` no hay patrones. vol_spike si sale del resultado (bien calculado).
     Muestra el nivel ML como contexto y agrega campanita si vol_spike.
     Retorna string vacio si no hay patrones detectados.
     """
     now = datetime.now().strftime("%Y-%m-%d")
+    velas = velas or {}
 
     # (nivel, ticker, patron_nombre, vol_spike, alert_score)
     alcistas: list = []
@@ -226,14 +286,15 @@ def formatear_mensaje2_velas(resultados: List[Dict]) -> str:
         ticker = r["ticker"]
         vol    = bool(r.get("vol_spike"))
         score  = r.get("alert_score", 0)
+        patrones = velas.get((ticker, _fecha_datos(r)), {})
 
         for p in _PATRONES_ALCISTAS:
-            if r.get(p):
+            if patrones.get(p):
                 alcistas.append((nivel, ticker, _PATRON_NOMBRE[p], vol, score))
                 break
 
         for p in _PATRONES_BAJISTAS:
-            if r.get(p):
+            if patrones.get(p):
                 bajistas.append((nivel, ticker, _PATRON_NOMBRE[p], vol, score))
                 break
 
@@ -273,12 +334,9 @@ def enviar_resumen(resultados: List[Dict]) -> bool:
     Formatea y envia el resumen de alertas por Telegram (2 mensajes).
 
     Mensaje 1: Scanner ML (solo senales no-NEUTRAL).
-    Mensaje 2: Setups de vela con patrones PA (si existen).
-
-    Los resultados deben incluir los campos de patrones de vela:
-        patron_hammer, patron_shooting_star, patron_engulfing_bull,
-        patron_engulfing_bear, es_alcista, vol_spike.
-    Estos se agregan en cron_diario.paso_scanner() desde calc["features_pa"].
+    Mensaje 2: Setups de vela (si existen), con los patrones de features_velas
+    leidos por ticker + precio_fecha (cargar_velas_clasicas). De cada resultado
+    se usan ticker, precio_fecha, alert_nivel, alert_score y vol_spike.
 
     Args:
         resultados: lista de dicts con resultados del scanner.
@@ -295,7 +353,13 @@ def enviar_resumen(resultados: List[Dict]) -> bool:
     ok1 = _send_long(texto1)
 
     # Mensaje 2: Setups de vela (solo si hay patrones)
-    texto2 = formatear_mensaje2_velas(resultados)
+    try:
+        velas = cargar_velas_clasicas(resultados)
+    except Exception as e:
+        # Sin features_velas no se inventan patrones: el mensaje 2 no sale.
+        print(f"  [WARN] No se pudo leer features_velas ({e}): sin Setups de Vela.")
+        velas = {}
+    texto2 = formatear_mensaje2_velas(resultados, velas)
     ok2 = True
     if texto2:
         ok2 = _send_long(texto2)
