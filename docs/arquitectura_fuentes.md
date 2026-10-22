@@ -28,6 +28,13 @@ solo devuelve un numero equivocado que nadie revisa.
 | **SEC companyfacts** | API publica | gratis | 147 | **34 Q** | historia profunda + point-in-time real |
 | **Alpha Vantage** | API | gratis, 25/dia | 200 | -- | **fecha de anuncio** del balance |
 | **EDGAR / sec-api.io** | API | **paga** | 147 (USA) | por filing | hechos **dimensionados** + frescura |
+
+> **Este doc cubre fuentes FUNDAMENTALES.** El 22/10/2026 se evaluo una sexta
+> fuente, **IBKR**, que es de datos de MERCADO (precios, opciones con greeks,
+> intradiario, futuros) y por eso no entra en el reparto por eje de la
+> seccion 3. Su inventario medido y el plan para decidir si se incorpora estan
+> en `docs/fuentes_ibkr.md`. Esta MEDIDA y SIN NINGUN CAMBIO en el proyecto.
+> Los principios de las secciones 2 y 5 de este doc se le aplican igual.
 | **Polygon** | API | gratis, 5/min | **200** | por fecha | **splits autoritativos** + conteo TOTAL de multiclase |
 
 Fuentes EVALUADAS Y DESCARTADAS para acciones, para no volver a probarlas:

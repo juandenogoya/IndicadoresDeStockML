@@ -133,6 +133,29 @@ Documentacion que existe hoy en docs/:
                             mantener el perfil gana, y el diagnostico de salidas
                             (V0-V4) no encontro mejora. Leer ANTES de proponer
                             carteras por perfil o "salidas por volatilidad".
+                            Y ANALISIS_FILL.md (22/10/2026, CERRADO): eran
+                            ALCANZABLES los precios con los que FT registro sus
+                            operaciones? FT llena al close de `fecha_datos`, que
+                            YA HABIA OCURRIDO al decidir (88,9% de las entradas
+                            con 1 dia de desfase). Re-valuado a la apertura
+                            siguiente, con las DOS patas juntas: diferencia
+                            pareada -0,002 pp, IC95 [-0,190; +0,187]. NO PASA la
+                            regla pre-registrada -> la convencion queda
+                            CONFIRMADA y ninguna conclusion de FT necesita
+                            asterisco. Deja 2 lecciones de METODO (sec. 3.4-3.5):
+                            un total por estrategia NO es una metrica de
+                            significancia (es media x n: COMBO_v1 movia 60 pp de
+                            puro ruido) y 12 de 13 estrategias incluyen el cero.
+                            Leer ANTES de sospechar del fill o de proponer medir
+                            timing de ejecucion. CERRADO por decision: los COSTOS
+                            (spread, comisiones, slippage) quedaron SIN MEDIR a
+                            proposito -- no por ser chicos, sino porque no se
+                            siguio buscando. Con +0,160% de retorno medio por
+                            operacion, un costo del orden del spread se come el
+                            resultado entero: la sec. 4 dice que reabriria la
+                            linea (operar con dinero real, cambiar la convencion
+                            de ejecucion, o una ventaja medida contra el control).
+                            Re-correrlo es un comando, no un proyecto.
 - docs/infografia_fundamental.md : spec de diseno de la infografia fundamental
                             para X/redes (formato 4:5, layout 5 bloques, set de
                             indicadores por perfil banco/no-banco, decisiones).
@@ -197,6 +220,43 @@ Documentacion que existe hoy en docs/:
                             arreglan GRATIS con tags propios) y las 5 reglas
                             de convivencia. Leer ANTES de agregar una fuente
                             o de resolver "de donde saco este numero".
+- docs/fuentes_ibkr.md    : IBKR como fuente de datos de MERCADO (22/10/2026),
+                            la sexta evaluada y la primera que no es
+                            fundamental. MEDIDO contra el mercado en vivo y
+                            SIN NINGUN CAMBIO en el proyecto. Que da de nuevo
+                            (greeks, IV y OI por contrato; intradiario de 30s
+                            a 1 mes, 1.078 barras horarias en un pedido) y los
+                            limites DUROS: no hay historico DIARIO de opciones
+                            (es ESTRUCTURAL, no de permisos: la doc oficial
+                            dice que no hay EOD para opciones; el intradiario
+                            SI existe, ~2 meses, demorado 15 min y SIN open
+                            interest), tope de ~1.000 puntos por pedido y la
+                            barra del dia viene EN CURSO (misma trampa que
+                            yahooquery). POR QUE NO resuelve el techo de
+                            opciones de abril/2027, y es definitivo: las
+                            opciones VENCIDAS no tienen dato, asi que la cadena
+                            de una rueda pasada no se reconstruye ni en precio,
+                            y el historico de un contrato vivo es precio y
+                            volumen, NO open interest. COSTO (sec. 9, verificado
+                            contra la pagina oficial): la API no cobra fee; el
+                            tiempo real de acciones US y el historico diario
+                            vienen GRATIS (Cboe One+IEX, no consolidado) + 100
+                            snapshots/mes; las Etapas 1 y 3 cuestan USD 0 y la
+                            de greeks USD 1,50/mes (OPRA L1 no-pro). NO hay
+                            cupos diarios ni mensuales: son limites de
+                            velocidad y de CONCURRENCIA, y el que aprieta son
+                            las 100 lineas de market data. Las 3 vias de acceso
+                            (conector consultivo / TWS API / Client Portal) y
+                            por que paper NO es la prioridad (el problema es
+                            de evidencia, no de ejecucion). Plan en 5 etapas
+                            con compuertas, todo de solo lectura; la UNICA con
+                            reloj es la de greeks. NINGUNA corrida. Leer ANTES
+                            de proponer consumir IBKR o conectar paper.
+                            CERRADO el 22/10/2026: linea DORMIDA, el conector
+                            queda SOLO como herramienta de consulta y nada de
+                            IBKR entra al pipeline. La Etapa 3 se contesto sin
+                            IBKR y dio cero (ANALISIS_FILL.md); las otras no
+                            justifican una sexta fuente que mantener.
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
@@ -438,6 +498,23 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   del mismo dia, 79,6% de la rueda anterior). La escribe
   `ft_utils.registrar_estado_posiciones()`; la historia se backfilleo con
   `scripts/oneshot/add_fecha_datos_ft_posiciones.py`.
+- **El precio de fill de esa convencion SI era alcanzable: MEDIDO el 22/10/2026**
+  (docs/forward_testing/ANALISIS_FILL.md). El close de `fecha_datos` ya habia
+  ocurrido al decidir, asi que se re-valuaron las 2.505 operaciones utiles a la
+  apertura de la rueda siguiente, **moviendo entrada Y salida juntas**: diferencia
+  pareada **-0,002 pp, IC95 [-0,190; +0,187]**, y el signo va levemente EN CONTRA
+  de la sospecha (la apertura siguiente habria dado algo mejor). El efecto se
+  cancela entre las dos patas; con solo la salida re-valuada habria aparecido un
+  efecto que no existe. La convencion queda confirmada tambien en precio.
+  **Lo que sigue sin medir son los COSTOS** (spread, comisiones, slippage): con un
+  retorno medio de +0,160% por operacion, un costo del orden del spread se come el
+  resultado entero.
+- **Un total por estrategia NO es una metrica de significancia**: es media x n.
+  `FT_COMBO_v1` movia 60 pp al cambiar el fill, que parecia enorme y era 452
+  operaciones x una diferencia de +0,100 pp con IC95 que incluye el cero. Y dar
+  vuelta el signo de un total que ya vale cero (`FT_SMC_v1`, +0,45 pp) no informa
+  nada: si el signo del total se usa como criterio, el total va con su IC. Esa fue
+  una falla de la regla de lectura pre-registrada, documentada en el doc sec. 3.4.
 
 ### FT: todo cambio que toque decisiones se REGISTRA en `ft_cambios` (13/9/2026)
 - Antes de desplegar algo que cambie logica, parametros, modelo, un dato o infra
@@ -940,6 +1017,7 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `src/utils/ft_comparar.py` | Modulo PURO de la Etapa 3f: POR QUE DIFIEREN FT_ML_SCANNER_v1 y v2 (no cual rinde mas). Senales sobre las MISMAS filas de alertas_scanner (ambas / solo v1 / solo v2 por rueda, Jaccard, retorno real a 5/20 ruedas y exceso contra el universo de la rueda; decide exclusivas v2 contra exclusivas v1), atribucion (tickers fuera del entrenamiento de la v1, nivel que dio la otra version, sector), operaciones compartidas/exclusivas, oportunidades que dejo afuera el tope y cartera pareada. INSUFICIENTE sin numero: 10 senales EN 5 RUEDAS distintas (14 exclusivas de una sola rueda son una sola observacion de mercado) / 10 ops / 20 ruedas. `tablas()` = el texto comun del .md y el HTML. Ver docs/forward_testing/METRICAS.md sec. 13 |
 | `scripts/forward_testing/ft_analisis_salidas.py` (+ `src/utils/ft_salidas.py`) | Analisis de SALIDAS de FT (solo lee; docs/forward_testing/ANALISIS_SALIDAS.md). `panorama` = que hizo el precio despues de cada salida, contra el universo y en desvios del ticker, IC95 por dia, clasificacion a tiempo/temprano/indiferente vs salir al azar; `balances` = eventos unicos contra todos los balances del tramo; `tech_sector_v1` = combinaciones de la regla, ventana del bug del score 0,0 y que condicion disparo cada salida. Excluye las ventanas de `ft_cambios` que invalidan la historia. Escribe en `reportes/analisis_salidas/AAAAMMDD_<etiqueta>/`. `p0` (la re-simulacion reproduce a FT), `p1` (quitar condiciones) y `p2` (grilla de pesos: 589 reglas re-simuladas vectorizadas, con control interno contra la maquina del paso 0; seleccion 2021-24 / confirmacion 2025-26 / FT de control) son los pasos pre-registrados de TECH_SECTOR_v1. El modulo puro tiene la regla de la v1 como funcion de sus 5 condiciones, las variantes del paso 1 (`VARIANTES`) y la grilla del paso 2 como mascaras de 32 estados (`reglas_grilla`) |
 | `scripts/forward_testing/ft_analisis_salidas_smc.py` (+ `src/utils/ft_salidas_smc.py`) | Analisis de SALIDAS de FT_SMC_v1 (solo lee; ANALISIS_SALIDAS.md sec. 10). Reconstruye rueda por rueda lo que el bot veia en `features_market_structure` (su historia mira al futuro): modulo viejo sobre las ultimas 250 barras, en paralelo, ~26 min, copia en `reportes/analisis_salidas/cache/` que se reusa mientras no haya rueda nueva (`--recalcular`). `--seccion p0` (fidelidad contra FT + anatomia) / `grilla` (96 combinaciones de stop, CHoCH, estructura rota y time stop; todas las senales, muestra con tope de 5 y FT de control) / `todas`. Corta la re-simulacion donde `earnings_historico` deja de estar completa (`fin_balances`). El modulo puro tiene la regla del bot con sus prioridades (`primera_salida`, referencia) y la version vectorizada (`salidas_reglas`), verificadas iguales por test y en cada corrida |
+| `scripts/forward_testing/ft_analisis_fill.py` (+ `src/utils/ft_fill.py`) | Realismo del FILL de FT (solo lee; docs/forward_testing/ANALISIS_FILL.md). Re-valua cada operacion al primer precio OBTENIBLE (apertura y close de la rueda siguiente a `fecha_datos`) contra el fill registrado, **moviendo entrada Y salida en la misma variante** -- re-valuar una sola pata mide un artefacto que no existe. Trabaja en RETORNO y no en dolares (cambiar el precio de entrada cambiaria la cantidad: eso seria medir el sizing). Rueda como unidad de independencia, IC95 via `ft_salidas.ic95_por_dia`. Informa aparte cuantas operaciones cumplen el supuesto de la cota optimista, comparando `creado_en` contra la apertura de NYSE. Sale 0 si la convencion queda confirmada / 2 si el fill es material / 1 error. `--etiqueta` / `--sin-archivo`; escribe en `reportes/analisis_fill/AAAAMMDD_<etiqueta>/`. RESULTADO 22/10/2026: NO PASA, convencion confirmada. No va a `ft_cambios` |
 | `scripts/forward_testing/ft_comparar_ml.py` | Carga y reporte de la comparacion v1 vs v2 (`reportes/ft_comparar_ml.md`; `--desde`, default el inicio de la v2). Solo lee. Los retornos salen de `precios_diarios` por `precio_fecha`, NO de `retorno_Nd_real` (sin llenar desde mayo). Entrenados en la v1 = tickers con precio hasta fin de 2021 (123; `modelo_asignado` da 125). La seccion del HTML usa su `cargar_insumos()` |
 | `scripts/manual/telegram_foto.py` (+ `src/utils/foto_ticker.py`) | "Foto al cierre" por Telegram (25/9/2026): candidatos de la ultima corrida FT en 2+ FAMILIAS (no instancias: las 5 de TECH_SECTOR son una) + top 3 por familia por score, con RSI/MACD (umbrales de clasificacion_tecnica), volumen / mediana de 252 ruedas previas, SMA50/200, ruedas hasta earnings y tabla de 5 ruedas con cruces. Estado, no pronostico. `--dry-run` / `--tickers` / `--top`. LOCAL-only. Es el paso `foto` de la rutina desde el 25/9/2026 (despues de `ft`, antes de `earnings`, INFORMAR: nunca frena; su codigo 2 = "sin candidatos" se informa como OK). Ver docs/telegram_foto.md |
 | `scripts/refresh_earnings_calendar.py` | Refresh earnings_calendar desde Nasdaq (cron Oracle semanal) |
