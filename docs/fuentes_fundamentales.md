@@ -115,6 +115,81 @@ Correr el refresh bajo el hueco de **97 -> 30**. Los 30 restantes se parten:
 
 ---
 
+## 2b. El mismo chequeo, 2 meses despues (21/10/2026)
+
+El metodo de arriba se volvio a aplicar y **ahora tiene herramienta**:
+`scripts/manual/status_balances.py` (solo lee; `--solo-local` es instantaneo).
+Antes habia que rearmar el analisis a mano cada vez, que es parte de por que paso
+tanto tiempo sin que nadie lo mirara.
+
+### Estado encontrado
+
+El refresh es MANUAL y llevaba **55 dias sin correr** (ultimo 27/8). Resultado:
+**64 de 199 tickers sin su ultimo balance (32%)**, con 27 todavia en el Q de marzo,
+y ningun aviso en ninguna parte. El dato viejo no grita: `fundamentales_ratios_q`,
+los multiplos `*_px`, la vista "Analisis Financiero" y `get_fundamentals` del MCP
+siguen contestando con el trimestre que haya, y las medianas sectoriales mezclan
+tickers en trimestres distintos (es el tercer modo de falla de la seccion 3, el
+silencioso).
+
+### Resultado del refresh
+
+| | antes | despues |
+|---|---|---|
+| ultimo Q cargado | 2026-06-30 | 2026-08-31 |
+| tickers en el Q de marzo | 27 | 5 |
+| sin su ultimo balance | 64 (32%) | **20 (10%)** |
+
+Los 20 que quedan **no son todos lo mismo**, y la diferencia decide si hay algo que
+hacer:
+
+- **12 reportaron hace 1 a 20 dias** (UNH, JPM, GS, C, WFC, BLK, PGR, PEP, TSM, DAL,
+  LEVI, MU): bancos y calendarios desplazados del Q3. yahooquery todavia no publico
+  su estado trimestral. Se resuelven solos en el proximo refresh.
+- **3 vencidos de verdad**: COST (38 d), ACN (26 d), NKE (22 d).
+- **5 con el periodo PRESENTE y VACIO en la fuente** (ver abajo).
+
+Aparte, **4 tickers sin trimestral** (HMY, RIO, UL, VOD): reportan semestral y la
+fuente no tiene trimestral para ellos. **NO son un atraso** y el script los informa
+por separado: con una proyeccion por trimestres darian falso positivo para siempre.
+El conteo de 64 de la primera medicion los incluia; el de 20 no.
+
+### La anatomia del modo STUB, medida
+
+Para **ABT, AMZN, BA, BAC y MDLZ** yahooquery devuelve el periodo 2026-06-30 con
+**`DilutedEPS` y todo el resto en NULL** -- revenue, net income y operating income.
+Hay fila y no hay balance. De ahi salen las "filas stub parciales" de la seccion 3:
+no es que el refresh falle, es que la fuente entrega el periodo sin el estado
+contable. Un refresh no los arregla, y esperar tampoco: **siguen identicos 2 meses
+despues**.
+
+Eso **confirma la nota de la seccion 2** ("7 trabados en yahooquery... no se arreglan
+esperando"). De esos 7, dos si se arreglaron (UNH, AMT) y cinco no.
+
+### El error de metodo que casi tapa esto
+
+En la primera lectura del 21/10 se concluyo que los 7 trabados "ya estaban
+disponibles, esperar los arreglo". Era falso: se habia mirado si el PERIODO aparecia
+en la respuesta de `income_statement`, sin chequear si los IMPORTES venian cargados.
+La fuente devuelve el periodo igual. **"La fuente lo tiene" no es que el periodo
+exista: es que tenga los numeros.** El script ahora distingue las dos cosas
+(`yq_periodo` vs `yq_con_importes`) y clasifica esos 5 como "la fuente lo tiene VACIO
+(EPS solo)" en vez de "recuperable".
+
+Despues del refresh el cruce queda: 190 tickers al mismo nivel que la fuente, 0
+recuperables, 5 vacios en origen y 4 sin trimestral. **Estamos tan al dia como
+yahooquery permite**; el hueco que queda es de la fuente, no nuestro.
+
+### Lo que queda abierto
+
+- Los 5 vacios en origen necesitan **otra fuente** para su balance. La linea SEC XBRL
+  (dormida, cierre al final de este doc) cubre a los 5 -- son filers USA -- pero
+  reactivarla es una decision aparte y no se tomo.
+- COST / ACN / NKE: ver si es el mismo modo stub o un atraso de la fuente.
+- El refresh sigue siendo MANUAL. Que se desfase 55 dias es el comportamiento
+  esperado de algo que depende de que alguien se acuerde; si se encadena a la rutina
+  hay que decidir la cadencia (los balances se mueven por trimestre, no por rueda).
+
 ## 3. Los tres modos de falla del estado actual
 
 Importante para calibrar cuanto desconfiar: **los valores almacenados no son
