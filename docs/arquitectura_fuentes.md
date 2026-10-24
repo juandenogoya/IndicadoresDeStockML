@@ -28,6 +28,7 @@ solo devuelve un numero equivocado que nadie revisa.
 | **SEC companyfacts** | API publica | gratis | 147 | **34 Q** | historia profunda + point-in-time real |
 | **Alpha Vantage** | API | gratis, 25/dia | 200 | -- | **fecha de anuncio** del balance |
 | **EDGAR / sec-api.io** | API | **paga** | 147 (USA) | por filing | hechos **dimensionados** + frescura |
+| **Polygon** | API | gratis, 5/min | **200** | por fecha | **splits autoritativos** + conteo TOTAL de multiclase |
 
 > **Este doc cubre fuentes FUNDAMENTALES.** El 22/10/2026 se evaluo una sexta
 > fuente, **IBKR**, que es de datos de MERCADO (precios, opciones con greeks,
@@ -35,7 +36,22 @@ solo devuelve un numero equivocado que nadie revisa.
 > seccion 3. Su inventario medido y el plan para decidir si se incorpora estan
 > en `docs/fuentes_ibkr.md`. Esta MEDIDA y SIN NINGUN CAMBIO en el proyecto.
 > Los principios de las secciones 2 y 5 de este doc se le aplican igual.
-| **Polygon** | API | gratis, 5/min | **200** | por fecha | **splits autoritativos** + conteo TOTAL de multiclase |
+>
+> **Y el 24/10/2026, una pregunta de DATO nuevo y no de fuente nueva: el
+> calendario de dividendos** (la fecha de PAGO que informa la empresa). Se
+> midieron cinco candidatas y **ninguna se incorporo**: el resultado completo,
+> servicio por servicio, esta en `docs/fuentes_dividendos.md`. Toca a este doc
+> en tres puntos. (1) **SEC no tiene el dato y es definitivo**: `companyfacts`
+> entrega solo hechos numericos, asi que los elementos de FECHA de la taxonomia
+> no llegan nunca -- es la misma causa que descarta los hechos dimensionados y
+> dejo 52 tickers sin `debt_long` (sec. 16.5 de fuentes_fundamentales), y
+> conviene recordarla antes de volver a pedirle a SEC algo que no sea un numero.
+> (2) **FMP vuelve a quedar afuera por el plan**, igual que para acciones: aca
+> bloquea la historia por ticker y cualquier rango pasado, y el universo
+> accesible son 32 de 199. (3) El **validador cruzado** de la sec. 5 no aporta
+> en este dato: donde dos fuentes se superponen COINCIDEN (8/8), y lo que las
+> separa es cobertura e historia, no el valor -- la validacion util es cada
+> fuente contra si misma en el tiempo.
 
 Fuentes EVALUADAS Y DESCARTADAS para acciones, para no volver a probarlas:
 **FMP** (el plan tope `limit` en ~5: solo 4 trimestres), **Alpha Vantage**

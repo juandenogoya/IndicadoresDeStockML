@@ -257,6 +257,40 @@ Documentacion que existe hoy en docs/:
                             IBKR entra al pipeline. La Etapa 3 se contesto sin
                             IBKR y dio cero (ANALISIS_FILL.md); las otras no
                             justifican una sexta fuente que mantener.
+- docs/fuentes_dividendos.md : calendario de dividendos -- de donde se saca la
+                            fecha de PAGO que informa la empresa (24/10/2026).
+                            MEDIDO contra las 5 APIs en vivo y CERRADO SIN
+                            INCORPORAR NADA: ninguna tabla, ningun script,
+                            ningun paso de la rutina. Resultado por servicio:
+                            Alpha Vantage es la UNICA con las 4 fechas
+                            (declaracion/ex/record/pago) + lo ya declarado y no
+                            pagado + los ADR no-USA, pero sus fechas arrancan
+                            en 2021-2022 con agujeros y sus montos NO estan
+                            ajustados por split (misma escala-de-split que
+                            opciones: usar splits_aplicados); SEC NO lo tiene y
+                            es DEFINITIVO (cero hechos de fecha en los 147
+                            companyfacts: la API descarta lo no numerico);
+                            FMP tiene el mejor esquema (dividend + adjDividend
+                            + frequency) pero el plan bloquea la historia y el
+                            pasado y deja 32 de 199; yahooquery cubre los 199
+                            pero solo la PROXIMA fecha, corre TODAS las fechas
+                            un dia por timezone y sus dos campos se
+                            desincronizan (7 de 153 con ex posterior al pago);
+                            Nasdaq es gratis y sin cuota pero el endpoint de
+                            dividendos sirve SOLO Nasdaq-listed (26 de 199,
+                            ningun NYSE en 153 dias). Las fuentes NO se
+                            contradicen donde se superponen -> el validador
+                            cruzado casi no agrega; el problema es cobertura e
+                            historia. Leer ANTES de proponer traer dividendos,
+                            y sobre todo la sec. 10: lo que quedaria por
+                            resolver (cual de las 4 fechas es la de la fila,
+                            cadencia y no antiguedad, escala de split) y la
+                            pregunta SIN MEDIR que seria el verdadero motivo
+                            para traerlos -- los ~500 ex-dates anuales del
+                            universo son escalones mecanicos que ya estan
+                            dentro de precios_diarios (close crudo, nunca
+                            reajustado por dividendos) y que velas, swings y
+                            z-scores leen como precio.
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
