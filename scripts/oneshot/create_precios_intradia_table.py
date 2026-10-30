@@ -1,11 +1,19 @@
 """
-create_precios_intradia_table.py -- crea precios_intradia_30m (one-shot).
+create_precios_intradia_table.py -- crea las tablas de la linea intradiaria (one-shot).
 
-La tabla vive en RAILWAY (la escribe el snapshot de Oracle, como buffer de
-transito con ~30 ruedas de retencion) y en LOCAL (fuente de verdad historica,
-la llena sync_intradia_railway_to_local.py). Es la primera excepcion al Plan C
+    precios_intradia_30m   barras de 30 min de los cortes (etapa 1)
+    vigilancia_listas      cabecera de la lista de vigilancia de la rueda D (etapa 2)
+    vigilancia_tickers     tickers de la lista
+    vigilancia_niveles     niveles que se siguen de cada ticker de la lista
+    vigilancia_envios      alertas enviadas por corte (evita repetirlas)
+
+Las cinco viven en RAILWAY (buffer de transito con ~30 ruedas de retencion:
+Oracle escribe las barras y los envios, y lee la lista) y en LOCAL (fuente de
+verdad historica: el sync baja barras y envios, push_vigilancia.py escribe la
+lista en los dos lados). Es la primera excepcion al Plan C
 ("Railway = SOLO opciones_snapshot"), decidida el 30/10/2026: ver
-docs/intradia.md. El DDL vive en src/utils/intradia.py (una sola definicion).
+docs/intradia.md. Los DDL viven en src/utils/intradia.py y
+src/utils/vigilancia_intradia.py (una sola definicion).
 
 Idempotente (CREATE ... IF NOT EXISTS).
 
@@ -24,7 +32,10 @@ sys.path.insert(0, ROOT)
 
 from sqlalchemy import create_engine, text
 
-from src.utils.intradia import DDL_TABLA, TABLA
+from src.utils import intradia, vigilancia_intradia as vi
+
+DDL = intradia.DDL_TABLA + vi.DDL_TABLAS
+TABLAS = [intradia.TABLA, vi.TABLA_LISTAS, vi.TABLA_TICKERS, vi.TABLA_NIVELES, vi.TABLA_ENVIOS]
 
 
 def _leer_database_url_local() -> str:
@@ -58,21 +69,22 @@ def engine_local():
 def crear(nombre: str, eng, dry_run: bool):
     print(f"\n[{nombre}]")
     if dry_run:
-        print(DDL_TABLA)
+        print(DDL)
         print("  DRY RUN: no se ejecuto.")
         return
     with eng.begin() as c:
-        c.execute(text(DDL_TABLA))
-        cols = c.execute(text(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            "WHERE table_name = :t ORDER BY ordinal_position"), {"t": TABLA}).fetchall()
-        idx = c.execute(text(
-            "SELECT indexname FROM pg_indexes WHERE tablename = :t ORDER BY 1"),
-            {"t": TABLA}).fetchall()
-    print(f"  {TABLA}: {len(cols)} columnas")
-    for col in cols:
-        print(f"    {col.column_name:<14} {col.data_type}")
-    print(f"  indices: {', '.join(i.indexname for i in idx)}")
+        c.execute(text(DDL))
+        for tabla in TABLAS:
+            cols = c.execute(text(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_name = :t ORDER BY ordinal_position"), {"t": tabla}).fetchall()
+            idx = c.execute(text(
+                "SELECT indexname FROM pg_indexes WHERE tablename = :t ORDER BY 1"),
+                {"t": tabla}).fetchall()
+            print(f"  {tabla}: {len(cols)} columnas | indices: "
+                  f"{', '.join(i.indexname for i in idx)}")
+            for col in cols:
+                print(f"    {col.column_name:<14} {col.data_type}")
 
 
 def main() -> int:

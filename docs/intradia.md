@@ -1,19 +1,26 @@
 # Snapshot intradiario: barras de 30 min en dos cortes de la rueda (30/10/2026)
 
-Captura del precio a mitad de rueda para, mas adelante, avisar por Telegram que
-vale la pena ir a mirar un grafico ANTES del cierre. No es para operar en el
-momento: la latencia no es critica.
+Captura del precio a mitad de rueda y aviso por Telegram de que vale la pena ir
+a mirar un grafico ANTES del cierre, sobre los tickers que la rutina de la noche
+ya marco. No es para operar en el momento: la latencia no es critica.
 
-- Estado: **ETAPA 1 en prueba en la rama `main-y9tr06`**, sin mergear. Solo
-  captura y guarda; Telegram avisa UNICAMENTE fallas de la captura.
-- No modifica nada de lo que ya funciona: todos los archivos son nuevos.
-- Modulos puros: `src/utils/sesion_nyse.py` (horario y cortes) y
-  `src/utils/intradia.py` (normalizacion, agregados, cobertura, spool, DDL).
-  Tests: `tests/test_sesion_nyse.py`, `tests/test_intradia.py`.
-- Captura: `scripts/intradia/snapshot_intradia.py` (VM de Oracle -> Railway).
+- Estado: **ETAPAS 1 y 2 programadas, en prueba en la rama `main-y9tr06`**, sin
+  mergear. Etapa 1 = captura (sec. 1-8). Etapa 2 = alerta de la lista de
+  vigilancia (sec. 9).
+- No modifica nada de lo que ya funciona: todos los archivos son nuevos; la
+  etapa 2 solo IMPORTA funciones de la foto y del cierre.
+- Modulos puros: `src/utils/sesion_nyse.py` (horario y cortes),
+  `src/utils/intradia.py` (normalizacion, agregados, cobertura, spool, DDL) y
+  `src/utils/vigilancia_intradia.py` (lista, eventos, novedades, mensaje, DDL).
+  Tests: `tests/test_sesion_nyse.py`, `tests/test_intradia.py`,
+  `tests/test_vigilancia_intradia.py`.
+- Captura + alerta: `scripts/intradia/snapshot_intradia.py` (VM de Oracle <-> Railway).
+- Lista de vigilancia: `scripts/intradia/push_vigilancia.py` (LOCAL -> local + Railway).
+- Despues de la rutina: `scripts/manual/intradia_post_rutina.bat` (lista + sync).
 - Sync a local + purga: `scripts/manual/sync_intradia_railway_to_local.py` (+ `.bat`).
-- Compuerta de la etapa 1: `scripts/intradia/evaluar_etapa1.py` (LOCAL, solo lee).
-- Tabla: `scripts/oneshot/create_precios_intradia_table.py --target ambos`.
+- Compuertas: `scripts/intradia/evaluar_etapa1.py`, `evaluar_etapa2.py` y
+  `auditar_etapa2.py` (LOCAL, solo leen).
+- Tablas: `scripts/oneshot/create_precios_intradia_table.py --target ambos`.
 - Cron del clon de prueba: `scripts/intradia/oracle_crontab_intradia.txt`.
 
 ## 1. Decisiones (30/10/2026)
@@ -158,10 +165,10 @@ open de la primera barra vs open diario, volumen al corte / diario (un ratio >
 1,02 es incoherente y se cuenta). Probado contra datos sinteticos que cada
 criterio PUEDE dar NO PASA.
 
-## 7. Puesta en marcha en la VM (pendiente, manual)
+## 7. Puesta en marcha (pendiente, manual)
 
-Un segundo clon, porque los jobs de produccion hacen `git pull origin main` y
-nunca verian la rama:
+**En la VM**, un segundo clon, porque los jobs de produccion hacen
+`git pull origin main` y nunca verian la rama:
 
 ```
 cd /home/ubuntu
@@ -171,14 +178,14 @@ git checkout main-y9tr06
 cp ../IndicadoresDeStockML/.env ../IndicadoresDeStockML/.env.local .
 source ../IndicadoresDeStockML/venv/bin/activate
 
-# 1. tabla en Railway (la de local se crea desde Windows con --target local)
+# 1. tablas en Railway (las de local se crean desde Windows con --target local)
 python3 scripts/oneshot/create_precios_intradia_table.py --target railway
 
 # 2. prueba sin escribir, sobre la ultima rueda cerrada (ver sec. 5)
 python3 scripts/intradia/snapshot_intradia.py --dry-run --fecha AAAA-MM-DD --corte cierre_60
 
-# 3. una captura real reconstruida, y el status
-python3 scripts/intradia/snapshot_intradia.py --fecha AAAA-MM-DD --corte cierre_60
+# 3. historia para la evaluacion de la etapa 2: las ultimas 40 ruedas, sin alertas
+python3 scripts/intradia/snapshot_intradia.py --reconstruir 40
 python3 scripts/intradia/snapshot_intradia.py --status
 
 # 4. cron: AGREGAR, nunca `crontab archivo` (borraria los jobs de produccion)
@@ -192,12 +199,112 @@ del crontab de produccion. El lock de Yahoo vive en `logs/` de cada clon, asi
 que los dos clones no se ven; no se pisan por horario (opciones US corre a las
 23:00, 02:00 y 06:00 UTC; opciones AR y scanner AR usan IOL).
 
-En Windows: `create_precios_intradia_table.py --target local` una vez, y
-despues `sync_intradia_railway_to_local.bat` a mano durante la prueba.
+**En Windows**, una vez:
+
+```
+python scripts\oneshot\create_precios_intradia_table.py --target local
+```
+
+y despues, todos los dias, `scripts\manual\intradia_post_rutina.bat` al terminar la
+rutina (sube la lista de vigilancia de la rueda y corre el sync).
 
 ## 8. Al mergear (no antes)
 
 - Pasar la linea del cron a `scripts/oracle_crontab.txt` con `origin main` y la
   ruta del clon de produccion; borrar el clon de prueba y su linea.
-- Decidir si el sync entra como paso de `rutina_diaria`.
-- CLAUDE.md: arquitectura (excepcion al Plan C), tabla y scripts clave.
+- `push_vigilancia.py` y el sync como pasos de `rutina_diaria`, despues de
+  `cierre` (politica INFORMAR: nada depende de la alerta).
+- CLAUDE.md: arquitectura (excepcion al Plan C), tablas y scripts clave.
+
+## 9. Etapa 2: alerta de la lista de vigilancia (decidida el 30/10/2026)
+
+**Idea.** La rutina de la rueda D ya dice que tickers vigilar: la foto
+(docs/telegram_foto.md) y el cierre por sector (docs/cierre_grupos.md). En cada
+corte de la rueda siguiente, la alerta informa que paso HASTA ESE MOMENTO con
+esos tickers respecto de los niveles por los que se los vigila. No recorre el
+universo ni inventa senales. Es ESTADO, no pronostico.
+
+### 9.1 La lista de vigilancia de la rueda D
+
+`push_vigilancia.py`, en LOCAL, despues de la rutina (que hoy corre antes de la
+apertura: la lista de D llega antes del corte de las 11:00 ET de D+1).
+
+| Origen | Que entra |
+|---|---|
+| Foto | 2+ familias de FT + top 3 por familia (tope 15), de la misma corrida de FT |
+| Cierre: cruces de D | muro OI, swing N5, SMA50/200, arriba y abajo |
+| Cierre: vigilar | a menos de 1% de un muro OI o de un swing N5; cambio de veredicto |
+| ~~Balances en 5 ruedas~~ | **no entran** (decision 30/10/2026) |
+
+Las definiciones se IMPORTAN de `telegram_foto.py` / `telegram_cierre.py`: la
+lista dice lo mismo que los mensajes de la noche.
+
+Niveles de cada ticker, todos congelados con los datos de D:
+
+| Nivel | Fuente |
+|---|---|
+| soporte / resistencia OI (ventana corta) | `opciones_pcr_plazo_diario` de D |
+| swing low / high N5 | `features_estructura` de D: la tabla guarda la distancia y no el precio; sale exacto del close, `nivel = close / (1 + dist/100)` (columna DOUBLE) |
+| SMA50 / SMA200 | `indicadores_tecnicos` de D |
+| **el nivel cruzado en D** | muro OI o swing de **D-1**, el que se cruzo. El muro de D se recalcula con el close de D y queda debajo del precio por construccion (misma razon por la que el cierre usa "el muro de la rueda anterior"). En las SMA el cruce se marca en la propia fila |
+
+Cada nivel guarda de que lado quedo el close de D (`lado_d`).
+
+**Tablas** (local + Railway, dual-write): `vigilancia_listas` (cabecera: una
+fila por rueda, aunque la lista este vacia; sin ella Oracle diria "lista no
+subida" cuando no habia nada que vigilar), `vigilancia_tickers` (close de D,
+desvio, motivos) y `vigilancia_niveles`. Un push de D reemplaza la lista de D.
+
+### 9.2 Eventos y mensaje (pre-registrados)
+
+| Evento | Definicion |
+|---|---|
+| cruce | el precio del corte quedo del otro lado del nivel que el close de D |
+| revierte | idem sobre un nivel cruzado EN D: deshace el cruce de ayer (ej. "perdio el soporte de OI" y vuelve arriba) |
+| movimiento | \|z\| >= 2,0, z = ln(precio del corte / close de D) / desvio de los retornos log diarios de las 252 ruedas hasta D (con menos de 126 no se informa). Mismo umbral en los dos cortes: a las 11:00 es exigente (media rueda contra el desvio de un dia). Limitacion declarada; si se cambia, es un cambio registrado |
+
+Precio del corte = close de la barra que termina en el corte; un ticker sin esa
+barra no evalua y el mensaje lo cuenta ("sin dato del corte").
+
+- **11:00**: todos los eventos.
+- **15:00**: solo lo NUEVO respecto de las 11:00, y lo que SE DESHIZO (se
+  describe como estaba a las 11:00). Si el mensaje de las 11:00 no salio con la
+  misma lista (no habia lista, o fallo), a las 15:00 se informa todo.
+- Sin eventos: una linea "N vigilados, sin novedades" (el silencio no se
+  confunde con "no corrio": leccion del cero falso del cierre, 14/10/2026).
+- Sin la lista de la rueda habil anterior: lo dice y no evalua. Si la lista
+  llega tarde, el reintento del corte la usa.
+- Un mensaje por corte, registrado en `vigilancia_envios` (no se repite en el
+  reintento). Si no entra en 4.000 caracteres se achican las listas, no se
+  parte el HTML.
+- Distancia al nivel con 2 decimales (con 1, un cruce por 0,04% se leia
+  "-0,0%", como le paso al cierre).
+
+### 9.3 Criterios (pre-registrados el 30/10/2026, antes de correr nada)
+
+`evaluar_etapa2.py` (2 a 4) y `auditar_etapa2.py` (1), sobre las ruedas con
+barras en local: las reconstruidas (`--reconstruir 40` en la VM) con listas
+reconstruidas (`push_vigilancia.py --desde`), y despues las reales.
+
+| # | Criterio | Pasa si |
+|---|---|---|
+| 1 | Correcto | un SQL independiente reproduce el 100% de los eventos de cada corte |
+| 2 | Dispara con sentido | por TIPO, la mediana de lineas por corte esta entre 1 y 15. Un tipo que falla sale del mensaje; si fallan los tres, se duerme |
+| 3 | Cabe | un mensaje por corte (por construccion; se informa cuantos achicaron listas) |
+| 4 | Informativo | de los eventos de cada corte, cuantos seguian al cierre de la rueda. Dice si la alerta adelanta al mensaje de la noche o es ruido. NO mide rendimiento |
+| 5 | Sirve | juicio del usuario despues de 5-10 ruedas reales. Se escribe aca con la fecha |
+
+Riesgo conocido de la regla 2, escrito antes de ver datos: `revierte` es un
+evento raro por construccion (necesita un cruce en D), y su mediana puede dar 0.
+Si pasa, la regla lo saca del mensaje; no se mueve el umbral despues de verlo.
+
+**Aproximaciones de la reconstruccion** (solo para la evaluacion historica, no
+en vivo): la corrida de FT de la rueda D es la ULTIMA entre D y la habil
+siguiente (`ft_candidatos_diarios.fecha` es la de corrida, no la de datos); la
+foto solo ve las estrategias activas HOY; las barras reconstruidas tienen
+`capturado_en` de hoy (no son point-in-time).
+
+Probado de punta a punta contra una base desechable y un yahooquery falso: los
+tres tipos de evento, las novedades y lo deshecho a las 15:00, el "sin lista",
+la lista que llega tarde, el no repetir el envio, y que el auditor PUEDE fallar
+(con el motor sesgado 0,5% da diferencias en 2 de 6 cortes).

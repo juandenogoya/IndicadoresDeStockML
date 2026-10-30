@@ -1,16 +1,22 @@
 """
-sync_intradia_railway_to_local.py -- baja precios_intradia_30m de Railway a LOCAL
-y purga Railway dejando las ultimas ~30 ruedas.
+sync_intradia_railway_to_local.py -- baja de Railway a LOCAL lo que escribe el
+snapshot intradiario de Oracle y purga Railway dejando las ultimas ~30 ruedas.
 
-Mismo esquema que el crudo de opciones (Plan C): Oracle escribe en Railway, que
-es un BUFFER DE TRANSITO; LOCAL es la fuente de verdad historica. Separado de
+    baja  : precios_intradia_30m (barras de los cortes)
+            vigilancia_envios    (alertas enviadas)
+    purga : las dos anteriores + vigilancia_listas / _tickers / _niveles (la
+            lista de vigilancia: push_vigilancia.py ya la escribe en los dos
+            lados, asi que no se baja, pero tambien se purga en Railway)
+
+Mismo esquema que el crudo de opciones (Plan C): Railway es un BUFFER DE
+TRANSITO y LOCAL la fuente de verdad historica. Separado de
 sync_opciones_railway_to_local.bat a proposito: la linea intradiaria esta en
 prueba en la rama main-y9tr06 y no toca nada de lo que ya funciona
-(docs/intradia.md). Durante la prueba se corre a mano.
+(docs/intradia.md). Durante la prueba lo corre intradia_post_rutina.bat.
 
 Sync INCREMENTAL e idempotente: trae de Railway las ruedas desde la ultima que
 ya tiene local menos SOLAPE_DIAS (un corte que se reconstruyo tarde queda
-cubierto) y hace upsert por la PK (ticker, corte, inicio_barra).
+cubierto) y hace upsert por la PK de cada tabla.
 
 PURGA, mismo principio que retencion_opciones_railway.py: se borra UNICAMENTE
 lo que esta PROBADAMENTE replicado en local (COUNT por rueda, local >= Railway).
@@ -38,10 +44,27 @@ sys.path.insert(0, ROOT)
 
 from sqlalchemy import create_engine, text
 
-from src.utils.intradia import COLUMNAS, SQL_UPSERT, TABLA
+from src.utils import intradia, vigilancia_intradia as vi
 
 KEEP_DAYS_DEFAULT = 30   # ruedas distintas que Railway conserva
 SOLAPE_DIAS = 5
+
+SQL_UPSERT_ENVIOS = f"""
+    INSERT INTO {vi.TABLA_ENVIOS} ({", ".join(vi.COLS_ENVIOS)}) VALUES %s
+    ON CONFLICT (fecha, corte) DO UPDATE SET
+        fecha_lista = EXCLUDED.fecha_lista, n_vigilados = EXCLUDED.n_vigilados,
+        n_eventos = EXCLUDED.n_eventos, texto = EXCLUDED.texto,
+        enviado_en = EXCLUDED.enviado_en
+"""
+
+# (tabla, columnas, upsert con VALUES %s): lo que se BAJA a local.
+A_BAJAR = [
+    (intradia.TABLA, intradia.COLUMNAS, intradia.SQL_UPSERT),
+    (vi.TABLA_ENVIOS, vi.COLS_ENVIOS, SQL_UPSERT_ENVIOS),
+]
+# Lo que se PURGA en Railway (todas tienen `fecha` = rueda).
+A_PURGAR = [intradia.TABLA, vi.TABLA_ENVIOS, vi.TABLA_NIVELES, vi.TABLA_TICKERS,
+            vi.TABLA_LISTAS]
 
 
 def log(msg: str):
@@ -79,14 +102,14 @@ def _engine_local():
     return get_engine()
 
 
-def _existe_tabla(eng) -> bool:
+def _existe_tabla(eng, tabla) -> bool:
     with eng.connect() as c:
-        return bool(c.execute(text("SELECT to_regclass(:t)"), {"t": TABLA}).scalar())
+        return bool(c.execute(text("SELECT to_regclass(:t)"), {"t": tabla}).scalar())
 
 
-def _conteos(eng, desde=None) -> dict:
+def _conteos(eng, tabla, desde=None) -> dict:
     """{fecha: filas} por rueda."""
-    sql = f"SELECT fecha, COUNT(*) FROM {TABLA}"
+    sql = f"SELECT fecha, COUNT(*) FROM {tabla}"
     params = {}
     if desde is not None:
         sql += " WHERE fecha >= :d"
@@ -97,21 +120,20 @@ def _conteos(eng, desde=None) -> dict:
 
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
-def sincronizar(eng_rail, eng_loc, dry_run: bool) -> int:
+def sincronizar(eng_rail, eng_loc, tabla, columnas, sql_upsert, dry_run: bool) -> int:
     with eng_loc.connect() as c:
-        max_local = c.execute(text(f"SELECT MAX(fecha) FROM {TABLA}")).scalar()
+        max_local = c.execute(text(f"SELECT MAX(fecha) FROM {tabla}")).scalar()
     desde = (max_local - timedelta(days=SOLAPE_DIAS)) if max_local else None
-    log(f"  Ultima rueda en local: {max_local or '(vacia)'} -> trae desde {desde or 'el principio'}")
 
-    sql = f"SELECT {', '.join(COLUMNAS)} FROM {TABLA}"
+    sql = f"SELECT {', '.join(columnas)} FROM {tabla}"
     params = {}
     if desde is not None:
         sql += " WHERE fecha >= :d"
         params["d"] = desde
     with eng_rail.connect() as c:
-        filas = [tuple(r) for r in c.execute(text(sql + " ORDER BY fecha, corte, ticker"),
-                                             params).fetchall()]
-    log(f"  Filas en Railway a sincronizar: {len(filas):,}")
+        filas = [tuple(r) for r in c.execute(text(sql), params).fetchall()]
+    log(f"  {tabla}: local hasta {max_local or '(vacia)'} -> {len(filas):,} filas de Railway "
+        f"desde {desde or 'el principio'}")
     if dry_run or not filas:
         return len(filas)
 
@@ -119,7 +141,7 @@ def sincronizar(eng_rail, eng_loc, dry_run: bool) -> int:
     raw = eng_loc.raw_connection()
     try:
         with raw.cursor() as cur:
-            psycopg2.extras.execute_values(cur, SQL_UPSERT, filas, page_size=1000)
+            psycopg2.extras.execute_values(cur, sql_upsert, filas, page_size=1000)
         raw.commit()
     except Exception:
         raw.rollback()
@@ -128,44 +150,44 @@ def sincronizar(eng_rail, eng_loc, dry_run: bool) -> int:
         raw.close()
 
     # Verificacion: cada rueda traida tiene en local al menos lo de Railway.
-    rail = _conteos(eng_rail, desde)
-    loc = _conteos(eng_loc, desde)
+    rail = _conteos(eng_rail, tabla, desde)
+    loc = _conteos(eng_loc, tabla, desde)
     faltan = {f: (n, loc.get(f, 0)) for f, n in rail.items() if loc.get(f, 0) < n}
     if faltan:
-        raise RuntimeError(f"verificacion fallida, local con menos filas que Railway: {faltan}")
-    log(f"  Upsert OK y verificado: {len(rail)} ruedas.")
+        raise RuntimeError(f"{tabla}: verificacion fallida, local con menos filas que Railway: {faltan}")
+    log(f"  {tabla}: upsert OK y verificado ({len(rail)} ruedas).")
     return len(filas)
 
 
 # ── Purga ─────────────────────────────────────────────────────────────────────
 
-def purgar(eng_rail, eng_loc, keep_days: int, dry_run: bool) -> int:
-    rail = _conteos(eng_rail)
+def purgar(eng_rail, eng_loc, tabla, keep_days: int, dry_run: bool) -> int:
+    rail = _conteos(eng_rail, tabla)
     fechas = sorted(rail, reverse=True)
     candidatas = fechas[keep_days:]
     if not candidatas:
-        log(f"  Purga: Railway tiene {len(fechas)} ruedas (<= {keep_days}). Nada que purgar.")
+        log(f"  Purga {tabla}: {len(fechas)} ruedas en Railway (<= {keep_days}). Nada que purgar.")
         return 0
 
-    loc = _conteos(eng_loc, min(candidatas))
+    loc = _conteos(eng_loc, tabla, min(candidatas))
     seguras = [f for f in candidatas if loc.get(f, 0) >= rail[f]]
     retenidas = [f for f in candidatas if f not in seguras]
-    log(f"  Purga: {len(candidatas)} ruedas fuera de la retencion de {keep_days} "
+    log(f"  Purga {tabla}: {len(candidatas)} ruedas fuera de la retencion de {keep_days} "
         f"({candidatas[-1]} -> {candidatas[0]}); {len(seguras)} verificadas en local.")
     for f in retenidas:
-        log(f"  [WARN] {f} NO se borra: Railway {rail[f]} filas, local {loc.get(f, 0)}.")
+        log(f"  [WARN] {tabla} {f} NO se borra: Railway {rail[f]} filas, local {loc.get(f, 0)}.")
     if dry_run or not seguras:
         return 2 if retenidas else 0
 
     with eng_rail.begin() as c:
-        borradas = c.execute(text(f"DELETE FROM {TABLA} WHERE fecha = ANY(:fs)"),
+        borradas = c.execute(text(f"DELETE FROM {tabla} WHERE fecha = ANY(:fs)"),
                              {"fs": seguras}).rowcount
-    log(f"  Purga OK: {borradas:,} filas borradas de Railway.")
+    log(f"  Purga {tabla} OK: {borradas:,} filas borradas de Railway.")
     return 2 if retenidas else 0
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sync precios_intradia_30m Railway -> local + purga")
+    ap = argparse.ArgumentParser(description="Sync intradiario Railway -> local + purga")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--keep-days", type=int, default=KEEP_DAYS_DEFAULT)
     ap.add_argument("--sin-purga", action="store_true")
@@ -178,11 +200,13 @@ def main() -> int:
         eng_rail = _engine_railway()
         eng_loc = _engine_local()
         for nombre, eng in (("Railway", eng_rail), ("local", eng_loc)):
-            if not _existe_tabla(eng):
-                log(f"  [ERROR] {TABLA} no existe en {nombre}: correr "
-                    f"scripts/oneshot/create_precios_intradia_table.py --target ambos")
-                return 1
-        sincronizar(eng_rail, eng_loc, args.dry_run)
+            for tabla in A_PURGAR:
+                if not _existe_tabla(eng, tabla):
+                    log(f"  [ERROR] {tabla} no existe en {nombre}: correr "
+                        f"scripts/oneshot/create_precios_intradia_table.py --target ambos")
+                    return 1
+        for tabla, cols, upsert in A_BAJAR:
+            sincronizar(eng_rail, eng_loc, tabla, cols, upsert, args.dry_run)
     except Exception as e:
         log(f"  [ERROR] sync: {type(e).__name__}: {e}")
         log("  La purga NO corre: sin sync verificado no se borra.")
@@ -190,11 +214,14 @@ def main() -> int:
 
     if args.sin_purga:
         return 0
-    try:
-        return purgar(eng_rail, eng_loc, args.keep_days, args.dry_run)
-    except Exception as e:
-        log(f"  [ERROR] purga: {type(e).__name__}: {e}")
-        return 2
+    rc = 0
+    for tabla in A_PURGAR:
+        try:
+            rc = max(rc, purgar(eng_rail, eng_loc, tabla, args.keep_days, args.dry_run))
+        except Exception as e:
+            log(f"  [ERROR] purga {tabla}: {type(e).__name__}: {e}")
+            rc = 2
+    return rc
 
 
 if __name__ == "__main__":

@@ -221,6 +221,17 @@ def cobertura(filas: list[dict], universo: list[str], hora_corte: datetime) -> d
     }
 
 
+def precios_del_corte(filas: list[dict], hora_corte: datetime) -> dict:
+    """
+    {ticker: precio del corte} = close de la barra que TERMINA en el corte.
+    Un ticker sin esa barra no tiene precio del corte (mismo criterio que
+    `cobertura`): su ultimo close seria de media hora o mas atras.
+    """
+    ultimo_inicio = hora_corte - timedelta(minutes=BARRA_MIN)
+    return {f["ticker"]: f["close"] for f in filas
+            if f["inicio_barra"] == ultimo_inicio and f["close"] is not None}
+
+
 # ── Spool en disco ────────────────────────────────────────────────────────────
 
 def ruta_spool(fecha: date, corte: str, dir_spool: str = DIR_SPOOL_DEFAULT) -> str:
