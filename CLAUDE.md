@@ -291,6 +291,32 @@ Documentacion que existe hoy en docs/:
                             dentro de precios_diarios (close crudo, nunca
                             reajustado por dividendos) y que velas, swings y
                             z-scores leen como precio.
+- docs/consumo_railway.md : que cuesta Railway y por que (29/10/2026). MEDIDO y
+                            CERRADO SIN CAMBIOS: el consumo esta sano y nada del
+                            trabajo de sep/oct lo movio. EL 95% DE LA FACTURA ES
+                            RAM (1,2319 de 1,30 USD del ciclo), NO disco -- la
+                            intuicion heredada del incidente del 20/7 apunta a la
+                            palanca equivocada: hoy el volumen entero cuesta ~0,10
+                            USD/mes y recortar la retencion ahorraria ~1 USD/mes a
+                            costa de la mitad del colchon de un dato
+                            IRRECUPERABLE. La DB son 248 MB (227 de
+                            opciones_snapshot: 11 fechas x 199 tickers x ~105k
+                            filas, 0 muertas), la purga cierra el ciclo todos los
+                            dias (224 -> 205 MB, y la captura de las 23:00 UTC lo
+                            devuelve a 227) y el egress de 0,34 GB se explica 1 a
+                            1 por las 8 corridas del sync (~42 MB c/u): NADIE MAS
+                            lee Railway. Lo unico que sube es la RAM del
+                            contenedor (0,197 -> 0,668 GB en 7 dias; es page
+                            cache, Postgres no reinicia desde el 23/8). Deja
+                            MEDIDA una desproporcion que NO se toco: el VACUUM
+                            FULL diario reescribe 205 MB para recuperar ~20 MB y
+                            genera ~205 MB de WAL/dia (el WAL son 224 MB = 33% del
+                            volumen), cuando en un buffer rotativo esas paginas
+                            las reusa el INSERT del dia siguiente; que sacarlo
+                            baje la RAM es HIPOTESIS, con la prueba disenada y SIN
+                            CORRER (sec. 6.2). La cuenta entera son ~9 USD/mes y
+                            este proyecto es la mitad. Leer ANTES de tocar
+                            retencion, VACUUM o cadencia del sync "para ahorrar".
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
@@ -514,6 +540,20 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   `scripts/manual/replay_opciones_spool.py` (upsert idempotente). Alerta Telegram
   automatica cuando queda spool pendiente (antes el fallo era SILENCIOSO).
   Desactivable con `--no-spool` (no recomendado).
+
+### Railway: la factura la manda la RAM, no el disco (medido 29/10/2026)
+- Medicion completa y linea de base: `docs/consumo_railway.md`. **El 95% de la
+  factura es RAM** (1,2319 de 1,30 USD del ciclo); el volumen entero cuesta ~0,10
+  USD/mes, el egress ~0,06 y la CPU es ruido. La metrica de memoria de Railway es
+  el RSS del contenedor **incluyendo page cache**, asi que sube con los BYTES QUE
+  LA DB TOCA POR DIA, no con los que guarda.
+- Corolario: la intuicion que quedo del incidente del 20/7 ("crece el disco ->
+  crece la cuenta") **ya no aplica**. Recortar la retencion de opciones_snapshot
+  ahorraria ~1 USD/mes y dejaria a la mitad el colchon de un dato IRRECUPERABLE
+  que depende de un sync MANUAL. No es la palanca, y por eso no se toco.
+- El egress sirve de GUARD barato: 0,34 GB por ciclo = 8 corridas del sync x ~42
+  MB. Si sobra, hay un lector inesperado apuntando a Railway (la trampa de
+  `DATABASE_URL` / `.env.local`). Es la forma mas simple de detectarlo.
 
 ### FT asincronico -- usar `fecha_datos`, NO `fecha_entrada` (21/7/2026)
 - Los bots FT deciden y ejecutan con el OHLCV del **ultimo cierre disponible**,
@@ -1007,7 +1047,7 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `scripts/manual/poblar_opciones_yq.bat` | Carga manual opciones US via yahooquery (UNA pasada) |
 | `scripts/manual/recover_opciones_tickers.py` | Recovery quirurgico de tickers especificos |
 | `scripts/manual/replay_opciones_spool.py` | Reinyecta a la DB los snapshots de opciones que quedaron en disco por DB caida (`--list` / `--dry-run` / `--target local\|railway`). Upsert idempotente |
-| `scripts/manual/retencion_opciones_railway.py` | Purga opciones_snapshot en RAILWAY dejando los ultimos 10 dias (causa raiz incidente 20/7: +580 MB/mes sin retencion). SOLO borra fechas verificadas replicadas en local (compara COUNT por fecha). Incluye VACUUM FULL (DELETE solo no devuelve disco). Encadenado al final de sync_opciones_railway_to_local.bat |
+| `scripts/manual/retencion_opciones_railway.py` | Purga opciones_snapshot en RAILWAY dejando los ultimos 10 dias (causa raiz incidente 20/7: +580 MB/mes sin retencion). SOLO borra fechas verificadas replicadas en local (compara COUNT por fecha). Incluye VACUUM FULL (DELETE solo no devuelve disco). Encadenado al final de sync_opciones_railway_to_local.bat. OJO: su costo quedo MEDIDO el 29/10/2026 (docs/consumo_railway.md sec. 6) -- el VACUUM FULL reescribe los 205 MB de la tabla para recuperar ~20 MB (1 dia de 10) y genera ~205 MB de WAL/dia, cuando en un buffer rotativo esas paginas las reusa el INSERT del dia siguiente. Se deja como esta POR DECISION (no tocar lo que anda), no porque este justificado |
 | `src/utils/opciones_spool.py` | Red de seguridad en disco del snapshot de opciones (modulo puro, .csv.gz en streaming) |
 | `src/utils/precio_referencia.py` | Modulo PURO (stdlib): regla del precio de REFERENCIA del subyacente para calcular en local -- el close de `precios_diarios` manda, `precio_subyacente` de la captura solo tapa el hueco. `resolver_precio` / `factor_escala` (escala de split desde splits_aplicados) / `elegir_evento_split` (fecha real del split para el registro) / `medir_divergencias` / `escalas_sin_registro` / `cobertura_baja`. Lo usan opciones_plazo, compute_opciones_derivadas, FT oiexit y el snapshot (alerta de cobertura) |
 | `scripts/compute_opciones_derivadas.py` | Derivadas de opciones en LOCAL desde el crudo (HV, resumen, z-scores, PCR+muros por plazo). Paso 0 = diagnostico del precio de referencia (cuantos tickers caen al precio de la captura = huecos de precios_diarios). `--fecha` / `--desde` (recalcula en orden: los z-scores usan la historia previa). Paso [0b] de ft_run_diario.bat |
