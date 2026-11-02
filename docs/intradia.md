@@ -4,9 +4,14 @@ Captura del precio a mitad de rueda y aviso por Telegram de que vale la pena ir
 a mirar un grafico ANTES del cierre, sobre los tickers que la rutina de la noche
 ya marco. No es para operar en el momento: la latencia no es critica.
 
-- Estado: **ETAPAS 1 y 2 programadas, en prueba en la rama `main-y9tr06`**, sin
-  mergear. Etapa 1 = captura (sec. 1-8). Etapa 2 = alerta de la lista de
-  vigilancia (sec. 9).
+- Estado: **ETAPAS 1 y 2 DESPLEGADAS EN PRUEBA el 2026-11-02**, en la rama
+  `main-y9tr06`, sin mergear. El cron de la VM captura solo desde esa fecha
+  (sec. 7, puesta en marcha HECHA). Etapa 1 = captura (sec. 1-8): los 4
+  supuestos de la sec. 5 quedaron VERIFICADOS, pero su compuerta necesita 2-3
+  semanas de cron y todavia no se puede evaluar. Etapa 2 = alerta de la lista
+  de vigilancia (sec. 9): criterios 1, 2 y 3 MEDIDOS y pasan; el 4 dice que la
+  alerta ADELANTA al mensaje de la noche; el 5 (juicio del usuario) sigue
+  abierto. Resultados en la sec. 9.4.
 - No modifica nada de lo que ya funciona: todos los archivos son nuevos; la
   etapa 2 solo IMPORTA funciones de la foto y del cierre.
 - Modulos puros: `src/utils/sesion_nyse.py` (horario y cortes),
@@ -149,6 +154,30 @@ cubren los tests con las variantes posibles, pero hay que mirarlo:
 4. **Volumen**: si la suma de las barras se parece al volumen diario. La
    evaluacion lo informa (ratio volumen al corte / diario).
 
+### 5.1 Verificados el 2026-11-02 (los cuatro)
+
+`--dry-run --fecha 2026-10-30 --corte cierre_60` desde la VM: **199/199 de
+cobertura, 2.189 filas = 199 x 11 exacto, 5 segundos**.
+
+1. **Zona horaria: CONFIRMADO el caso esperado.** El indice vino *aware* en hora
+   de NY (`Timestamp('2026-10-30 09:30:00-0400', tz='America/New_York')`) y la
+   barra de las 9:30 ET quedo en **13:30 UTC**, que es lo que corresponde en
+   horario de verano. No hizo falta la rama de naive.
+2. **start/end: CONFIRMADO, Yahoo los respeto.** No se uso el fallback a
+   `period`. Volvio solo la rueda pedida y **sin pre-market**: la primera barra
+   es la de las 9:30, no las de las 4:00 / 8:00 ET.
+3. **Ventana de ~60 dias: CONFIRMADA y es real.** `--reconstruir 40` trajo
+   entera la rueda del **2026-09-04**, a 59 dias corridos: **1 dia de margen**.
+   Al dia siguiente esa punta ya no se podia pedir. Si alguna vez hay que
+   reconstruir, la fecha importa.
+4. **Volumen: coherente.** AA en la rueda 2026-10-30, acumulado al `cierre_60`
+   contra `precios_diarios`: open **39,03 = 39,03** exacto (la primera barra es
+   la apertura real de la sesion), high **39,77 = 39,77**, low 38,60 dentro del
+   rango diario (38,59: el minimo del dia llego en la ultima hora), close 38,68
+   vs 39,19 (difiere, falta la ultima hora, es lo esperado) y volumen
+   **1.810.700 / 3.565.300 = 0,508**, por debajo del 1,02 que la compuerta
+   marca como incoherente.
+
 ## 6. Compuerta de la etapa 1 (pre-registrada el 30/10/2026)
 
 `evaluar_etapa1.py` sobre 2-3 semanas de captura. PASA si se cumplen las cuatro:
@@ -165,7 +194,33 @@ open de la primera barra vs open diario, volumen al corte / diario (un ratio >
 1,02 es incoherente y se cuenta). Probado contra datos sinteticos que cada
 criterio PUEDE dar NO PASA.
 
-## 7. Puesta en marcha (pendiente, manual)
+**La ventana arranca el 2026-11-02**, primer disparo del cron (16:05 UTC). Las
+40 ruedas reconstruidas ese mismo dia **NO cuentan** para esta compuerta, por
+diseno: su `capturado_en` es de horas o dias despues del corte y lo que se mide
+aca es si el cron captura solo. Antes de ~2026-11-20 `evaluar_etapa1.py` no
+tiene con que contestar.
+
+## 7. Puesta en marcha (HECHA el 2026-11-02)
+
+> **ESTADO: EJECUTADA.** Tablas en local y en Railway, clon de prueba en la VM
+> en `main-y9tr06`, `--dry-run` verificado (sec. 5.1), 40 ruedas reconstruidas,
+> cron agregado (10 -> 11 jobs, backup en `~/crontab_backup_20261102_1512.txt`,
+> diff = 1 linea agregada y 0 quitadas) y la historia bajada a local. Lo que
+> sigue son los comandos tal como quedaron, con **una correccion respecto de lo
+> que decia este doc** (el `.env.local`, abajo).
+
+**CORRECCION (2026-11-02): en la VM no existe `.env.local`.** Este doc decia
+copiar `.env` y `.env.local` desde el clon de produccion, pero produccion solo
+tiene `.env` (ahi Railway ES el destino normal, asi que su `DATABASE_URL` ya
+apunta a Railway). Consecuencias:
+
+- `snapshot_intradia.py` anda igual: carga `.env` y `.env.local` **solo si
+  existe**, y despues `get_engine()` cae en Railway por `DATABASE_URL`.
+- `create_precios_intradia_table.py --target railway` **NO corre en la VM**:
+  tiene hardcodeado leer el DSN de `.env.local` y aborta. Las tablas de Railway
+  se crean **desde Windows**, donde `.env.local` si lo tiene. Se verifico
+  despues, desde la VM, que ve esas mismas 5 tablas en la instancia que tiene
+  `opciones_snapshot`.
 
 **En la VM**, un segundo clon, porque los jobs de produccion hacen
 `git pull origin main` y nunca verian la rama:
@@ -175,11 +230,12 @@ cd /home/ubuntu
 git clone <url del repo> IndicadoresDeStockML-intradia
 cd IndicadoresDeStockML-intradia
 git checkout main-y9tr06
-cp ../IndicadoresDeStockML/.env ../IndicadoresDeStockML/.env.local .
+cp ../IndicadoresDeStockML/.env .        # en la VM NO hay .env.local (ver arriba)
 source ../IndicadoresDeStockML/venv/bin/activate
 
-# 1. tablas en Railway (las de local se crean desde Windows con --target local)
-python3 scripts/oneshot/create_precios_intradia_table.py --target railway
+# 1. las tablas NO se crean desde aca: --target railway lee el DSN de .env.local,
+#    que en la VM no existe. Las 5 de Railway Y las de local se crean desde
+#    Windows, con --target ambos (ver el bloque de Windows mas abajo).
 
 # 2. prueba sin escribir, sobre la ultima rueda cerrada (ver sec. 5)
 python3 scripts/intradia/snapshot_intradia.py --dry-run --fecha AAAA-MM-DD --corte cierre_60
@@ -199,10 +255,10 @@ del crontab de produccion. El lock de Yahoo vive en `logs/` de cada clon, asi
 que los dos clones no se ven; no se pisan por horario (opciones US corre a las
 23:00, 02:00 y 06:00 UTC; opciones AR y scanner AR usan IOL).
 
-**En Windows**, una vez:
+**En Windows**, una vez (las DOS puntas, no solo local: ver el paso 1 de arriba):
 
 ```
-python scripts\oneshot\create_precios_intradia_table.py --target local
+python scripts\oneshot\create_precios_intradia_table.py --target ambos
 ```
 
 y despues, todos los dias, `scripts\manual\intradia_post_rutina.bat` al terminar la
@@ -308,3 +364,73 @@ Probado de punta a punta contra una base desechable y un yahooquery falso: los
 tres tipos de evento, las novedades y lo deshecho a las 15:00, el "sin lista",
 la lista que llega tarde, el no repetir el envio, y que el auditor PUEDE fallar
 (con el motor sesgado 0,5% da diferencias en 2 de 6 cortes).
+
+### 9.4 Resultados medidos (2026-11-02)
+
+Sobre **78 cortes de 39 ruedas** (2026-09-04 -> 2026-10-30): barras
+reconstruidas en la VM y listas reconstruidas con `push_vigilancia.py --desde
+2026-09-03 --hasta 2026-10-29` (39 listas, origen `reconstruida`) mas el `push`
+real del 2026-10-30. **Tamano de la lista: mediana 77 tickers, min 52, max
+110.** La seccion 9.3 no se toco: esto va aparte.
+
+**Criterio 1 (correcto): PASA al 100%.** 78 cortes, **3.193 eventos** del motor,
+todos reproducidos por el SQL independiente de `auditar_etapa2.py`.
+
+**Criterio 2 (dispara con sentido): PASA en los tres tipos** sobre el agregado
+de los dos cortes -- cruce 12,5 | revierte 6,0 | movimiento 1,0, todos dentro
+de 1 a 15. **Pero el agregado esconde una asimetria que hay que declarar**:
+
+| tipo | apertura_90 | cierre_60 |
+|---|---|---|
+| cruce | **mediana 22,0** (9 a 49) | 7,0 (1 a 26) |
+| revierte | **14,0** (3 a 35) | 3,0 (0 a 11) |
+| movimiento | 1,0 (0 a 7) | 1,0 (0 a 12) |
+| deshechos | -- | 7,0 (2 a 16) |
+
+A las 11:00 el mensaje lleva ~22 lineas de cruce mas ~14 de revierte: **~36
+lineas**. Pasa porque el `cierre_60`, que es tranquilo, tira la mediana del
+agregado para abajo. El pre-registro dice "la mediana de lineas **por corte**" y
+es **ambiguo** entre agregar los dos cortes o medir cada tipo de corte por
+separado; el script usa el agregado. **El umbral no se movio despues de ver los
+datos** (CLAUDE.md: los parametros elegidos mirando resultados son sobreajuste
+hecho a mano): queda escrita la ambiguedad, no corregida hacia atras. Si alguna
+vez se decide medir por tipo de corte, `cruce` y `revierte` de `apertura_90` NO
+pasan, y eso es una decision, no un ajuste.
+
+**El riesgo pre-registrado de `revierte` NO se cumplio.** La sec. 9.3 avisaba
+que podia dar mediana 0 por ser un evento raro; dio **6,0**. La preocupacion
+estaba al reves: es de los que mas dispara.
+
+**Criterio 3 (cabe): PASA.** Largo maximo **2.851 caracteres** contra el tope de
+4.000 y **0 cortes** tuvieron que achicar listas.
+
+**Criterio 4 (informativo): la alerta ADELANTA, no es ruido.**
+
+| corte | eventos | siguen al cierre |
+|---|---|---|
+| apertura_90 | cruce 862 / revierte 563 / movimiento 83 | 79% / 79% / 78% |
+| cierre_60 | cruce 1004 / revierte 566 / movimiento 115 | 88% / 91% / 81% |
+
+Las dos lecturas, porque las dos son ciertas. **A favor**: 8 de cada 10 eventos
+de las 11:00 y 9 de cada 10 de las 15:00 seguian vigentes al cierre, asi que no
+son parpadeos intradiarios. **En contra**: que el 88% de lo que avisa a las
+15:00 siga vigente al cierre significa que casi todo eso **va a aparecer esa
+misma noche en el mensaje del cierre**; el valor marginal son las ~4 horas de
+anticipacion, no informacion nueva. Eso es exactamente lo que tiene que juzgar
+el criterio 5.
+
+**Criterio 5: ABIERTO.** Pendiente del juicio del usuario tras 5-10 ruedas
+reales. Se escribe aca con la fecha.
+
+**2 cortes de los 80 quedaron sin evaluar, y el motivo NO es de esta linea**:
+falta la lista del **2026-09-22**, porque esa rueda tiene 60 de 199 tickers en
+`precios_diarios` (es el hueco que `chequeo_rutina.py` viene informando: "139
+tickers", avisa y no frena) y 0 en `veredictos_universo_diario`.
+`push_vigilancia.py` **se nego a armar la lista** sobre una rueda incompleta en
+vez de emitir una plausible pero mal. Los 2 cortes afectados son los del
+2026-09-23.
+
+**Observacion operativa**: el dual-write de la lista a Railway tardo **~5
+minutos** para 111 tickers y 602 niveles (local: segundos). Como
+`intradia_post_rutina.bat` va a correr esto todos los dias, conviene tenerlo
+presente; no se toco nada.

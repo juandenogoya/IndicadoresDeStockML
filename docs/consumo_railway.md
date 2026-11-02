@@ -270,6 +270,36 @@ Con una de estas, no por iniciativa propia:
 
 ---
 
+## 8b. ADDENDUM 2026-11-02: entro un consumidor nuevo a Railway
+
+La sec. 8 decia que la linea se reabriria, entre otras cosas, si **entraba un
+consumidor nuevo a Railway**. Paso el 2026-11-02: la linea intradiaria
+(`docs/intradia.md`) escribe ahi `precios_intradia_30m` y las 4 tablas de
+`vigilancia_*`. Es la primera excepcion al Plan C y se acepto apoyandose en esta
+medicion, asi que corresponde anotar lo que agrega:
+
+| | |
+|---|---|
+| filas por rueda | ~2.800 (199 tickers x 14 barras entre los dos cortes) |
+| retencion en Railway | 30 ruedas; la historia va a local con el sync |
+| tamano de la tabla al 2026-11-02 | **20 MB** con 30 ruedas cargadas |
+| contra la DB de 248 MB | **+8%** |
+| contra `opciones_snapshot` | ~2.800 filas/rueda contra ~105.000/dia |
+
+En disco es casi nada, y el disco no es lo que se paga. **Lo que no se sabe
+todavia es si mueve la linea de RAM**, que es el 95% de la factura: la respuesta
+depende de los bytes que la DB TOQUE por dia, y el cron recien arranco. Se mide
+con el chequeo de la sec. 9 (el promedio de `MEMORY_USAGE_GB` a 7 dias contra
+los **0,43 GB** de la linea de base) despues de un par de semanas de cron.
+
+Una cosa SI quedo bien desde el diseno: el sync intradiario **no hace `VACUUM
+FULL`**, y su docstring dice por que, con el mismo argumento de la sec. 6 (en un
+buffer rotativo las paginas que libera el DELETE las reusa el INSERT del dia
+siguiente). La leccion de este documento ya esta aplicada en codigo nuevo.
+
+Esto **no reabre la linea**: es el registro del cambio de premisa, con el numero
+al lado, para que la proxima lectura de la factura no empiece de cero.
+
 ## 9. Como re-medirlo (un minuto)
 
 1. **Factura**: dashboard de Railway, "Cost by Service". Dividir costo/unidades
