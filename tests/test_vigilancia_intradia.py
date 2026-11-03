@@ -114,6 +114,22 @@ def test_nivel_cruzado_reemplaza_al_de_d_si_coincide():
     assert "OI_SOP_ANT" in noms and "OI_SOP" not in noms
 
 
+def test_el_muro_cruzado_gana_aunque_cambie_de_rol():
+    """
+    El strike puede pasar de resistencia a soporte: si ayer se supero la
+    resistencia 150, el muro de hoy recalculado con el close de D deja ese mismo
+    150 como soporte. Sin deduplicar por VALOR el mismo precio sale dos veces
+    (medido el 3/11/2026 en el mensaje real de KO).
+    """
+    filas = [_fila("AAA", 155.0)]
+    res = _res(oi_arriba=[("AAA", 150.0)])             # ayer supero la resistencia 150
+    _, niveles = vi.armar_lista(D, filas, res, {"AAA": ["supero res OI"]},
+                                {"AAA": (150.0, 160.0)}, {}, GEN)   # hoy 150 es soporte
+    noms = {x["nivel"] for x in niveles}
+    assert "OI_RES_ANT" in noms and "OI_SOP" not in noms
+    assert "OI_RES" in noms          # 160 es otro valor: no colisiona
+
+
 def test_sma_cruzada_en_d_se_marca_en_su_fila():
     filas = [_fila("BBB", 101.0, sma21=99.0, sma50=100.0)]
     res = _res(sma_arriba=[("BBB", "SMA50")])

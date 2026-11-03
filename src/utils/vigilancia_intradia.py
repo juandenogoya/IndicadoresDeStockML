@@ -75,8 +75,7 @@ NIVELES = {
     "OI_RES_ANT": "resistencia OI superada ayer",
 }
 SMAS = (("SMA21", "sma21"), ("SMA50", "sma50"), ("SMA200", "sma200"))
-# Nivel cruzado en D -> muro "de D" del mismo tipo (para no duplicar si coinciden)
-_BASE = {"OI_SOP_ANT": "OI_SOP", "OI_RES_ANT": "OI_RES"}
+_MUROS_D = ("OI_SOP", "OI_RES")
 
 _VERED = {"ALCISTA": "A", "NEUTRAL": "N", "BAJISTA": "B"}
 _CORTE_TXT = {"apertura_90": "11:00 ET", "cierre_60": "15:00 ET"}
@@ -258,11 +257,18 @@ def armar_lista(rueda: date, filas_cierre: list, res_cierre: dict, motivos: dict
         for nom, d in oi_ant.items():
             if tk in d:
                 cand[nom] = (_f(d[tk]), True)
-        # El muro cruzado en D manda si coincide con el de D (mismo strike).
-        for ant, base in _BASE.items():
-            if ant in cand and cand[ant][0] is not None and cand.get(base, (None,))[0] is not None \
-                    and abs(cand[ant][0] - cand[base][0]) < 1e-9:
-                del cand[base]
+        # El muro cruzado en D manda sobre CUALQUIER muro de D con el mismo
+        # valor, no solo sobre el de su tipo: el strike puede haber cambiado de
+        # ROL. Si ayer se supero la resistencia 95, el muro de hoy recalculado
+        # con el close de D deja ese mismo 95 como SOPORTE, y el precio volviendo
+        # abajo contaria dos veces el mismo precio. Medido el 3/11/2026 sobre el
+        # mensaje real de KO: 14 colisiones en 41 listas, todas OI_RES_ANT+OI_SOP.
+        # Se queda el _ANT, que es el que lleva el contexto de ayer.
+        for ant in [k for k in cand if k.endswith("_ANT") and cand[k][0] is not None]:
+            for base in _MUROS_D:
+                if base in cand and cand[base][0] is not None:
+                    if abs(cand[ant][0] - cand[base][0]) < 1e-9:
+                        del cand[base]
 
         for nom in NIVELES:
             if nom not in cand:
