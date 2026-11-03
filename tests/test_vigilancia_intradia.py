@@ -29,21 +29,17 @@ def _res(oi_abajo=(), oi_arriba=(), sw_abajo=(), sw_arriba=(), sma_arriba=(), sm
     }
 
 
-def _fila(tk, close, close_ant=None, sma50=None, sma200=None, dist_sl=None, dist_sh=None):
-    return {"ticker": tk, "close": close, "close_ant": close_ant, "sma50": sma50,
-            "sma200": sma200, "dist_sl": dist_sl, "dist_sh": dist_sh}
+def _fila(tk, close, close_ant=None, sma21=None, sma50=None, sma200=None):
+    return {"ticker": tk, "close": close, "close_ant": close_ant, "sma21": sma21,
+            "sma50": sma50, "sma200": sma200}
 
 
 # ── utilidades ────────────────────────────────────────────────────────────────
 
-def test_lado_y_nivel_desde_dist():
+def test_lado():
     assert vi.lado(101, 100) == "sobre"
     assert vi.lado(99, 100) == "bajo"
     assert vi.lado(100, 100) is None and vi.lado(None, 100) is None
-    # dist = (close - nivel) / nivel * 100  ->  nivel = close / (1 + dist/100)
-    assert vi.nivel_desde_dist(110.0, 10.0) == pytest.approx(100.0)
-    assert vi.nivel_desde_dist(95.0, -5.0) == pytest.approx(100.0)
-    assert vi.nivel_desde_dist(None, 1.0) is None
 
 
 def test_sigma_log_exige_historia():
@@ -80,67 +76,76 @@ def test_motivos_cierre_sin_balances():
 # ── armar_lista ───────────────────────────────────────────────────────────────
 
 def _lista_basica():
-    filas = [_fila("AAA", 148.0, close_ant=152.0, sma50=140.0, sma200=120.0,
-                   dist_sl=-2.0, dist_sh=5.0)]
+    filas = [_fila("AAA", 148.0, close_ant=152.0, sma21=146.0, sma50=140.0, sma200=120.0)]
     res = _res(oi_abajo=[("AAA", 150.0)], sw_abajo=[("AAA", None)])
-    motivos = {"AAA": ["perdio sop OI", "rompio SL N5"]}
+    motivos = {"AAA": ["foto TECH+SMC", "perdio sop OI"]}
     strikes = {"AAA": (145.0, 155.0)}
-    estr_ant = {"AAA": (1.0, 4.0)}       # en D-1: SL a 1% debajo del close 152
-    return vi.armar_lista(D, filas, res, motivos, strikes, estr_ant, {"AAA": 0.02}, GEN)
+    return vi.armar_lista(D, filas, res, motivos, strikes, {"AAA": 0.02}, GEN)
 
 
 def test_armar_lista_niveles_y_lados():
     tickers, niveles = _lista_basica()
     assert tickers == [{"fecha": D, "ticker": "AAA", "close_d": 148.0, "sigma_d": 0.02,
-                        "motivos": "perdio sop OI; rompio SL N5", "origen": "push",
+                        "motivos": "foto TECH+SMC; perdio sop OI", "origen": "push",
                         "generado_en": GEN}]
     n = {x["nivel"]: x for x in niveles}
     assert n["OI_SOP"]["valor"] == 145.0 and n["OI_SOP"]["lado_d"] == "sobre"
     assert n["OI_RES"]["lado_d"] == "bajo"
     assert n["OI_SOP_ANT"] == {"fecha": D, "ticker": "AAA", "nivel": "OI_SOP_ANT", "valor": 150.0,
                                "lado_d": "bajo", "cruzado_en_d": True}
-    assert n["SW_SL"]["valor"] == pytest.approx(148.0 / 0.98)
-    assert n["SW_SL_ANT"]["valor"] == pytest.approx(152.0 / 1.01)
-    assert n["SW_SL_ANT"]["cruzado_en_d"] and n["SW_SL_ANT"]["lado_d"] == "bajo"
+    assert n["SMA21"]["valor"] == 146.0 and n["SMA21"]["lado_d"] == "sobre"
     assert not n["SMA50"]["cruzado_en_d"]
-    assert "SW_SH_ANT" not in n and "OI_RES_ANT" not in n
+    assert "OI_RES_ANT" not in n
+
+
+def test_los_swings_ya_no_son_niveles():
+    """Decidido el 3/11/2026: los swings N5 salen del modelo intradiario."""
+    _, niveles = _lista_basica()
+    assert not [x for x in niveles if x["nivel"].startswith("SW_")]
+    assert not [k for k in vi.NIVELES if k.startswith("SW_")]
 
 
 def test_nivel_cruzado_reemplaza_al_de_d_si_coincide():
     filas = [_fila("AAA", 148.0)]
     res = _res(oi_abajo=[("AAA", 150.0)])
     tickers, niveles = vi.armar_lista(D, filas, res, {"AAA": ["x"]}, {"AAA": (150.0, None)},
-                                      {}, {}, GEN)
+                                      {}, GEN)
     noms = [x["nivel"] for x in niveles]
     assert "OI_SOP_ANT" in noms and "OI_SOP" not in noms
 
 
 def test_sma_cruzada_en_d_se_marca_en_su_fila():
-    filas = [_fila("BBB", 101.0, sma50=100.0)]
+    filas = [_fila("BBB", 101.0, sma21=99.0, sma50=100.0)]
     res = _res(sma_arriba=[("BBB", "SMA50")])
-    _, niveles = vi.armar_lista(D, filas, res, {"BBB": ["paso sobre SMA50"]}, {}, {}, {}, GEN)
-    assert niveles == [{"fecha": D, "ticker": "BBB", "nivel": "SMA50", "valor": 100.0,
-                        "lado_d": "sobre", "cruzado_en_d": True}]
+    _, niveles = vi.armar_lista(D, filas, res, {"BBB": ["paso sobre SMA50"]}, {}, {}, GEN)
+    n = {x["nivel"]: x for x in niveles}
+    assert n["SMA50"] == {"fecha": D, "ticker": "BBB", "nivel": "SMA50", "valor": 100.0,
+                          "lado_d": "sobre", "cruzado_en_d": True}
+    assert n["SMA21"]["valor"] == 99.0 and not n["SMA21"]["cruzado_en_d"]
 
 
 def test_ticker_sin_close_queda_afuera():
-    tickers, niveles = vi.armar_lista(D, [], _res(), {"AAA": ["x"]}, {}, {}, {}, GEN)
+    tickers, niveles = vi.armar_lista(D, [], _res(), {"AAA": ["x"]}, {}, {}, GEN)
     assert tickers == [] and niveles == []
 
 
 # ── eventos ───────────────────────────────────────────────────────────────────
 
-def test_eventos_cruce_revierte_y_movimiento():
+def test_eventos_estado_y_movimiento():
     tickers, niveles = _lista_basica()
-    # 151: vuelve sobre el soporte perdido ayer (150) y sobre el SL roto (150,50),
+    # 151: recupera el soporte perdido ayer (150) y pasa sobre la SMA21 (146);
     # sigue sobre el soporte de D (145) y debajo de la resistencia (155).
     evs = vi.eventos(tickers, niveles, {"AAA": 151.0})
-    tipos = {(e["tipo"], e["nivel"]) for e in evs}
-    assert ("revierte", "OI_SOP_ANT") in tipos and ("revierte", "SW_SL_ANT") in tipos
-    assert ("revierte", "OI_SOP") not in tipos
-    # 144: pierde el soporte de D -> cruce
+    assert {e["tipo"] for e in evs} == {"estado"}
+    niv = {e["nivel"] for e in evs}
+    assert "OI_SOP_ANT" in niv and "OI_SOP" not in niv
+    ant = [e for e in evs if e["nivel"] == "OI_SOP_ANT"][0]
+    assert ant["cruzado_en_d"] and ant["lado"] == "sobre"
+    assert ant["var_pct"] == pytest.approx((151 / 148 - 1) * 100)
+    # 144: pierde el soporte de D y queda bajo las tres medias que estaban debajo
     evs = vi.eventos(tickers, niveles, {"AAA": 144.0})
-    assert [e for e in evs if e["tipo"] == "cruce"][0]["nivel"] == "OI_SOP"
+    sop = [e for e in evs if e["nivel"] == "OI_SOP"][0]
+    assert sop["tipo"] == "estado" and not sop["cruzado_en_d"] and sop["lado"] == "bajo"
     # movimiento: ln(144/148)/0,02 = -1,37 -> no; con 140 = -2,78 -> si
     assert not [e for e in evs if e["tipo"] == "movimiento"]
     evs = vi.eventos(tickers, niveles, {"AAA": 140.0})
@@ -161,9 +166,9 @@ def test_sin_sigma_no_hay_movimiento():
 
 
 def test_novedades():
-    a = {"ticker": "AAA", "tipo": "cruce", "nivel": "OI_SOP"}
+    a = {"ticker": "AAA", "tipo": "estado", "nivel": "OI_SOP"}
     b = {"ticker": "BBB", "tipo": "movimiento", "nivel": None}
-    c = {"ticker": "CCC", "tipo": "revierte", "nivel": "SMA50"}
+    c = {"ticker": "CCC", "tipo": "estado", "nivel": "SMA50"}
     nuevos, deshechos = vi.novedades([a, c], [a, b])
     assert nuevos == [c] and deshechos == [b]
     nuevos, deshechos = vi.novedades([a], None)
@@ -175,32 +180,56 @@ def test_novedades():
 def test_mensaje_sin_novedades_lo_dice():
     tickers, _ = _lista_basica()
     txt = vi.mensaje(date(2026, 11, 2), "apertura_90", D, tickers, [], [], [])
-    assert "1 vigilados, sin novedades." in txt
+    assert "1 vigilados, sin cambios de estado." in txt
     assert "Estado, no pronostico." in txt
     txt = vi.mensaje(date(2026, 11, 2), "cierre_60", D, tickers, [], [], [], hay_previo=True)
-    assert "sin novedades desde las 11:00." in txt
+    assert "sin cambios de estado desde las 11:00." in txt
 
 
-def test_mensaje_con_eventos_y_deshechos():
+def test_mensaje_con_cambios_y_deshechos():
     tickers, niveles = _lista_basica()
     evs = vi.eventos(tickers, niveles, {"AAA": 151.0})
     txt = vi.mensaje(date(2026, 11, 2), "cierre_60", D, tickers, evs,
                      [{"ticker": "AAA", "tipo": "movimiento", "nivel": None, "var_pct": -3.0,
                        "z": -2.1, "valor": None, "lado": None}], ["BBB"], hay_previo=True)
-    assert "Nuevos: revierten el cruce de ayer (2)" in txt
-    assert "vuelve sobre soporte OI perdido ayer 150,00" in txt
-    assert "Se deshicieron desde las 11:00 (1)" in txt
+    assert "Nuevos: cambian de estado (1)" in txt       # UNA linea: un solo ticker
+    assert "recupera el soporte OI 150,00 que perdio ayer" in txt
+    assert "SMA21" not in txt      # a 151 ya estaba sobre la SMA21 (146): no cambio
+    assert "Ya no mueven como a las 11:00 (1)" in txt
     assert "sin dato del corte: 1" in txt
-    assert "<i>(perdio sop OI +)</i>" in txt
+    assert "<i>(foto TECH+SMC +)</i>" in txt
+
+
+def test_una_linea_por_ticker_aunque_cambien_varios_estados():
+    """El mensaje agrupa: 3 cambios del mismo ticker son UNA linea."""
+    tickers, niveles = _lista_basica()
+    tickers[0]["sigma_d"] = 0.20          # sigma grande: que no dispare `movimiento`
+    evs = vi.eventos(tickers, niveles, {"AAA": 121.0})   # queda bajo SMA21, SMA50 y el soporte
+    assert not [e for e in evs if e["tipo"] == "movimiento"]
+    assert len({e["nivel"] for e in evs if e["tipo"] == "estado"}) >= 3
+    txt = vi.mensaje(date(2026, 11, 2), "apertura_90", D, tickers, evs, [], [])
+    assert "cambian de estado (1)" in txt
+    assert txt.count("<b>AAA</b>") == 1
+
+
+def test_la_nota_del_z_sale_solo_si_hay_movimiento():
+    tickers, niveles = _lista_basica()
+    solo_estado = vi.eventos(tickers, niveles, {"AAA": 144.0})
+    assert "fuera de escala" not in vi.mensaje(
+        date(2026, 11, 2), "apertura_90", D, tickers, solo_estado, [], [])
+    con_mov = vi.eventos(tickers, niveles, {"AAA": 140.0})
+    assert "fuera de escala" in vi.mensaje(
+        date(2026, 11, 2), "apertura_90", D, tickers, con_mov, [], [])
 
 
 def test_mensaje_largo_achica_listas_y_no_se_parte():
     tickers = [{"ticker": f"T{i:03d}", "motivos": "foto top ML; cerca sop OI"} for i in range(300)]
-    evs = [{"ticker": f"T{i:03d}", "tipo": "cruce", "nivel": "SMA200", "valor": 100.0,
-            "lado": "bajo", "precio": 99.0, "dist_pct": -1.0} for i in range(300)]
+    evs = [{"ticker": f"T{i:03d}", "tipo": "estado", "nivel": "SMA200", "valor": 100.0,
+            "lado": "bajo", "cruzado_en_d": False, "precio": 99.0, "var_pct": -1.5,
+            "dist_pct": -1.0} for i in range(300)]
     txt = vi.mensaje(date(2026, 11, 2), "apertura_90", D, tickers, evs, [], [])
     assert len(txt) <= vi.MAX_LEN_MENSAJE
-    assert "cruzan un nivel (300)" in txt and "mas" in txt
+    assert "cambian de estado (300)" in txt and "mas" in txt
     assert txt.endswith("<i>Estado, no pronostico.</i>")
 
 

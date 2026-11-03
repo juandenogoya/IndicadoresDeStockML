@@ -272,7 +272,16 @@ rutina (sube la lista de vigilancia de la rueda y corre el sync).
   `cierre` (politica INFORMAR: nada depende de la alerta).
 - CLAUDE.md: arquitectura (excepcion al Plan C), tablas y scripts clave.
 
-## 9. Etapa 2: alerta de la lista de vigilancia (decidida el 30/10/2026)
+## 9. Etapa 2: alerta de la lista de vigilancia
+
+> **OJO: hay DOS modelos.** El **v1** (30/10/2026) es el que describen las
+> secciones 9.1 a 9.4: se programo, se desplego, se midio y quedo **REEMPLAZADO**
+> el 3/11/2026. Se conserva entero porque sus mediciones son las que justifican
+> el cambio. El que esta EN USO es el **v2**, en la sec. 9.5.
+
+### MODELO v1 -- REEMPLAZADO el 3/11/2026 (secs. 9.1 a 9.4)
+
+Decidido el 30/10/2026.
 
 **Idea.** La rutina de la rueda D ya dice que tickers vigilar: la foto
 (docs/telegram_foto.md) y el cierre por sector (docs/cierre_grupos.md). En cada
@@ -434,3 +443,141 @@ vez de emitir una plausible pero mal. Los 2 cortes afectados son los del
 minutos** para 111 tickers y 602 niveles (local: segundos). Como
 `intradia_post_rutina.bat` va a correr esto todos los dias, conviene tenerlo
 presente; no se toco nada.
+
+---
+
+### 9.5 MODELO v2 (3/11/2026) -- cambios de ESTADO sobre los tickers de la foto
+
+**EN USO.** Lo planteo el usuario y cambia la pregunta: la v1 preguntaba *"cruzo
+un nivel"*; la v2 pregunta **"el movimiento intradiario cambio la lectura que
+teniamos del ticker al cierre de ayer?"**. La alerta toma lo que la foto dijo
+anoche, lo vuelve a mirar con el precio del corte y avisa **que estados se dieron
+vuelta**.
+
+#### Que cambia
+
+| | v1 (30/10) | v2 (3/11) |
+|---|---|---|
+| lista | foto + cierre, mediana **77** tickers (hasta 111) | **solo la foto: mediana 12,7** (0 a 15) |
+| niveles guardados | 6 tipos + 4 `_ANT`: **17.980** | 3 SMA + 2 muros + 2 `_ANT`: **2.233** |
+| tipos de evento | cruce / revierte / movimiento | **estado / movimiento** |
+| lineas por corte | **38,4** | **2,0** de mediana (estado 3,5 en apertura, 1,0 en cierre) |
+| largo maximo | 2.851 caracteres | **1.215** |
+| dual-write a Railway | ~5 min (111 tickers, 602 niveles) | segundos |
+
+Sobre la MISMA rueda (2026-11-02) el mensaje de las 11:00 paso de **66 lineas a
+6**, y el de las 15:00 de **36 a 4**.
+
+#### Que entra, que sale y por que
+
+| | |
+|---|---|
+| **ENTRA** | precio vs **SMA21 / SMA50 / SMA200** y vs **muro de soporte / resistencia de OI** |
+| **SALEN los swings N5** | estaban en la v1 y no entran en el objetivo (decision del usuario) |
+| **RSI y MACD quedan como dato del CIERRE** | sin recalculo intradiario (decision del usuario) |
+| **El cruce de medias 50x200 NO entra** | **medido y descartado**: ver abajo |
+
+**La lista es solo la foto, y esta medido.** El cierre aportaba 104 de los 111
+tickers y el **88% de las lineas**, con la **misma** persistencia al cierre que
+los de la foto (84% y 84%). No eran peores: eran sobre tickers que no se miran.
+El cierre **sigue usandose** para dos cosas: saber que se cruzo en D (los muros
+de D-1 y la marca en las SMA) y como CONTEXTO en los motivos de un ticker de foto.
+
+**`revierte` desaparece como TIPO** pero no como caso: deshacer el cruce de ayer
+es otro cambio de estado y entra solo. Los niveles `OI_SOP_ANT` / `OI_RES_ANT`
+siguen existiendo porque el muro de D se recalcula con el close de D y queda del
+lado del precio por construccion: sin el muro de D-1 no se puede ver "recupero el
+soporte que perdio ayer". En las SMA no hace falta, el nivel es el mismo.
+
+#### El golden/death cross NO es un evento intradiario (medido el 3/11/2026)
+
+El usuario lo pidio explicitamente y la medicion dice que no va. Sobre 1.012
+ticker-corte de tickers de foto en 38 ruedas:
+
+| cambio de estado | casos | por corte |
+|---|---|---|
+| precio cruza SMA21 | 120 (11,9%) | 1,58 |
+| precio cruza SMA50 | 64 (6,3%) | 0,84 |
+| precio cruza SMA200 | 31 (3,1%) | 0,41 |
+| **cruce de medias 50x200** | **4 (0,4%)** | **0,05** |
+
+Y los 4 casos son **2 eventos** (ASAN 17/09, AI 06/10) vistos en los dos cortes,
+y **los dos se confirmaron tambien al cierre** de esa misma rueda, con las medias
+ya a 0,23-0,26% una de otra. Es estructural: las dos medias estan a **8,2% de
+distancia** en la mediana (a menos de 0,5% solo en el 2,8% de los casos) y una
+barra nueva mueve la SMA50 ~0,1% del precio y la SMA200 ~0,025%. **Lo intradiario
+adelanta unas horas algo que el mensaje de la noche dice igual.**
+
+> **HUECO DETECTADO, no tapado**: el cruce de medias **tampoco esta en el mensaje
+> de la noche**. El cierre por sector tiene "paso sobre SMA50" y "paso bajo
+> SMA200", que son *precio contra media*; golden/death cross no hay en ningun
+> lado. El lugar para agregarlo es `docs/cierre_grupos.md`, no esta linea.
+
+#### Media recalculada o media de la ficha
+
+Se eligio **la de la ficha** (el valor tal como quedo al cierre de D). Recalcular
+la media metiendo el precio del corte como cierre provisorio **difiere en 25 de
+1.012 casos (2,5%)**: SMA21 16, SMA50 6, SMA200 3. No justifica empujar una suma
+auxiliar por SMA a Railway ni explicar una "media provisoria" en el mensaje.
+Ademas la VM **no tiene `precios_diarios`** (Plan C), asi que cualquier recalculo
+tendria que viajar precomputado en la lista.
+
+#### Criterios, RE-PRE-REGISTRADOS y corridos sobre 80 cortes (40 ruedas)
+
+Los criterios de la sec. 9.3 se re-corrieron sobre el modelo nuevo: el resultado
+de la v1 **no se hereda**.
+
+| # | criterio | v2 |
+|---|---|---|
+| 1 | correcto (SQL independiente) | **PASA al 100%** -- 80 cortes, 383 eventos |
+| 2 | mediana de lineas por tipo entre 1 y 15 | `estado` **PASA** (2,0) / `movimiento` **NO PASA** (0,0) |
+| 3 | un mensaje por corte | **PASA** -- maximo 1.215 de 4.000, 0 cortes achicaron listas |
+| 4 | informativo: siguen al cierre | `estado` 77% a las 11:00 y **93%** a las 15:00; `movimiento` 85% en los dos |
+| 5 | sirve | **ABIERTO**, juicio del usuario |
+
+**La asimetria entre cortes de la v1 desaparecio**: `estado` da 3,5 de mediana en
+`apertura_90` y 1,0 en `cierre_60`, los dos comodos dentro de 1 a 15. En la v1,
+`cruce` daba 22 en apertura y el agregado tapaba el problema.
+
+#### `movimiento` se MANTIENE contra lo que dice el criterio 2 (decidido el 3/11/2026)
+
+El criterio 2 dice que un tipo con mediana fuera de 1 a 15 **sale del mensaje**, y
+`movimiento` da **0,0**. Se decidio **mantenerlo igual**, y queda escrito:
+
+- **el umbral NO se movio** despues de ver los datos (eso seria el sobreajuste de
+  siempre). Lo que se declara es que **el criterio esta mal calibrado para eventos
+  raros por diseno**;
+- `movimiento` dispara **33 veces en 80 cortes**: no es que no dispare, es que no
+  dispara todos los dias -- que para un aviso de movimiento grande es lo correcto.
+  La regla nacio pensando en "una regla que nunca dispara no es una regla"
+  (CLAUDE.md, alta y baja de estrategias), que es otro caso;
+- es la **segunda vez** que este criterio se tropieza con lo mismo: la sec. 9.3 ya
+  habia pre-registrado ese riesgo para `revierte`, que despues no se cumplio;
+- queda **a revisar** junto con el criterio 5.
+
+El veredicto del criterio es INFORMATIVO: `evaluar_etapa2.py` dice que tipos
+quedarian, pero el armado del mensaje no lo consulta.
+
+#### La nota del z (pedida por el usuario), con los numeros que la sostienen
+
+Sigma diaria mediana de los tickers de foto: **2,18%** (p25 1,71%, p75 3,41%), asi
+que z 1 es ~2%, z 2 ~4,5% y z 3 ~6,5%. `|z| >= 2` aparecio en 26 de 1.012 casos.
+
+Y el aviso de que **varios juntos suelen ser UN evento** sale de una medicion: el
+**2026-10-26** cayeron mas de 10% **nueve ADR** brasilenos (XP -48,4%, BBD -28,0%,
+STNE -27,4%, PAGS -25,2%, SID -22,9%, ITUB -20,4%, NU -17,0%, PBR -14,0%,
+BSBR -13,2%) con la mediana del universo en **+0,26%** y VALE -- el unico que
+factura en dolares -- en -3,2%. Es la firma de una devaluacion del real, no de
+nueve sorpresas. **No era un split ni un error de dato**: las barras intradiarias
+coinciden con `precios_diarios` ese dia.
+
+#### Lo que sigue sin resolver
+
+- El **2026-09-22 no tiene lista** y no es defecto de esta linea: esa rueda tiene
+  60 de 199 tickers en `precios_diarios` (el hueco que informa `chequeo_rutina.py`)
+  y 0 en `veredictos_universo_diario`. `push_vigilancia.py` **se niega** a armar
+  una lista sobre una rueda incompleta en vez de emitir una plausible pero mal.
+  Quedan sin evaluar los 2 cortes del 23/09.
+- **EMA vs SMA**: el usuario pregunto por EMA; el proyecto usa SMA (21/50/200 en
+  `indicadores_tecnicos`). Se sigue con SMA y se analiza despues: cambiarlo
+  tocaria tambien el mensaje de la noche.

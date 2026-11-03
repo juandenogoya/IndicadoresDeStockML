@@ -7,11 +7,16 @@ la lista de D tiene que estar en Railway antes del corte de las 11:00 ET de la
 rueda siguiente, que es cuando el snapshot de Oracle la lee. Etapa 2 de
 docs/intradia.md.
 
-QUE TICKERS (decision 30/10/2026): todo lo que la rutina ya marco, sin balances.
-    - la FOTO: 2+ familias de FT y top por familia (foto_ticker.seleccionar,
-      la misma seleccion que telegram_foto.py, de la misma corrida de FT);
-    - el CIERRE por sector: cruces de nivel de D (muro OI, swing N5, SMA) y
-      "vigilar" (cerca de un nivel, cambio de veredicto).
+QUE TICKERS (decision 3/11/2026, reemplaza a la del 30/10): SOLO los de la
+FOTO -- 2+ familias de FT y top por familia (foto_ticker.seleccionar, la misma
+seleccion que telegram_foto.py, de la misma corrida de FT). Son ~14 por rueda.
+
+Antes entraban tambien los del CIERRE por sector, y la lista daba 111 tickers.
+Medido sobre 38 ruedas: el cierre aportaba 104 de esos 111 y el 88% de las
+lineas del mensaje, con la MISMA tasa de persistencia al cierre que los de la
+foto (84% y 84%) -- o sea, no peores, pero sobre tickers que no se miran.
+El cierre SIGUE usandose para dos cosas: saber QUE se cruzo en D (los muros de
+D-1 y la marca en las SMA) y como CONTEXTO en los motivos de un ticker de foto.
 Las definiciones NO se repiten aca: se importan de telegram_foto.py y
 telegram_cierre.py, asi la lista dice lo mismo que los mensajes de la noche.
 
@@ -115,15 +120,20 @@ def motivos_de_foto(rueda: date, reconstruida: bool) -> tuple[dict, str]:
     return vi.motivos_foto(ft.seleccionar(cands)), f"corrida de FT {fecha_cand}"
 
 
-def cargar_extra(tickers: list, rueda: date, rueda_ant: date) -> tuple[dict, dict, dict]:
-    p = {"t": list(tickers), "d": rueda, "a": rueda_ant}
+def cargar_extra(tickers: list, rueda: date) -> tuple[dict, dict, dict]:
+    """(strikes de OI, sma21, sigmas) de la rueda D para los tickers de la lista.
+
+    La SMA21 se trae aca y no de telegram_cierre: ese modulo solo consulta sma50
+    y sma200, y no se toca para no cambiar el mensaje de la noche.
+    """
+    p = {"t": list(tickers), "d": rueda}
     muros = query_df("""
         SELECT ticker, soporte_strike, resistencia_strike FROM opciones_pcr_plazo_diario
         WHERE ventana = 'corto' AND fecha = :d AND ticker = ANY(:t)
     """, p)
-    estr = query_df("""
-        SELECT ticker, dist_sl_5_pct, dist_sh_5_pct FROM features_estructura
-        WHERE fecha = :a AND ticker = ANY(:t)
+    smas = query_df("""
+        SELECT ticker, sma21 FROM indicadores_tecnicos
+        WHERE fecha = :d AND ticker = ANY(:t)
     """, p)
     precios = query_df("""
         SELECT ticker, fecha, close FROM precios_diarios
@@ -132,10 +142,9 @@ def cargar_extra(tickers: list, rueda: date, rueda_ant: date) -> tuple[dict, dic
     """, dict(p, desde=rueda - timedelta(days=DIAS_SIGMA)))
     strikes = {r.ticker: (tc._nn(r.soporte_strike), tc._nn(r.resistencia_strike))
                for r in muros.itertuples()}
-    estr_ant = {r.ticker: (tc._nn(r.dist_sl_5_pct), tc._nn(r.dist_sh_5_pct))
-                for r in estr.itertuples()}
+    sma21 = {r.ticker: tc._nn(r.sma21) for r in smas.itertuples()}
     sigmas = {tk: vi.sigma_log(list(g["close"])) for tk, g in precios.groupby("ticker")}
-    return strikes, estr_ant, sigmas
+    return strikes, sma21, sigmas
 
 
 def armar(rueda: date, reconstruida: bool) -> tuple[list, list, dict]:
@@ -146,15 +155,16 @@ def armar(rueda: date, reconstruida: bool) -> tuple[list, list, dict]:
     res, filas = resultados[0]
     m_foto, nota_foto = motivos_de_foto(rueda, reconstruida)
     m_cierre = vi.motivos_cierre(res)
-    motivos = {}
-    for fuente in (m_foto, m_cierre):
-        for tk, ms in fuente.items():
-            motivos.setdefault(tk, []).extend(ms)
-    strikes, estr_ant, sigmas = cargar_extra(motivos, rueda, res["rueda_ant"])
+    # La lista son SOLO los tickers de la foto. Del cierre se conserva el motivo
+    # como CONTEXTO de esos tickers: no agrega tickers nuevos.
+    motivos = {tk: list(ms) + m_cierre.get(tk, []) for tk, ms in m_foto.items()}
+    strikes, sma21, sigmas = cargar_extra(motivos, rueda)
+    filas = [dict(f, sma21=sma21.get(f["ticker"])) for f in filas]
     origen = vi.ORIGEN_RECONSTRUIDA if reconstruida else vi.ORIGEN_PUSH
-    tickers, niveles = vi.armar_lista(rueda, filas, res, motivos, strikes, estr_ant, sigmas,
+    tickers, niveles = vi.armar_lista(rueda, filas, res, motivos, strikes, sigmas,
                                       datetime.now(timezone.utc), origen)
-    info = {"nota_foto": nota_foto, "n_foto": len(m_foto), "n_cierre": len(m_cierre),
+    info = {"nota_foto": nota_foto, "n_foto": len(m_foto),
+            "n_contexto": sum(1 for tk in motivos if tk in m_cierre),
             "rueda_ant": res["rueda_ant"]}
     return tickers, niveles, info
 
@@ -194,8 +204,8 @@ def escribir(eng, rueda: date, tickers: list, niveles: list, info: dict,
 
 def resumen(rueda, tickers, niveles, info):
     log(f"  Rueda {rueda} (anterior {info['rueda_ant']}) | {info['nota_foto']}")
-    log(f"  Vigilados: {len(tickers)} (foto {info['n_foto']}, cierre {info['n_cierre']}, "
-        f"con solapamiento) | niveles: {len(niveles)}")
+    log(f"  Vigilados: {len(tickers)} (todos de la foto; {info['n_contexto']} con "
+        f"contexto del cierre) | niveles: {len(niveles)}")
     cruzados = sum(1 for n in niveles if n["cruzado_en_d"])
     sin_sigma = sum(1 for t in tickers if t["sigma_d"] is None)
     log(f"  Niveles cruzados en D: {cruzados} | sin desvio (historia corta): {sin_sigma}")

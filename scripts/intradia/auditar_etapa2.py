@@ -36,7 +36,9 @@ WITH p AS (
     WHERE fecha = :f AND corte = :c AND inicio_barra = :u AND close IS NOT NULL
 )
 SELECT n.ticker,
-       CASE WHEN n.cruzado_en_d THEN 'revierte' ELSE 'cruce' END AS tipo,
+       'estado' AS tipo,   -- modelo v2 (3/11/2026): `revierte` ya no es un tipo
+                          -- aparte; deshacer el cruce de ayer es otro cambio de
+                          -- estado y el nivel _ANT es el que lo distingue.
        n.nivel
 FROM p
 JOIN vigilancia_niveles n ON n.ticker = p.ticker AND n.fecha = :fl
