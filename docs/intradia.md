@@ -268,8 +268,13 @@ rutina (sube la lista de vigilancia de la rueda y corre el sync).
 
 - Pasar la linea del cron a `scripts/oracle_crontab.txt` con `origin main` y la
   ruta del clon de produccion; borrar el clon de prueba y su linea.
-- `push_vigilancia.py` y el sync como pasos de `rutina_diaria`, despues de
-  `cierre` (politica INFORMAR: nada depende de la alerta).
+- `push_vigilancia.py` y el sync **siguen A MANO** (`intradia_post_rutina.bat`)
+  y NO entran como pasos de `rutina_diaria`: **decidido el 3/11/2026**, hasta que
+  el criterio 5 se expida (sec. 9.6). Integrarlos ahora seria comprometerse mas
+  con lo unico de esta linea que todavia no tiene valor demostrado, y el paso a
+  mano es justamente lo que mantiene VISIBLE su costo diario. Si el criterio 5
+  PASA: entran despues de `cierre`, con politica INFORMAR (nada depende de la
+  alerta).
 - CLAUDE.md: arquitectura (excepcion al Plan C), tablas y scripts clave.
 
 ## 9. Etapa 2: alerta de la lista de vigilancia
@@ -533,7 +538,7 @@ de la v1 **no se hereda**.
 | 2 | mediana de lineas por tipo entre 1 y 15 | `estado` **PASA** (2,0) / `movimiento` **NO PASA** (0,0) |
 | 3 | un mensaje por corte | **PASA** -- maximo 1.215 de 4.000, 0 cortes achicaron listas |
 | 4 | informativo: siguen al cierre | `estado` 77% a las 11:00 y **93%** a las 15:00; `movimiento` 85% en los dos |
-| 5 | sirve | **ABIERTO**, juicio del usuario |
+| 5 | sirve | **ABIERTO** -- la regla con la que se decide esta en la sec. 9.6 |
 
 **La asimetria entre cortes de la v1 desaparecio**: `estado` da 3,5 de mediana en
 `apertura_90` y 1,0 en `cierre_60`, los dos comodos dentro de 1 a 15. En la v1,
@@ -581,3 +586,93 @@ coinciden con `precios_diarios` ese dia.
 - **EMA vs SMA**: el usuario pregunto por EMA; el proyecto usa SMA (21/50/200 en
   `indicadores_tecnicos`). Se sigue con SMA y se analiza despues: cambiarlo
   tocaria tambien el mensaje de la noche.
+
+---
+
+### 9.6 El criterio 5: como se decide (pre-registrado el 3/11/2026)
+
+El criterio 5 es el unico de los cinco que **no se puede medir antes** y el unico
+que decide si esta linea se queda. Los otros cuatro ya contestaron: la alerta es
+**correcta** (1), **dispara con sentido** (2, con la salvedad escrita de
+`movimiento`), **cabe** (3) y **adelanta unas horas** al mensaje de la noche (4).
+Ninguno de esos dice que sirva.
+
+**Por que lleva regla escrita.** Sin una regla fijada de antemano, un aviso corto
+y prolijo sobrevive por COSTUMBRE y no por merito: deja de molestar, nadie lo
+discute y queda. El modelo v1 mandaba 38 lineas por corte sobre 77 tickers y su
+problema no fue que estuviera mal, fue que **no se leia**. La v2 es comoda de
+tolerar, que no es lo mismo que util.
+
+#### La cuenta
+
+Sobre las **10 primeras ruedas REALES con el modelo v2**, que son
+**2026-11-04 a 2026-11-17** (20 cortes), se cuenta:
+
+> en cuantas RUEDAS la alerta hizo que el usuario **abriera un grafico, mirara un
+> ticker que no iba a mirar, o cambiara lo que iba a hacer**.
+
+La unidad es la RUEDA, no el evento: un dia de muchas lineas no vale por varios.
+
+| resultado | veredicto |
+|---|---|
+| **2 o mas de 10** | el criterio 5 **PASA**: la alerta se queda y recien entonces `intradia_post_rutina.bat` pasa a ser un paso de `rutina_diaria` (sec. 8) |
+| **0 o 1 de 10** | **NO PASA**: se cierra la etapa 2 y queda la captura |
+
+La vara es BAJA a proposito -- "sirvio un par de veces en dos semanas" -- y eso
+esta elegido, no es descuido: pedirle evidencia estadistica de que mejora
+resultados no se puede contestar con 20 cortes, y ademas no es lo que se esta
+preguntando. Lo que se mide es si la cosa **se usa**. La asimetria la pone el
+costo: mantenerla son ~1.480 lineas de codigo y tests vivos mas un paso manual
+todos los dias, para siempre.
+
+**Si una rueda no tuvo alerta, no cuenta como rueda** (corte perdido, la rutina
+no corrio, no hubo lista): la ventana se estira hasta juntar 10 ruedas con el
+mensaje efectivamente recibido. Sin esto, un tramo con fallas se leeria como
+"no sirvio".
+
+#### Que NO cuenta como "sirve"
+
+- **que este bien**: eso es el criterio 1, y ya dio 100%;
+- **que adelante al mensaje de la noche**: eso es el criterio 4, y ya dio que SI
+  adelanta. Adelantar unas horas algo que de todas formas iba a aparecer no es lo
+  mismo que servir -- es exactamente la hipotesis que falta probar;
+- **que sea interesante, prolijo o lindo de recibir**. Es el sesgo que esta regla
+  existe para frenar.
+
+#### Que queda si NO pasa
+
+Se cierra como se cierra una estrategia de FT (CLAUDE.md, "Alta y baja de
+estrategias FT"): **nada se borra**.
+
+- esta seccion registra el veredicto con la fecha y la cuenta;
+- deja de correrse `push_vigilancia.py` -> sin lista, la alerta no tiene sobre
+  que avisar y se apaga sola (el corte sigue capturando: `snapshot_intradia.py`
+  no depende de la lista);
+- el codigo de la etapa 2 queda en el repo, dormido y con sus tests
+  (`vigilancia_intradia.py`, `push_vigilancia.py`, los dos evaluadores);
+- las 4 tablas de la etapa 2 quedan congeladas en su ultima fecha, no se dropean;
+- `intradia_post_rutina.bat` se reduce al sync.
+
+#### Las dos decisiones son SEPARABLES (y por eso hay dos veredictos)
+
+| | que decide | con que | cuando |
+|---|---|---|---|
+| **etapa 1 -- la captura** | si el cron captura solo y bien | compuerta de la sec. 6, MEDIDA | ~2026-11-20 |
+| **etapa 2 -- la alerta** | si sirve | criterio 5, JUICIO | 2026-11-17 |
+
+Caen en la misma semana por casualidad y **no se mezclan**. La captura se queda
+pase lo que pase con la alerta: cuesta 2 disparos de cron de ~20 s por dia y lo
+que junta **se pudre** -- la ventana de 30 min de Yahoo es de ~60 dias, asi que
+un dia que no se captura no se recupera nunca. La alerta es donde vive todo el
+mantenimiento y toda la friccion diaria.
+
+#### Lo que viaja con este veredicto
+
+- **`movimiento`**: el criterio 2 dice que sale del mensaje y se mantuvo por
+  decision (sec. 9.5). Se revisa aca.
+- **EMA vs SMA**: solo tiene sentido preguntarlo si la alerta se queda.
+
+#### Veredicto
+
+**PENDIENTE.** Se escribe aca, con la fecha y la cuenta, cuando se cierren las
+10 ruedas.
