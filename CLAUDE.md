@@ -553,7 +553,14 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   que depende de un sync MANUAL. No es la palanca, y por eso no se toco.
 - El egress sirve de GUARD barato: 0,34 GB por ciclo = 8 corridas del sync x ~42
   MB. Si sobra, hay un lector inesperado apuntando a Railway (la trampa de
-  `DATABASE_URL` / `.env.local`). Es la forma mas simple de detectarlo.
+  `DATABASE_URL` / `.env.local`). Es la forma mas simple de detectarlo. OJO: desde
+  el 2/11/2026 hay un SEGUNDO lector legitimo, el sync intradiario (~1-2 MB/dia en
+  regimen), asi que la cuenta es `syncs x 42 MB + intradiario`; con la cuenta vieja
+  el guard da falso positivo.
+- RE-MEDIDO el 6/11/2026 con la linea intradiaria adentro (doc, sec. 8c): costo
+  **+0,39 USD/mes** (proyeccion 4,54 -> 4,93) y el **TECHO de RAM no se movio**
+  (0,668 -> 0,670 GB). Subio el promedio, no el maximo: son mas bytes TOCADOS por
+  dia, no un working set mas grande. La linea sigue CERRADA, no se toco nada.
 
 ### FT asincronico -- usar `fecha_datos`, NO `fecha_entrada` (21/7/2026)
 - Los bots FT deciden y ejecutan con el OHLCV del **ultimo cierre disponible**,
