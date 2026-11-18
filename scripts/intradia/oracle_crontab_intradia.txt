@@ -1,0 +1,26 @@
+# =============================================================
+#  Crontab del SNAPSHOT INTRADIARIO -- clon de PRUEBA en la rama main-y9tr06
+#  (docs/intradia.md). Vive en un clon SEPARADO del de produccion:
+#      /home/ubuntu/IndicadoresDeStockML-intradia
+#  porque los jobs de produccion hacen `git pull origin main` y nunca verian
+#  esta rama. Usa el venv del clon de produccion (no hay dependencias nuevas).
+#
+#  !! NO INSTALAR CON `crontab este_archivo` !!
+#  Eso REEMPLAZA el crontab entero y borra los jobs de produccion (opciones US,
+#  opciones AR, scanner AR, earnings). Las lineas se AGREGAN:
+#
+#      crontab -l > ~/crontab_backup_$(date +%Y%m%d_%H%M).txt
+#      ( crontab -l ; grep '^[0-9]' scripts/intradia/oracle_crontab_intradia.txt ) | crontab -
+#      crontab -l          # verificar: las de produccion siguen + la nueva
+#
+#  Horarios: el cron dispara en TODOS los horarios UTC donde puede caer un corte
+#  (verano/invierno/media rueda) y el script decide si le toca; el de los :20 es
+#  el reintento del de los :05. Los valores deben coincidir con CRON_MINUTOS y
+#  CRON_HORAS_UTC de src/utils/sesion_nyse.py (lo verifica un test).
+#
+#  OJO lock de Yahoo: el lockfile vive en logs/ de CADA clon, asi que este clon
+#  y el de produccion no se ven entre si. No se pisan por horario (opciones US
+#  corre 23:00 / 02:00 / 06:00 UTC; opciones AR y scanner AR usan IOL). Al
+#  mergear queda un solo clon y un solo lock.
+# =============================================================
+5,20 15,16,17,19,20 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML-intradia && { git pull -q --ff-only origin main-y9tr06 2>>/tmp/cron_git_pull_intradia.log || true; } && source /home/ubuntu/IndicadoresDeStockML/venv/bin/activate && python3 scripts/intradia/snapshot_intradia.py >> /tmp/cron_intradia.log 2>&1

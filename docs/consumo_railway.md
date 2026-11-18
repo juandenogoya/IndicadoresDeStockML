@@ -6,6 +6,11 @@
 > se venia. Lo que este doc deja es la **linea de base medida** y la explicacion
 > de por que la factura es lo que es, para no volver a diagnosticarlo desde cero
 > ni "optimizar" la palanca equivocada. La sec. 8 dice que lo reabriria.
+>
+> **AL 6/11/2026 sigue cerrada, con un consumidor nuevo ya MEDIDO.** La linea
+> intradiaria entro a Railway el 2/11 (sec. 8b) y costo **+0,39 USD/mes**, con
+> el TECHO de RAM sin moverse (0,668 -> 0,670 GB) y todos los chequeos de la
+> sec. 9 pasando: **sec. 8c**. Se midio, dio chico, no se toco nada.
 
 | pregunta | seccion |
 |---|---|
@@ -15,6 +20,7 @@
 | que es lo unico que sube | 5 |
 | la operacion desproporcionada (y por que NO se toco) | 6 |
 | cuanto cuesta la cuenta entera | 7 |
+| cuanto costo el consumidor nuevo (medido) | 8c |
 | como re-medirlo | 9 |
 
 ---
@@ -269,6 +275,107 @@ Con una de estas, no por iniciativa propia:
   motivo para correrla.
 
 ---
+
+## 8b. ADDENDUM 2026-11-02: entro un consumidor nuevo a Railway
+
+La sec. 8 decia que la linea se reabriria, entre otras cosas, si **entraba un
+consumidor nuevo a Railway**. Paso el 2026-11-02: la linea intradiaria
+(`docs/intradia.md`) escribe ahi `precios_intradia_30m` y las 4 tablas de
+`vigilancia_*`. Es la primera excepcion al Plan C y se acepto apoyandose en esta
+medicion, asi que corresponde anotar lo que agrega:
+
+| | |
+|---|---|
+| filas por rueda | ~2.800 (199 tickers x 14 barras entre los dos cortes) |
+| retencion en Railway | 30 ruedas; la historia va a local con el sync |
+| tamano de la tabla al 2026-11-02 | **20 MB** con 30 ruedas cargadas |
+| contra la DB de 248 MB | **+8%** |
+| contra `opciones_snapshot` | ~2.800 filas/rueda contra ~105.000/dia |
+
+En disco es casi nada, y el disco no es lo que se paga. **Lo que no se sabe
+todavia es si mueve la linea de RAM**, que es el 95% de la factura: la respuesta
+depende de los bytes que la DB TOQUE por dia, y el cron recien arranco. Se mide
+con el chequeo de la sec. 9 (el promedio de `MEMORY_USAGE_GB` a 7 dias contra
+los **0,43 GB** de la linea de base) despues de un par de semanas de cron.
+
+Una cosa SI quedo bien desde el diseno: el sync intradiario **no hace `VACUUM
+FULL`**, y su docstring dice por que, con el mismo argumento de la sec. 6 (en un
+buffer rotativo las paginas que libera el DELETE las reusa el INSERT del dia
+siguiente). La leccion de este documento ya esta aplicada en codigo nuevo.
+
+Esto **no reabre la linea**: es el registro del cambio de premisa, con el numero
+al lado, para que la proxima lectura de la factura no empiece de cero.
+
+## 8c. ADDENDUM 2026-11-06: medido, el consumidor nuevo cuesta ~0,40 USD/mes
+
+La sec. 8b dejo UNA pregunta abierta: si la linea intradiaria mueve la linea de
+RAM, que es el 95% de la factura. Con 4 ruedas de cron real (2 al 6/11) ya hay
+con que contestar, y es el chequeo de la sec. 9 corrido tal cual.
+
+**Respuesta: la mueve, y poco.** Es el MISMO ciclo de la sec. 2 (arranco ~20/10),
+asi que se compara dividiendo por los minutos transcurridos:
+
+| | base 29/10 | 6/11 |
+|---|---|---|
+| ciclo transcurrido | 12.380 min (8,6 d) | ~23.400 min (16,3 d) |
+| RAM | 5.321,98 GB-min = 1,2319 USD | 10.958,73 GB-min = 2,5367 USD |
+| RAM promedio DEL CICLO | 0,430 GB | **0,468 GB** |
+| RAM promedio de la ventana nueva | -- | **0,511 GB** |
+| RAM como % de la factura | 94,8% | 95,0% |
+| **proyeccion mensual** | **4,54 USD** | **4,93 USD** |
+
+**+9%, o +0,39 USD al mes.** Las tarifas implicitas salen identicas a las de la
+sec. 2: Railway no cambio nada.
+
+Lo que mas tranquiliza no es el promedio sino que **el TECHO no se movio: 0,668
+-> 0,670 GB**, plano en las dos ultimas muestras diarias. Subio el PROMEDIO, no
+el maximo, que es lo que se espera de mas bytes TOCADOS por dia y no de un
+working set mas grande. El disparador 4 de la sec. 8 ("que la RAM siga subiendo
+sin estabilizarse") **NO se activa**.
+
+### Los chequeos de la sec. 9, uno por uno
+
+| chequeo | resultado |
+|---|---|
+| `opciones_snapshot` | 208 MB, **10 fechas** (23/10 -> 5/11): la purga corre |
+| `precios_intradia_30m` | 20 MB, **31 fechas** (30 de retencion + la del dia), 2.785 filas/rueda: ACOTADA, no crece |
+| DB total | 249,5 MB |
+| WAL | 240 MB (base 224) |
+| egress del ciclo | **cierra**: 7 corridas del sync x ~42 MB = 294 MB de los 400 |
+| cadencia del sync | 7 corridas en 7,65 dias = la misma de la base (8 en 8,6) |
+
+Los ~106 MB de egress que sobran se explican por el backfill de 40 ruedas del
+2/11 (111.429 filas, UNA sola vez), los 5 syncs intradiarios y el cambio de
+modelo del 3/11 hecho a mano. **Ningun lector inesperado**: el guard de la
+sec. 9.4 pasa.
+
+OJO al comparar la DB total contra los 248 MB de la sec. 3: `opciones_snapshot`
+se midio en otra FASE de su ciclo diario (208 MB con 10 fechas, antes de la
+captura de las 23:00, contra 227 MB con 11). Que el total casi no se mueva es
+coincidencia de fase, no que los 20 MB del intradiario se hayan absorbido.
+
+### Lo que esta medicion NO dice
+
+- **No prueba que el +9% sea TODO de la linea intradiaria.** La metrica de RAM es
+  un diente de sierra (el 3/11 las dos muestras diarias daban 0,415 y 0,596; el
+  6/11, 0,670) y la API de Railway **devuelve solo el punto actual: ignora el
+  `startDate`/`endDate` que se le pasen**, asi que no hay historia con que separar
+  "mas bytes tocados" de "en que fase del diente cayo la lectura". Lo que si
+  encaja es la MAGNITUD: ~20-40 MB/dia mas tocados contra una base de ~450 MB/dia
+  da del orden del 8%, que es lo medido.
+- **No cambia nada de la sec. 8.** Se midio, dio chico, no se toco nada: la linea
+  sigue cerrada.
+
+### Dos observaciones de paso
+
+- El cron del intradiario seguia vivo el 6/11: el corte de las 16:00 UTC capturo
+  597 filas = 199 tickers x 3 barras. Eso cuenta para la compuerta de la etapa 1
+  de `docs/intradia.md`, no para esta medicion.
+- `precios_intradia_30m` tiene **11.144 filas muertas sobre 84.166 y nadie le
+  corre `VACUUM FULL`**, y la tabla no crece: el argumento de la sec. 6 (en un
+  buffer rotativo las paginas que libera el DELETE las reusa el INSERT del dia
+  siguiente) anda en produccion **en cuanto al ESPACIO**. No dice nada sobre la
+  RAM, que es lo que pregunta la 6.2, y la tabla es 10 veces mas chica.
 
 ## 9. Como re-medirlo (un minuto)
 
