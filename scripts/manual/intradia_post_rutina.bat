@@ -9,7 +9,7 @@ REM       Railway. Oracle la lee en los cortes de 11:00 y 15:00 ET.
 REM    2. sync_intradia_railway_to_local.py: baja las barras y las
 REM       alertas enviadas, y purga Railway dejando 30 ruedas.
 REM
-REM  Linea intradiaria EN PRUEBA en la rama main-y9tr06. Este paso se corre
+REM  Linea intradiaria en main desde el 18/11/2026. Este paso se corre
 REM  A MANO POR DECISION (3/11/2026), no por pendiente: NO entra en
 REM  rutina_diaria hasta que el criterio 5 se expida (docs\intradia.md sec.
 REM  9.6, veredicto el 2026-11-17). Correrlo a mano es lo que mantiene

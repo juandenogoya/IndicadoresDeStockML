@@ -123,4 +123,6 @@ def test_el_crontab_coincide_con_las_constantes():
     assert tuple(int(x) for x in horas.split(",")) == sn.CRON_HORAS_UTC
     assert (dom, mes, dow) == ("*", "*", "1-5")
     assert "snapshot_intradia.py" in lineas[0]
-    assert "origin main-y9tr06" in lineas[0]
+    # el espacio final es parte del guard: distingue `origin main` de una rama
+    # cuyo nombre empiece igual (la vieja main-y9tr06, mergeada y borrada el 18/11/2026)
+    assert "--ff-only origin main " in lineas[0]

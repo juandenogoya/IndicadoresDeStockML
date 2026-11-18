@@ -4,14 +4,15 @@ Captura del precio a mitad de rueda y aviso por Telegram de que vale la pena ir
 a mirar un grafico ANTES del cierre, sobre los tickers que la rutina de la noche
 ya marco. No es para operar en el momento: la latencia no es critica.
 
-- Estado: **ETAPAS 1 y 2 DESPLEGADAS EN PRUEBA el 2026-11-02**, en la rama
-  `main-y9tr06`, sin mergear. El cron de la VM captura solo desde esa fecha
-  (sec. 7, puesta en marcha HECHA). Etapa 1 = captura (sec. 1-8): los 4
-  supuestos de la sec. 5 quedaron VERIFICADOS, pero su compuerta necesita 2-3
-  semanas de cron y todavia no se puede evaluar. Etapa 2 = alerta de la lista
-  de vigilancia (sec. 9): criterios 1, 2 y 3 MEDIDOS y pasan; el 4 dice que la
-  alerta ADELANTA al mensaje de la noche; el 5 (juicio del usuario) sigue
-  abierto. Resultados en la sec. 9.4.
+- Estado: **ETAPA 1 CERRADA, su compuerta PASA** (18/11/2026, sec. 6.1). Todo
+  MERGEADO A MAIN el 18/11 (merge `aa7e60e`) y la rama `main-y9tr06` BORRADA;
+  los dos clones de la VM corren de main. El cron captura solo desde el
+  2026-11-02 (sec. 7, puesta en marcha HECHA). Etapa 1 = captura (sec. 1-8):
+  los 4 supuestos de la sec. 5 VERIFICADOS y los 4 criterios de la compuerta
+  CUMPLIDOS. Etapa 2 = alerta de la lista de vigilancia (sec. 9): criterios 1,
+  2 y 3 MEDIDOS y pasan; el 4 dice que la alerta ADELANTA al mensaje de la
+  noche; el 5 (juicio del usuario) sigue abierto y es lo UNICO pendiente de
+  esta linea. Resultados en la sec. 9.4.
 - No modifica nada de lo que ya funciona: todos los archivos son nuevos; la
   etapa 2 solo IMPORTA funciones de la foto y del cierre.
 - Modulos puros: `src/utils/sesion_nyse.py` (horario y cortes),
@@ -200,6 +201,46 @@ diseno: su `capturado_en` es de horas o dias despues del corte y lo que se mide
 aca es si el cron captura solo. Antes de ~2026-11-20 `evaluar_etapa1.py` no
 tiene con que contestar.
 
+### 6.1 Resultado: PASA (18/11/2026)
+
+`evaluar_etapa1.py --desde 2026-11-02 --hasta 2026-11-17`, 12 ruedas y 24
+cortes capturados por el cron (el 18/11 no entra: su sync a local todavia no
+corrio). Salida 0. Los cuatro criterios, con lo que pedian:
+
+| criterio | pedia | dio |
+|---|---|---|
+| cobertura | >= 90% en todos los cortes | minima **99,5%**, mediana 100% |
+| cortes faltantes | cero | **0** de 24 |
+| demora | mediana <= 10 min, maxima <= 30 | **5,2** / **5,4** min |
+| high/low fuera del rango diario | <= 1% de los ticker-cortes | **0,63%** (30 de 4.773) |
+
+**El criterio 4 pasa mejor de lo que dice el numero.** De las 30 violaciones,
+**28 son REDONDEO**: `precios_diarios` guarda 2 decimales y el intradiario 4,
+asi que SID aparece con 0,7607 contra un maximo diario de 0,76 y NIO con 3,4142
+contra 3,41. No son violaciones, son dos precisiones distintas. Las **2 reales**
+son **SHOP 2026-11-10** (maximo del corte 152,06 contra 151,20 del dia, +0,57%)
+y **BG 2026-11-04** (99,98 contra 98,85, +1,14%): ahi una de las dos fuentes
+esta mal para ese ticker-dia, y no lo explica ningun redondeo. Si el criterio se
+re-corriera comparando MAGNITUD en vez de contar casos, el umbral habria que
+pensarlo de nuevo; como esta pre-registrado, cuenta casos y pasa.
+
+**HALLAZGO QUE NO BLOQUEA PERO HAY QUE ANOTAR: el volumen intradiario no cuadra
+con el diario.** Era informativo y sin umbral, y por eso no frena nada, pero el
+numero es grande: al corte `cierre_60` el volumen acumulado **supera** al del dia
+entero en **626 ticker-cortes**, con p95 del ratio en **1,87** -- casi el doble,
+cuando por definicion deberia ser < 1. Ademas **Yahoo REVISA las barras ya
+capturadas**: la misma barra vista en `apertura_90` y despues en `cierre_60`
+cambia el close el **5,3%** de las veces y el volumen el **22,8%**.
+
+Hoy no hace dano porque la alerta decide con PRECIO (SMA21/50/200 y muros de OI,
+sec. 9.5), no con volumen. **REGLA: no construir nada que compare volumen
+intradiario contra volumen diario, ni que suponga que una barra capturada es
+definitiva, sin medir esto primero.** Es primo del techo de opciones: el dato
+existe y parece utilizable hasta que se lo cruza con otra fuente.
+
+Lo informativo que SI quedo limpio: el open de la primera barra contra el open
+diario da p50 0,000% y p95 0,317%, o sea que la subasta de apertura entra bien.
+
 ## 7. Puesta en marcha (HECHA el 2026-11-02)
 
 > **ESTADO: EJECUTADA.** Tablas en local y en Railway, clon de prueba en la VM
@@ -229,7 +270,7 @@ apunta a Railway). Consecuencias:
 cd /home/ubuntu
 git clone <url del repo> IndicadoresDeStockML-intradia
 cd IndicadoresDeStockML-intradia
-git checkout main-y9tr06
+git checkout main-y9tr06                 # HOY SERIA `main`: esa rama se mergeo el 18/11/2026 y se borro
 cp ../IndicadoresDeStockML/.env .        # en la VM NO hay .env.local (ver arriba)
 source ../IndicadoresDeStockML/venv/bin/activate
 
@@ -266,8 +307,23 @@ rutina (sube la lista de vigilancia de la rueda y corre el sync).
 
 ## 8. Al mergear (no antes)
 
-- Pasar la linea del cron a `scripts/oracle_crontab.txt` con `origin main` y la
-  ruta del clon de produccion; borrar el clon de prueba y su linea.
+> **MERGEADO el 18/11/2026** (merge `aa7e60e` en main, rama borrada local y
+> remota). El merge fue ADITIVO: 18 archivos nuevos y los 2 existentes que
+> tocaba eran documentacion, CERO archivos de codigo modificados, asi que no
+> cambio nada de lo que ya corria. Suite sobre el merge 1.448 OK / 18 skipped.
+> Primera corrida desde main verificada: `cierre_60` del 18/11 a las 20:05 UTC,
+> 2.189 filas, cobertura 199/199, alerta enviada, y el reintento de las 20:20
+> hizo `ya capturado -> skip` + `alerta ya enviada -> no se repite`.
+
+- **PARCIAL.** El cron ya hace `git pull origin main` y el clon
+  `/home/ubuntu/IndicadoresDeStockML-intradia` esta en main (backup del crontab
+  en `~/crontab_backup_20261118_1950.txt`; 44 lineas antes y despues, los 9 jobs
+  de produccion intactos). Lo que **NO** se hizo: el clon de prueba sigue
+  existiendo como clon aparte y su linea sigue viviendo en
+  `scripts/intradia/oracle_crontab_intradia.txt`, no se paso a
+  `scripts/oracle_crontab.txt`. Queda un solo arbol de git pero todavia dos
+  clones, asi que **sigue habiendo dos lockfiles de Yahoo** que no se ven entre
+  si (hoy no chocan por horario, que es garantia de agenda y no de lock).
 - `push_vigilancia.py` y el sync **siguen A MANO** (`intradia_post_rutina.bat`)
   y NO entran como pasos de `rutina_diaria`: **decidido el 3/11/2026**, hasta que
   el criterio 5 se expida (sec. 9.6). Integrarlos ahora seria comprometerse mas
@@ -657,8 +713,8 @@ estrategias FT"): **nada se borra**.
 
 | | que decide | con que | cuando |
 |---|---|---|---|
-| **etapa 1 -- la captura** | si el cron captura solo y bien | compuerta de la sec. 6, MEDIDA | ~2026-11-20 |
-| **etapa 2 -- la alerta** | si sirve | criterio 5, JUICIO | 2026-11-17 |
+| **etapa 1 -- la captura** | si el cron captura solo y bien | compuerta de la sec. 6, MEDIDA | **PASA** (18/11/2026, sec. 6.1) |
+| **etapa 2 -- la alerta** | si sirve | criterio 5, JUICIO | pendiente |
 
 Caen en la misma semana por casualidad y **no se mezclan**. La captura se queda
 pase lo que pase con la alerta: cuesta 2 disparos de cron de ~20 s por dia y lo

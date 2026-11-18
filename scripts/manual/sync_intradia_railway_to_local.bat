@@ -6,7 +6,7 @@ REM  Baja a la DB LOCAL las barras intradiarias, precios_intradia_30m,
 REM  desde Railway y despues purga Railway dejando las ultimas 30 ruedas.
 REM  Solo borra ruedas verificadas como replicadas en local.
 REM
-REM  Linea intradiaria EN PRUEBA en la rama main-y9tr06: se corre a mano,
+REM  Linea intradiaria en main desde el 18/11/2026: se corre a mano,
 REM  todavia no es un paso de rutina_diaria. Ver docs\intradia.md.
 REM
 REM  Sin tee: el codigo de salida que se informa es el real de Python.

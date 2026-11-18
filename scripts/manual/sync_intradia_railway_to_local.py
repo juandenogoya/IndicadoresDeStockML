@@ -10,9 +10,9 @@ snapshot intradiario de Oracle y purga Railway dejando las ultimas ~30 ruedas.
 
 Mismo esquema que el crudo de opciones (Plan C): Railway es un BUFFER DE
 TRANSITO y LOCAL la fuente de verdad historica. Separado de
-sync_opciones_railway_to_local.bat a proposito: la linea intradiaria esta en
-prueba en la rama main-y9tr06 y no toca nada de lo que ya funciona
-(docs/intradia.md). Durante la prueba lo corre intradia_post_rutina.bat.
+sync_opciones_railway_to_local.bat a proposito: la linea intradiaria no toca
+nada de lo que ya funciona (docs/intradia.md). Esta en main desde el
+18/11/2026 y lo corre intradia_post_rutina.bat, a mano.
 
 Sync INCREMENTAL e idempotente: trae de Railway las ruedas desde la ultima que
 ya tiene local menos SOLAPE_DIAS (un corte que se reconstruyo tarde queda

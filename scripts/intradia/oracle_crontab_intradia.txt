@@ -1,9 +1,10 @@
 # =============================================================
-#  Crontab del SNAPSHOT INTRADIARIO -- clon de PRUEBA en la rama main-y9tr06
-#  (docs/intradia.md). Vive en un clon SEPARADO del de produccion:
+#  Crontab del SNAPSHOT INTRADIARIO (docs/intradia.md). Desde el 18/11/2026 corre
+#  de MAIN: la rama main-y9tr06 se mergeo (aa7e60e) y se borro.
 #      /home/ubuntu/IndicadoresDeStockML-intradia
-#  porque los jobs de produccion hacen `git pull origin main` y nunca verian
-#  esta rama. Usa el venv del clon de produccion (no hay dependencias nuevas).
+#  Sigue siendo un clon SEPARADO del de produccion -- ya no por la rama, sino
+#  porque todavia no se consolido (sec. 8 del doc: PARCIAL). Usa el venv del clon
+#  de produccion (no hay dependencias nuevas).
 #
 #  !! NO INSTALAR CON `crontab este_archivo` !!
 #  Eso REEMPLAZA el crontab entero y borra los jobs de produccion (opciones US,
@@ -19,8 +20,9 @@
 #  CRON_HORAS_UTC de src/utils/sesion_nyse.py (lo verifica un test).
 #
 #  OJO lock de Yahoo: el lockfile vive en logs/ de CADA clon, asi que este clon
-#  y el de produccion no se ven entre si. No se pisan por horario (opciones US
-#  corre 23:00 / 02:00 / 06:00 UTC; opciones AR y scanner AR usan IOL). Al
-#  mergear queda un solo clon y un solo lock.
+#  y el de produccion NO SE VEN entre si. No se pisan por horario (opciones US
+#  corre 23:00 / 02:00 / 06:00 UTC; opciones AR y scanner AR usan IOL), pero eso
+#  es una garantia de AGENDA, no de lock. SIGUE PENDIENTE: consolidar los dos
+#  clones en uno para que haya un solo lock.
 # =============================================================
-5,20 15,16,17,19,20 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML-intradia && { git pull -q --ff-only origin main-y9tr06 2>>/tmp/cron_git_pull_intradia.log || true; } && source /home/ubuntu/IndicadoresDeStockML/venv/bin/activate && python3 scripts/intradia/snapshot_intradia.py >> /tmp/cron_intradia.log 2>&1
+5,20 15,16,17,19,20 * * 1-5 cd /home/ubuntu/IndicadoresDeStockML-intradia && { git pull -q --ff-only origin main 2>>/tmp/cron_git_pull_intradia.log || true; } && source /home/ubuntu/IndicadoresDeStockML/venv/bin/activate && python3 scripts/intradia/snapshot_intradia.py >> /tmp/cron_intradia.log 2>&1

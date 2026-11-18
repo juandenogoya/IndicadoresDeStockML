@@ -11,7 +11,8 @@ y el disparo de los :20 es el reintento del de los :05. Diseno: docs/intradia.md
     apertura_90 = apertura + 90 min (11:00 ET)
     cierre_60   = cierre   - 60 min (15:00 ET; 12:00 ET en media rueda)
 
-En prueba en la rama main-y9tr06.
+En main desde el 18/11/2026. La captura (etapa 1) tiene su compuerta APROBADA;
+lo que sigue en prueba es la ALERTA (etapa 2), a la espera del criterio 5.
 
 Orden de un corte:
     1. reinyecta spools pendientes (DB caida en un disparo anterior)
