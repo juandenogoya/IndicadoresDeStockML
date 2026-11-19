@@ -1135,6 +1135,7 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `scripts/ml/medir_leakage_estructura.py` / `scripts/ml/medir_valor_velas.py` | Mediciones de la Tarea 23 (solo leen): tabla vieja vs lo que se sabia ese dia (loop por rueda, ~13 s/ticker), impacto en AUC de ML v1/v2, semanal, valor de eventos con swings confirmados y regla de entrada de FT_SMC (`--solo FG`, compuerta de la Fase 2); patrones de vela viejos vs clasicos |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor, REGISTRA el split en `splits_aplicados` (misma transaccion, fecha real de Yahoo o `--fecha-ejecucion`) y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
+| `scripts/compute_perfil_precio.py` | Escribe `perfil_precio_diario` (POC + area de valor por ticker/fecha/ventana 21-52-200) desde `precios_nominales`. Capa derivada y recomputable, point-in-time por construccion. `--crear` / `--completo` (292 s los 199) / `--tickers` / `--desde` / `--status` / `--dry-run`. Incremental por defecto. Ver docs/perfil_precio.md sec. 6 |
 | `scripts/manual/cargar_precios_nominales.py` | Puebla `precios_nominales` (OHLCV NOMINAL) desde yahooquery con `adj_ohlc=False`. LOCAL-only, idempotente (UPSERT), toma el lock de yfinance y corta en la ultima rueda de precios_diarios (ya cerrada, regla 10). `--crear` / `--tickers` / `--desde` / `--status` / `--dry-run`. Ver docs/niveles_precio.md sec. 2 |
 | `src/utils/niveles_precio.py` (+ `scripts/manual/explorar_niveles.py`) | Modulo PURO: niveles de S/R por acumulacion de GIROS confirmados (`estructura.swings_en_barra`, que marca el swing en SU barra -- `features_estructura.is_sh_N` marca la de CONFIRMACION y su precio esta n barras antes). Grilla geometrica, banda +-1%, separacion de 15 ruedas, re-centrado en los toques y de-duplicacion en LOG. Orden por PERSISTENCIA (anios distintos) y no por conteo. El explorador lee `precios_nominales`; `--nulo N` da el piso de azar por permutacion. DESCRIPTOR: ver docs/niveles_precio.md sec. 6 |
 | `src/utils/poc_eventos.py` (+ `scripts/manual/medir_poc_vs_azar.py`) | Eventos de entrada a una banda de precio y su exceso contra el universo (modulo PURO). La banda del evento es la de t-1, nunca la de t. Las bandas de control tienen el mismo ancho EXACTO por la grilla geometrica. La corrida es la prueba pre-registrada del POC contra el azar: SOLO LEE, escribe en `reportes/poc_vs_azar/`. RESULTADO: no pasa (docs/perfil_precio.md sec. 5) |
@@ -1208,6 +1209,15 @@ Las criticas:
 - `universo_cambios` -- log de alta/baja (ticker, accion ALTA/BAJA, fecha, sector,
   motivo, detalle JSONB). local+Railway. Auditoria/reproducibilidad point-in-time.
 - `precios_diarios` (OHLCV) | `indicadores_tecnicos`
+- `perfil_precio_diario` (LOCAL, 19/11/2026) -- POC y area de valor por
+  (ticker, fecha, **ventana** 21/52/200). 820.422 filas / 199 tickers / 2021+ /
+  113 MB, 0 sin POC. Capa DERIVADA y recomputable sobre `precios_nominales` via
+  `src/utils/perfil_precio.py`. **La ventana se desliza pero la fila NO se pisa**:
+  el POC de una rueda es un hecho de esa rueda. **Point-in-time por construccion**
+  (usa `[t+1-ventana : t+1]`) y verificado contra el recalculo con historia
+  cortada. Existe para poder BACKTESTEAR. El ancho del area es el ERROR BAR: a 200
+  ruedas solo el 3% de los tickers tiene area angosta. OJO: el POC no anticipa
+  nada (docs/perfil_precio.md sec. 5); sirve de contexto, no de senal
 - `precios_nominales` (LOCAL, 19/11/2026) -- OHLCV **NOMINAL** (sin ajustar por
   dividendos), 291.384 filas / 199 tickers / 2021-01-04 en adelante. Existe porque
   `precios_diarios` es un patchwork de dos bases (ver patrones criticos) y un

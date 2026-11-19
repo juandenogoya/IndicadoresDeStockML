@@ -15,6 +15,7 @@
 | que hay construido y quien lo usa | 3 |
 | la prueba contra el azar: diseno y regla de lectura | 4 |
 | el resultado | 5 |
+| la tabla persistida (19/11/2026) | 6 |
 
 ---
 
@@ -351,3 +352,96 @@ Con una de estas, no por iniciativa propia:
 Lo que **no** reabre nada: cambiar el ancho del bin, la cobertura del area, el
 horizonte o la ventana. Son los parametros que ya se midieron y no mueven el
 resultado.
+
+---
+
+## 6. La tabla `perfil_precio_diario` (19/11/2026)
+
+El POC paso de calcularse al vuelo a estar PERSISTIDO, porque el destino es un
+proyecto de **algotrading**: un backtest necesita saber que decia el indicador
+CADA DIA del pasado. Sin la serie historica no hay backtest, hay una foto de hoy.
+
+| | |
+|---|---|
+| filas | **820.422** |
+| cobertura | 199 tickers, 2021-02-02 -> 2026-11-18, **0 sin POC** |
+| ventanas | **21 / 52 / 200** = corto / medio / largo |
+| tamano | 113 MB |
+| fuente | **`precios_nominales`**, NO `precios_diarios` |
+| motor | `scripts/compute_perfil_precio.py` (`--crear` / `--completo` / `--tickers` / `--desde` / `--status`) |
+| costo | 292 s el backfill completo; el incremental diario es instantaneo |
+
+### 6.1 La ventana se desliza pero la fila NO se pisa
+
+Es la duda razonable que aparece con cualquier ventana movil. El POC del 19/11
+calculado sobre las 50 ruedas previas **es un hecho del 19/11 que no cambia**:
+esas 50 ruedas ya pasaron y son fijas. El del 20/11 es OTRA fila. La clave es
+`PK (ticker, fecha, ventana)`.
+
+Es exactamente lo que ya hacen `indicadores_tecnicos` con la SMA50,
+`ticker_zscore_diario` y `fundamentales_sec_multiplos_d` (que lleva un percentil
+rodante de 756 ruedas).
+
+### 6.2 Capa DERIVADA y recomputable: es un CACHE
+
+No es fuente de verdad. Es funcion pura de `precios_nominales` via
+`src/utils/perfil_precio.py`. Si cambia el insumo -- una correccion de split, o el
+dia que se arregle el patchwork de `precios_diarios` -- se reconstruye entera con
+`--completo`.
+
+### 6.3 Point-in-time POR CONSTRUCCION, y verificado
+
+La fila de la rueda `t` usa `[t+1-ventana : t+1]`: solo el pasado y la propia
+rueda. **Verificado**: la fila de HON al 2024-06-14 (205,24 / 193,32 / 196,24)
+coincide con recalcularla cortando la historia en esa fecha.
+
+> **El detector de NIVELES no tiene esta propiedad** (`docs/niveles_precio.md`):
+> mira toda la historia, asi que backtestear con "los niveles de hoy" es
+> look-ahead. Para eso hay que pedirle `hasta=D`.
+
+### 6.4 Por que sobre precios NOMINALES
+
+Medido el 19/11/2026 sobre 10 tickers, comparando el POC de hoy en las dos series:
+
+| ventana | diferencia mediana | maxima |
+|---|---|---|
+| 21 | 0,00% | 0,00% (identicos los 10) |
+| 52 | 0,00% | 2,02% (CVX, 4 bins) |
+| 200 | 0,00% | **6,70%** (HON: 229,05 contra 244,39, 13 bins) |
+
+Casi siempre da igual, pero cuando difiere es grande: la ventana de 200 de HON
+**cruza la costura** del 2026-06-29. Y la medicion **subestima** el problema,
+porque miro la ventana de HOY: en las fechas historicas -- las del backtest -- la
+ventana entera cae en la zona ajustada.
+
+`precios_nominales` esta ajustada **por splits y NO por dividendos**, que es la
+base correcta. Verificado: KLAC cruza su split 10:1 del 2026-06-12 sin salto
+(213,56 -> 241,16 -> 254,54) y CRWD su 4:1 igual.
+
+**COROLARIO: lo que compare el precio contra este POC tiene que usar cierres
+NOMINALES.** Mezclar bases es el bug.
+
+### 6.5 Como se lee una fila
+
+El ancho del area de valor es el **error bar** del POC, no un adorno. En la ultima
+rueda, sobre los 199:
+
+| ventana | p25 | mediana | p75 | con area angosta (<10%) |
+|---|---|---|---|---|
+| 21 | 6,7% | 9,9% | 14,7% | 104 de 199 (52%) |
+| 52 | 10,5% | 14,4% | 23,0% | 46 (23%) |
+| 200 | 17,9% | 24,5% | 37,6% | **6 (3%)** |
+
+**A 200 ruedas casi nadie esta en equilibrio**: en diez meses una accion tiende, y
+una tendencia no tiene POC. Un POC con area del 25% es el maximo del ruido. Nunca
+leer el POC sin su ancho al lado.
+
+### 6.6 Lo que la tabla NO autoriza
+
+Sigue en pie todo lo de la sec. 5: **el POC no anticipa nada** y eso esta medido
+contra el azar. Persistirlo lo vuelve usable como CONTEXTO o como filtro
+combinado con otra senal, no en una senal por si solo.
+
+Y el pendiente operativo: `precios_nominales` **se carga a mano** y esta tabla
+tambien. Ninguna de las dos es un paso de la rutina todavia, asi que un
+consumidor puede leer datos viejos sin enterarse.
