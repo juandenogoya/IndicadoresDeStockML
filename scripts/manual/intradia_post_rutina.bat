@@ -9,12 +9,12 @@ REM       Railway. Oracle la lee en los cortes de 11:00 y 15:00 ET.
 REM    2. sync_intradia_railway_to_local.py: baja las barras y las
 REM       alertas enviadas, y purga Railway dejando 30 ruedas.
 REM
-REM  Linea intradiaria en main desde el 18/11/2026. Este paso se corre
-REM  A MANO POR DECISION (3/11/2026), no por pendiente: NO entra en
-REM  rutina_diaria hasta que el criterio 5 se expida (docs\intradia.md sec.
-REM  9.6, veredicto el 2026-11-17). Correrlo a mano es lo que mantiene
-REM  visible el costo diario de la alerta. Si el criterio 5 NO pasa, de este
-REM  .bat queda solo el sync.
+REM  EL CRITERIO 5 PASO el 19/11/2026 (docs\intradia.md sec. 9.6), asi que
+REM  esto YA ES el paso `intradia` de rutina_diaria y no hace falta correrlo
+REM  a mano todas las noches. Este .bat queda como entrada MANUAL, para
+REM  rehacerlo suelto si la rutina fallo en ese paso.
+REM  OJO: la rutina NO llama a este .bat sino a los dos .py directo, porque
+REM  esto termina en `pause` y colgaria la corrida (ver CLAUDE.md).
 REM
 REM  Sin tee: los codigos de salida que se informan son los reales.
 REM  OJO al editar: sin bloques IF ( ... ) y en modo binario, ver CLAUDE.md.

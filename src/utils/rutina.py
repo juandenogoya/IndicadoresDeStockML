@@ -95,6 +95,24 @@ PASOS = (
     # ft_run_diario. Mismo lugar que la foto: informa, nada lo espera.
     Paso("cierre", "Cierre por grupo por Telegram (en evaluacion)", INFORMAR,
          "precios_diarios", "fecha", "telegram_cierre.bat"),
+    # Las dos tablas que consume el proyecto de ALGOTRADING (precios_nominales y
+    # perfil_precio_diario) se cargaban A MANO, asi que un consumidor podia leer
+    # datos viejos sin enterarse. INFORMAR: son SALIDAS, nada de la rutina las
+    # espera, y el POC no es insumo de ninguna decision de aca.
+    # La tabla que se mide es perfil_precio_diario porque es la ultima de la
+    # cadena: si avanzo ella, avanzaron las dos.
+    Paso("nominal", "Precios nominales + perfil de precio (POC)", INFORMAR,
+         "perfil_precio_diario", "fecha", "cargar_precios_nominales.py"),
+    # El criterio 5 PASO el 19/11/2026 (docs/intradia.md sec. 9.6) y recien por
+    # eso entra: hasta ahi se corrio a mano A PROPOSITO, para que el costo diario
+    # de la alerta quedara visible. Va DESPUES de `cierre` porque push_vigilancia
+    # necesita la foto de FT y el cierre por sector de esta misma corrida, y
+    # ANTES de `earnings`, que tarda ~4,5 min y nada lo espera: la lista tiene
+    # que estar en Railway antes del primer corte del dia siguiente (16:00 UTC).
+    # Se llaman los .py y no el .bat: el .bat termina en `pause` y colgaria la
+    # rutina (CLAUDE.md, patrones de .bat).
+    Paso("intradia", "Lista de vigilancia intradiaria + sync", INFORMAR,
+         "vigilancia_tickers", "fecha", "intradia_post_rutina.bat"),
     # Va ULTIMO y nunca frena: earnings_historico no es insumo de ninguna decision
     # (el filtro de balances de los bots lee earnings_calendar), alimenta al
     # dashboard y a los analisis. Es el paso mas lento en relacion a lo que hace
@@ -146,6 +164,37 @@ def clasificar_sync(exit_sync, exit_purga=None):
     if exit_purga not in (0, None):
         return PARCIAL, [f"la purga de Railway termino con codigo {exit_purga}"]
     return OK, []
+
+
+def clasificar_nominal(exit_px, exit_poc=None):
+    """`exit_poc` None = el POC no corrio porque fallo la carga de precios."""
+    if exit_px != 0:
+        return ERROR, [f"la carga de precios nominales termino con codigo {exit_px}",
+                       "el POC no se recalculo"]
+    if exit_poc not in (0, None):
+        return PARCIAL, [f"perfil_precio_diario termino con codigo {exit_poc}"]
+    return OK, []
+
+
+def clasificar_intradia(exit_lista, exit_sync=None):
+    """
+    `exit_sync` None = el sync no corrio. La LISTA es lo unico con reloj: si no
+    queda en Railway, los cortes del dia siguiente no tienen sobre que avisar.
+    El sync solo trae historia y puede esperar un dia.
+    """
+    notas = []
+    if exit_lista == 1:
+        notas.append("la lista de vigilancia NO se subio: los cortes de manana "
+                     "no van a tener sobre que avisar")
+    elif exit_lista == 2:
+        notas.append("lista subida sin la foto de FT")
+    if exit_sync == 1:
+        notas.append("el sync intradiario fallo y la purga no corrio")
+    elif exit_sync == 2:
+        notas.append("el sync anduvo pero la purga dejo ruedas sin borrar")
+    if exit_lista == 1:
+        return ERROR, notas
+    return (PARCIAL if notas else OK), notas
 
 
 def clasificar_paso1(exit_code, resumen):

@@ -123,6 +123,15 @@ TABLAS = (
           False, "ft_run_diario.bat", "calculado_en"),
     Tabla("veredictos_universo_diario", "fecha", "Veredictos",
           False, "ft_run_diario.bat  [paso final]", "computed_at"),
+    # Las dos de abajo son SALIDAS para consumo externo (un proyecto de
+    # algotrading), no insumos de este pipeline: critica=False, se informan y no
+    # frenan. OJO: `precios_nominales` esta en otra BASE DE PRECIO que
+    # precios_diarios (nominal contra el patchwork; ver patrones criticos), asi
+    # que su fecha se compara pero sus PRECIOS no son los de precios_diarios.
+    Tabla("precios_nominales", "fecha", "Precios nominales",
+          False, "rutina_diaria.bat  [paso nominal]", "bajado_en"),
+    Tabla("perfil_precio_diario", "fecha", "Perfil de precio (POC)",
+          False, "rutina_diaria.bat  [paso nominal]", "calculado_en"),
 )
 
 ANCLA = "precios_diarios"

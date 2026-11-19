@@ -127,6 +127,9 @@ def filas_de_ticker(eng, tk, desde_idx_min=None):
             {"t": tk}).fetchall(), columns=["fecha", "high", "low", "volume"])
     for k in ("high", "low", "volume"):
         d[k] = pd.to_numeric(d[k])
+    # A datetime64: el driver devuelve `datetime.date` y `np.searchsorted` del
+    # camino incremental no puede compararlo contra un np.datetime64.
+    d["fecha"] = pd.to_datetime(d["fecha"])
     return d
 
 

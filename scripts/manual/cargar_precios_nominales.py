@@ -123,6 +123,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tickers", help="coma-separados; por defecto, el universo")
     ap.add_argument("--desde", default="2021-01-01")
+    ap.add_argument("--ultimas", type=int, metavar="N",
+                    help="solo las ultimas N ruedas (refresco diario); pisa --desde")
     ap.add_argument("--hasta", help="por defecto, la ultima rueda de precios_diarios")
     ap.add_argument("--crear", action="store_true", help="crea la tabla si falta")
     ap.add_argument("--status", action="store_true")
@@ -146,6 +148,15 @@ def main():
     else:
         with eng.connect() as c:
             hasta = c.execute(text("SELECT MAX(fecha) FROM precios_diarios")).scalar()
+    if a.ultimas:
+        # Las ultimas N RUEDAS, no N dias: el calendario lo da precios_diarios.
+        with eng.connect() as c:
+            d = c.execute(text("""SELECT MIN(fecha) FROM (
+                    SELECT DISTINCT fecha FROM precios_diarios WHERE fecha <= :h
+                    ORDER BY fecha DESC LIMIT :n) x"""),
+                          {"h": hasta, "n": int(a.ultimas)}).scalar()
+        if d:
+            desde = d
     # La ultima rueda de precios_diarios ya cerro: evita la barra EN CURSO de hoy
     # (regla 10 de CLAUDE.md).
     log(f"{len(tickers)} tickers | {desde} -> {hasta}")

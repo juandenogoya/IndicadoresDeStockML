@@ -312,6 +312,37 @@ def correr_paso(p, log, origen, rutina_id=None, dir_trabajo=None, extra=None):
                                   *(extra or [])], log)
             res["resultado"], res["notas"] = R.clasificar_generico(exit_code)
 
+        elif p.clave == "nominal":
+            # Serie NOMINAL (sin ajustar por dividendos) + POC por ventana. Las
+            # consume un proyecto de algotrading; ver docs/perfil_precio.md
+            # sec. 6. Solo las ultimas ruedas: el backfill completo es --completo.
+            e_px = ejecutar([PYTHON, _script("manual", "cargar_precios_nominales.py"),
+                             "--ultimas", "10", *(extra or [])], log)
+            e_poc = None
+            if e_px == 0:
+                log.linea("")
+                log.linea("--- POC y area de valor (perfil_precio_diario) ---")
+                e_poc = ejecutar([PYTHON, _script("compute_perfil_precio.py"),
+                                  *(extra or [])], log)
+            exit_code = e_px if e_px != 0 else (e_poc or 0)
+            res["resultado"], res["notas"] = R.clasificar_nominal(e_px, e_poc)
+
+        elif p.clave == "intradia":
+            # 1) la lista de vigilancia de la rueda D, que los cortes de Oracle
+            #    leen al dia siguiente; 2) el sync de barras y alertas + purga.
+            # Se llaman los .py y no intradia_post_rutina.bat, que termina en
+            # `pause` y colgaria la rutina.
+            e_lista = ejecutar([PYTHON, _script("intradia", "push_vigilancia.py"),
+                                *(extra or [])], log)
+            e_sync = None
+            if e_lista != 1:
+                log.linea("")
+                log.linea("--- Sync intradiario Railway -> local + purga ---")
+                e_sync = ejecutar([PYTHON, _script("manual",
+                                                   "sync_intradia_railway_to_local.py")], log)
+            exit_code = e_lista if e_lista != 0 else (e_sync or 0)
+            res["resultado"], res["notas"] = R.clasificar_intradia(e_lista, e_sync)
+
         else:
             raise ValueError(f"paso sin ejecutor: {p.clave}")
     except KeyboardInterrupt:

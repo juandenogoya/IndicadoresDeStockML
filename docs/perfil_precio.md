@@ -442,6 +442,20 @@ Sigue en pie todo lo de la sec. 5: **el POC no anticipa nada** y eso esta medido
 contra el azar. Persistirlo lo vuelve usable como CONTEXTO o como filtro
 combinado con otra senal, no en una senal por si solo.
 
-Y el pendiente operativo: `precios_nominales` **se carga a mano** y esta tabla
-tambien. Ninguna de las dos es un paso de la rutina todavia, asi que un
-consumidor puede leer datos viejos sin enterarse.
+### 6.7 El pendiente operativo, RESUELTO (19/11/2026)
+
+Las dos tablas se cargaban a mano, asi que un consumidor podia leerlas viejas sin
+enterarse -- la familia de bug que este repo tiene documentada. Ya no:
+
+- son el paso **`nominal`** de `rutina_diaria` (despues de `cierre`): refresca las
+  ultimas 10 ruedas de `precios_nominales` y corre `compute_perfil_precio`
+  incremental. ~30 s. Politica INFORMAR: son SALIDAS, nada de la rutina las
+  espera. Si la carga de precios falla, el POC **no se recalcula** (mezclarlo
+  seria peor que no tocarlo);
+- estan en `estado_pipeline` con **`critica=False`**, asi que `chequeo_rutina.py`
+  informa su frescura y no frena nada;
+- y `splits.py corregir` las rehace. **`precios_nominales` no se corrige por
+  divisor**: Yahoo re-ajusta toda la historia del ticker cuando parte, asi que
+  hay que RE-DESCARGARLA o el incremental pega filas en escala nueva sobre
+  historia en escala vieja. Falla suave: si no sale, avisa con el comando a mano
+  y no rompe la correccion, que ya quedo hecha y registrada.

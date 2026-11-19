@@ -324,13 +324,20 @@ rutina (sube la lista de vigilancia de la rueda y corre el sync).
   `scripts/oracle_crontab.txt`. Queda un solo arbol de git pero todavia dos
   clones, asi que **sigue habiendo dos lockfiles de Yahoo** que no se ven entre
   si (hoy no chocan por horario, que es garantia de agenda y no de lock).
-- `push_vigilancia.py` y el sync **siguen A MANO** (`intradia_post_rutina.bat`)
+- **HECHO el 19/11/2026**: `push_vigilancia.py` y el sync son el paso
+  **`intradia`** de `rutina_diaria`, despues de `cierre` y antes de `earnings`.
+  La rutina llama los dos `.py` directo y NO al `.bat`, que termina en `pause` y
+  colgaria la corrida; el `.bat` queda como entrada manual para rehacerlo suelto.
+  Politica INFORMAR, con una asimetria que importa: si no sube la LISTA es
+  **ERROR** (los cortes del dia siguiente no tienen sobre que avisar), mientras
+  que si falla el sync es PARCIAL (solo trae historia y puede esperar un dia).
+- ~~`push_vigilancia.py` y el sync **siguen A MANO** (`intradia_post_rutina.bat`)
   y NO entran como pasos de `rutina_diaria`: **decidido el 3/11/2026**, hasta que
   el criterio 5 se expida (sec. 9.6). Integrarlos ahora seria comprometerse mas
   con lo unico de esta linea que todavia no tiene valor demostrado, y el paso a
   mano es justamente lo que mantiene VISIBLE su costo diario. Si el criterio 5
   PASA: entran despues de `cierre`, con politica INFORMAR (nada depende de la
-  alerta).
+  alerta).~~
 - CLAUDE.md: arquitectura (excepcion al Plan C), tablas y scripts clave.
 
 ## 9. Etapa 2: alerta de la lista de vigilancia
@@ -728,7 +735,26 @@ mantenimiento y toda la friccion diaria.
   decision (sec. 9.5). Se revisa aca.
 - **EMA vs SMA**: solo tiene sentido preguntarlo si la alerta se queda.
 
-#### Veredicto
+#### Veredicto: PASA (19/11/2026)
 
-**PENDIENTE.** Se escribe aca, con la fecha y la cuenta, cuando se cierren las
-10 ruedas.
+Cerrada la ventana de 10 ruedas (2026-11-04 a 2026-11-17), el usuario cuenta
+**2 o mas** ruedas en las que la alerta lo hizo abrir un grafico, mirar un ticker
+que no iba a mirar o cambiar lo que iba a hacer. Por la regla de la sec. 9.6,
+**el criterio 5 PASA** y la alerta se queda.
+
+Consecuencia inmediata, que la regla tambien tenia escrita: desde el 19/11/2026
+`intradia_post_rutina.bat` deja de correrse a mano y pasa a ser el paso
+**`intradia`** de `rutina_diaria` (sec. 8).
+
+Lo que este veredicto **NO** dice:
+
+- **No es una medicion**, es un juicio, y asi se pre-registro. La vara era baja a
+  proposito ("sirvio un par de veces en dos semanas") porque con 20 cortes no hay
+  forma de pedirle evidencia estadistica de que mejora resultados. Lo que se
+  midio es si **se usa**.
+- **No convierte la alerta en insumo de ninguna decision.** Sigue siendo ESTADO,
+  no pronostico, y nada del pipeline la lee.
+- **`movimiento` sigue pendiente de revision**: el criterio 2 decia que saliera
+  del mensaje (mediana 0,0) y se mantuvo por decision. Viajaba con este
+  veredicto y hay que volver sobre el.
+- **La pregunta de EMA contra SMA** tampoco se contesto.

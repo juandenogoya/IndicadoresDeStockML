@@ -448,6 +448,49 @@ def recomputar_derivadas_bulk(desde):
     log(f"   ticker_zscore_diario: {n} filas")
 
 
+def rehacer_nominal_y_poc(tickers):
+    """
+    `precios_nominales` NO se corrige por divisor como precios_diarios: hay que
+    RE-DESCARGARLA. Yahoo re-ajusta toda la historia del ticker cuando parte, asi
+    que el incremental diario pegaria filas en escala nueva sobre historia en
+    escala vieja -- el mismo bug que este script existe para arreglar, pero en la
+    otra tabla. Y detras va el POC, que sale de ahi.
+
+    Falla SUAVE: si algo no sale, avisa con el comando a mano y no rompe la
+    correccion, que ya quedo hecha y registrada. Si las tablas no existen (nadie
+    las creo todavia), no hace nada.
+    """
+    import subprocess
+    engine = get_engine()
+    with engine.connect() as conn:
+        hay = conn.execute(text("SELECT to_regclass('precios_nominales')")).scalar()
+    if not hay:
+        return
+
+    lista = ",".join(tickers)
+    manual = (f"  python scripts/manual/cargar_precios_nominales.py --tickers {lista}\n"
+              f"  python scripts/compute_perfil_precio.py --tickers {lista} --completo")
+    pasos = (
+        ("precios_nominales", [sys.executable, os.path.join(ROOT, "scripts", "manual",
+                                                            "cargar_precios_nominales.py"),
+                               "--tickers", lista]),
+        ("perfil_precio_diario", [sys.executable, os.path.join(ROOT, "scripts",
+                                                               "compute_perfil_precio.py"),
+                                  "--tickers", lista, "--completo"]),
+    )
+    for nombre, argv in pasos:
+        log(f"Rehaciendo {nombre} de {lista} (re-descarga, no correccion por divisor)...")
+        try:
+            r = subprocess.run(argv, cwd=ROOT)
+        except Exception as e:
+            log(f"   NO se pudo: {type(e).__name__}. Correr a mano:\n{manual}")
+            return
+        if r.returncode != 0:
+            log(f"   {nombre} termino con codigo {r.returncode}. Correr a mano:\n{manual}")
+            return
+    log("   OK: serie nominal y POC rehechos.")
+
+
 # ── Chequeo automatico (pipeline diario) ──────────────────────────────────────
 
 def chequeo_diario(engine, dias=7, umbral=0.25, alertar=True, usar_lock=True,
@@ -683,6 +726,7 @@ def cmd_corregir(args):
                 SELECT MIN(fecha) FROM precios_diarios WHERE ticker = ANY(:tk)
             """), {"tk": ok}).scalar()
         recomputar_derivadas_bulk(desde)
+        rehacer_nominal_y_poc(ok)
 
     log("Listo." if args.apply else "Dry run terminado (no se escribio nada).")
     return 0

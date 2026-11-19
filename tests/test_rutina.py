@@ -23,11 +23,13 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 def test_orden_de_la_rutina_y_politica_acordada():
     assert [p.clave for p in R.PASOS] == ["sync", "paso1", "paso2", "paso3", "ft",
-                                          "foto", "cierre", "earnings"]
+                                          "foto", "cierre", "nominal", "intradia",
+                                          "earnings"]
     politica = {p.clave: p.si_falla for p in R.PASOS}
     assert politica == {"sync": R.SEGUIR, "paso1": R.FRENAR, "paso2": R.FRENAR,
                         "paso3": R.FRENAR, "ft": R.INFORMAR,
                         "foto": R.INFORMAR, "cierre": R.INFORMAR,
+                        "nominal": R.INFORMAR, "intradia": R.INFORMAR,
                         "earnings": R.INFORMAR}
 
 
@@ -92,7 +94,8 @@ def test_earnings_va_ultimo_y_no_frena_a_nadie():
 
 def test_retomar_desde_un_paso():
     assert [p.clave for p in R.pasos_desde("paso2")] == ["paso2", "paso3", "ft",
-                                                        "foto", "cierre", "earnings"]
+                                                        "foto", "cierre", "nominal",
+                                                        "intradia", "earnings"]
     with pytest.raises(ValueError):
         R.pasos_desde("paso9")
 
@@ -229,3 +232,59 @@ def test_ejecutor_devuelve_el_codigo_real_y_guarda_toda_la_salida(tmp_path):
     assert codigo == 3
     contenido = (tmp_path / "paso.log").read_text(encoding="utf-8")
     assert "salida normal" in contenido and "salida de error" in contenido
+
+# -- los dos pasos que entraron el 19/11/2026 ---------------------------------
+
+def test_intradia_va_despues_del_cierre_y_antes_de_earnings():
+    """
+    push_vigilancia necesita la foto de FT y el cierre por sector de ESTA corrida,
+    asi que no puede ir antes. Y va antes de earnings, que tarda ~4,5 min: la
+    lista tiene que estar en Railway antes del primer corte del dia siguiente.
+    """
+    claves = [p.clave for p in R.PASOS]
+    assert claves.index("cierre") < claves.index("intradia") < claves.index("earnings")
+    assert R.debe_seguir(R.paso("intradia"), R.ERROR)
+    assert R.paso("intradia").tabla == "vigilancia_tickers"
+
+
+def test_la_lista_que_no_sube_es_ERROR_y_el_sync_que_falla_es_PARCIAL():
+    """
+    Lo unico con reloj es la LISTA: sin ella los cortes de manana no tienen sobre
+    que avisar. El sync solo trae historia y puede esperar un dia.
+    """
+    assert R.clasificar_intradia(0, 0) == (R.OK, [])
+    res, notas = R.clasificar_intradia(1, None)
+    assert res == R.ERROR and any("cortes de manana" in n for n in notas)
+    res, notas = R.clasificar_intradia(0, 1)
+    assert res == R.PARCIAL and any("sync" in n for n in notas)
+    res, notas = R.clasificar_intradia(0, 2)
+    assert res == R.PARCIAL and any("purga" in n for n in notas)
+    # lista sin la foto de FT: se avisa, no es una caida
+    res, notas = R.clasificar_intradia(2, 0)
+    assert res == R.PARCIAL and any("foto" in n for n in notas)
+
+
+def test_nominal_no_frena_y_mide_la_ultima_tabla_de_la_cadena():
+    """Son SALIDAS para consumo externo: nada de la rutina las espera."""
+    assert R.debe_seguir(R.paso("nominal"), R.ERROR)
+    assert R.paso("nominal").tabla == "perfil_precio_diario"
+
+
+def test_si_no_hay_precios_nominales_el_POC_no_corre():
+    """Recalcular el POC sobre precios que no se pudieron refrescar es peor que
+    no recalcularlo: quedaria mezclado."""
+    res, notas = R.clasificar_nominal(1, None)
+    assert res == R.ERROR and any("no se recalculo" in n for n in notas)
+    assert R.clasificar_nominal(0, 0) == (R.OK, [])
+    assert R.clasificar_nominal(0, 2)[0] == R.PARCIAL
+
+
+def test_las_tablas_nuevas_estan_en_el_diagnostico_y_NO_son_criticas():
+    """Se informan para que nadie las lea viejas sin enterarse, pero son salidas:
+    que esten atrasadas no debe frenar la rutina."""
+    from src.utils import estado_pipeline as ep
+    reg = {t.nombre: t for t in ep.TABLAS}
+    for n in ("precios_nominales", "perfil_precio_diario"):
+        assert n in reg, n
+        assert reg[n].critica is False, n
+        assert reg[n].columna == "fecha"
