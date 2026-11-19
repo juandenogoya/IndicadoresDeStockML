@@ -317,6 +317,31 @@ Documentacion que existe hoy en docs/:
                             CORRER (sec. 6.2). La cuenta entera son ~9 USD/mes y
                             este proyecto es la mitad. Leer ANTES de tocar
                             retencion, VACUUM o cadencia del sync "para ahorrar".
+- docs/perfil_precio.md  : perfil de precio por volumen -- POC y area de valor
+                            (18/11/2026) y la prueba del POC contra el azar
+                            (19/11/2026). MEDIDO y NO PASA: el exceso del POC al
+                            entrar al area de valor es CERO en las 4 celdas
+                            primarias (soporte +0,091 y +0,099 pp; resistencia
+                            -0,405 y -0,274; las 4 con el cero en el IC95). Lo
+                            que parecia ventaja era un CONFUNDIDOR medido: los
+                            eventos del control llegan de una caida 3 pp mayor,
+                            porque la ubicacion y el movimiento previo estan
+                            acoplados. Deja la leccion de metodo: una banda de
+                            control "del mismo ancho en otra ubicacion" NO es un
+                            control limpio para un evento DIRECCIONAL. El POC
+                            queda como DESCRIPTOR. Cierra la familia de soportes
+                            y resistencias estaticos junto con la tasa de rebote
+                            (6/9) y el conteo de cierres (18/11).
+- docs/niveles_precio.md : niveles de S/R por acumulacion de GIROS (19/11/2026).
+                            CONSTRUIDO y MEDIDO. Reproduce 8 de las 11 bandas que
+                            el usuario dibujo a mano sobre CVX y HON, sin tocar
+                            parametros. PERO el adjetivo "fuerte" no se sostiene:
+                            una HON BARAJADA produce un nivel de 18 toques (p95)
+                            y 6 anios, contra 17 y 6 del mejor real -- y el test
+                            tiene poder (sobre una serie que rebota siempre en
+                            100/130 SI lo detecta). Queda como DESCRIPTOR. Exige
+                            precios NOMINALES: ver el patron critico del
+                            patchwork. Modulo src/utils/niveles_precio.py.
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
@@ -561,6 +586,35 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
   **+0,39 USD/mes** (proyeccion 4,54 -> 4,93) y el **TECHO de RAM no se movio**
   (0,668 -> 0,670 GB). Subio el promedio, no el maximo: son mas bytes TOCADOS por
   dia, no un working set mas grande. La linea sigue CERRADA, no se toco nada.
+
+### precios_diarios es un PATCHWORK de dos bases de precio (hallado 19/11/2026)
+- **La historia esta en precios AJUSTADOS POR DIVIDENDOS y los ultimos meses en
+  NOMINALES.** Medido rueda por rueda contra el `close` de yahooquery: CVX
+  coincide con el nominal **desde 2026-02-17** y HON **desde 2026-06-29**; antes,
+  el descuento llega a **0,8220 (CVX, 2021)** y 0,8642 (HON). Contra el ajustado
+  de HOY de Alpha Vantage el desfasaje es CONSTANTE (CVX +2,65%, HON -3,55%; la
+  diferencia de signo la explica el spinoff de Solstice), que es la firma de
+  "ajustado y congelado en una descarga vieja".
+- **El pipeline de hoy esta bien**: `yahooquery_loader` usa `adj_ohlc=False` y
+  guarda `sub["close"]`, que es el NOMINAL. Lo que esta en otra base es la
+  historia vieja; la costura de cada ticker es la fecha de su ultimo backfill, y
+  por eso NO es la misma para todos.
+- **Que rompe: comparar NIVELES DE PRECIO entre anios distintos.** Y no solo los
+  desparrama: los FABRICA. Un precio nominal que baja al ritmo del dividendo se
+  vuelve una linea horizontal PERFECTA al ajustar. Medido en CVX: dos clusters de
+  13 y 19 giros que se ven como niveles de 1,7% de ancho son escaleras nominales
+  de 15% (171 -> 149).
+- **Que probablemente NO rompe** (sin medir, 2 tickers): lo que usa retornos o
+  ratios. RSI, MACD, medias y z-scores son casi inmunes porque dentro de una
+  ventana el ajuste es un factor casi constante. OJO con los backtests 2021-2026:
+  midieron retorno TOTAL en el tramo viejo y de PRECIO en el nuevo; el benchmark
+  corrio con la misma serie, asi que son internamente consistentes.
+- **Contradice `docs/fuentes_dividendos.md`**, que afirma que precios_diarios
+  guarda "close crudo, nunca reajustado por dividendos".
+- **NO esta arreglado y no es un fix**: precios_diarios es la fuente de verdad de
+  indicadores, features, ML, FT y backtests. El paso cero es barrer los 199 y
+  ubicar la costura de cada uno. Esta en la AGENDA. Mientras tanto, lo que
+  necesita precios nominales lee `precios_nominales` (tabla aparte).
 
 ### FT asincronico -- usar `fecha_datos`, NO `fecha_entrada` (21/7/2026)
 - Los bots FT deciden y ejecutan con el OHLCV del **ultimo cierre disponible**,
@@ -1081,6 +1135,9 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `scripts/ml/medir_leakage_estructura.py` / `scripts/ml/medir_valor_velas.py` | Mediciones de la Tarea 23 (solo leen): tabla vieja vs lo que se sabia ese dia (loop por rueda, ~13 s/ticker), impacto en AUC de ML v1/v2, semanal, valor de eventos con swings confirmados y regla de entrada de FT_SMC (`--solo FG`, compuerta de la Fase 2); patrones de vela viejos vs clasicos |
 | `scripts/compute_veredictos_universo.py` | Precomputa el veredicto sintetico de los ~200 tickers a `veredictos_universo_diario` (LOCAL). El screener del dashboard lo calculaba EN VIVO: 121 s medidos, cache solo en memoria del proceso Streamlit. Ahora lee la tabla: 323 ms. Idempotente (UPSERT), `--dry-run` / `--status`. Paso final de ft_run_diario.bat, DESPUES de [0b] (el veredicto vota con opciones_pcr_plazo_diario) |
 | `scripts/manual/splits.py` (detectar/corregir) | Deteccion y correccion de splits no aplicados en precios_diarios. 2 etapas (barrido local + verificacion Yahoo). Corrige por divisor, REGISTRA el split en `splits_aplicados` (misma transaccion, fecha real de Yahoo o `--fecha-ejecucion`) y recomputa indicadores/features/z-scores. Ver "Splits" en Patrones criticos |
+| `scripts/manual/cargar_precios_nominales.py` | Puebla `precios_nominales` (OHLCV NOMINAL) desde yahooquery con `adj_ohlc=False`. LOCAL-only, idempotente (UPSERT), toma el lock de yfinance y corta en la ultima rueda de precios_diarios (ya cerrada, regla 10). `--crear` / `--tickers` / `--desde` / `--status` / `--dry-run`. Ver docs/niveles_precio.md sec. 2 |
+| `src/utils/niveles_precio.py` (+ `scripts/manual/explorar_niveles.py`) | Modulo PURO: niveles de S/R por acumulacion de GIROS confirmados (`estructura.swings_en_barra`, que marca el swing en SU barra -- `features_estructura.is_sh_N` marca la de CONFIRMACION y su precio esta n barras antes). Grilla geometrica, banda +-1%, separacion de 15 ruedas, re-centrado en los toques y de-duplicacion en LOG. Orden por PERSISTENCIA (anios distintos) y no por conteo. El explorador lee `precios_nominales`; `--nulo N` da el piso de azar por permutacion. DESCRIPTOR: ver docs/niveles_precio.md sec. 6 |
+| `src/utils/poc_eventos.py` (+ `scripts/manual/medir_poc_vs_azar.py`) | Eventos de entrada a una banda de precio y su exceso contra el universo (modulo PURO). La banda del evento es la de t-1, nunca la de t. Las bandas de control tienen el mismo ancho EXACTO por la grilla geometrica. La corrida es la prueba pre-registrada del POC contra el azar: SOLO LEE, escribe en `reportes/poc_vs_azar/`. RESULTADO: no pasa (docs/perfil_precio.md sec. 5) |
 | `scripts/forward_testing/ft_bot_smc_v3.py` (+ `ft_scoring_estructura.py`) | Estrategias FT_SMC_v3_N5 / FT_SMC_v3_N3 (`--ventana 5\|3`): la MISMA regla de FT_SMC_v1 (el score se importa de `ft_scoring`, no se reimplementa) leyendo `features_estructura` (swings CONFIRMADOS) + `features_velas`. El loader aliasa las columnas de N a los nombres `*_10` que espera el score, ancla el lookback a la ultima rueda de DATOS (no al reloj) y valida que la ventana este persistida. Ver docs/forward_testing/estrategias/SMC_v3.md |
 | `scripts/oneshot/discontinuar_estrategias_ft.py` | Baja de una estrategia FT (generico): liquida las posiciones abiertas al ultimo cierre con `motivo_salida=ESTRATEGIA_DISCONTINUADA`, `activa=FALSE` y imprime el cierre en numeros para la ficha. `--dry-run` / `--estrategias`. Se uso el 17/9/2026 con FT_COMBO_v1 y FT_SMC_v2. Despues: `ft_compute_equity.py --rebuild`, `ft_cambios.py add` y sacar el bot del .bat |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
@@ -1151,6 +1208,12 @@ Las criticas:
 - `universo_cambios` -- log de alta/baja (ticker, accion ALTA/BAJA, fecha, sector,
   motivo, detalle JSONB). local+Railway. Auditoria/reproducibilidad point-in-time.
 - `precios_diarios` (OHLCV) | `indicadores_tecnicos`
+- `precios_nominales` (LOCAL, 19/11/2026) -- OHLCV **NOMINAL** (sin ajustar por
+  dividendos), 291.384 filas / 199 tickers / 2021-01-04 en adelante. Existe porque
+  `precios_diarios` es un patchwork de dos bases (ver patrones criticos) y un
+  nivel psicologico es un precio nominal. La carga `cargar_precios_nominales.py`
+  desde yahooquery con `adj_ohlc=False`. **NADIE del pipeline la lee**: su unico
+  consumidor es el detector de niveles. Si se arregla precios_diarios, se borra
 - `features_precio_accion` | `features_market_structure` (OJO: su historia mira 10
   ruedas al futuro, ver patrones criticos). En `features_precio_accion` los PATRONES de
   vela estan mal definidos y `tendencia_velas` / `rango_expansion` inventan valores en las
