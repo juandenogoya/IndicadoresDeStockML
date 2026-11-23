@@ -676,6 +676,25 @@ DATABASE_URL=Railway sin importar el shell env. Opciones para forzar local:
 - Una estrategia nueva en paralelo (ej. ML_SCANNER_v2) no corta a la vieja: se
   comparan en el mismo periodo.
 
+### `ft_estrategias.parametros` es un REGISTRO, no configuracion (verificado 23/11/2026)
+- **Ningun bot lee sus umbrales de la tabla.** `ft_utils.cargar_estrategia` trae la
+  columna `parametros`, pero cada bot decide con CONSTANTES DE MODULO
+  (`ft_bot_tech_sectorial.py`: `SCORE_ENTRADA = 4.0`, `ATR_MULT_SL = 2.0`...).
+  Verificado leyendo los 12 bots: nadie consume esa columna para decidir.
+- Corolario practico: **cambiar un numero en la tabla no cambia ninguna decision**,
+  y cambiarlo en el bot deja la tabla desalineada EN SILENCIO. La tabla es la
+  declaracion de con que parametros se dijo que corria, no la fuente.
+- Para experimentar: editar el `.py` del bot, registrar en `ft_cambios` ANTES de
+  desplegar (ver el patron de arriba) y crear una INSTANCIA NUEVA en paralelo
+  dejando la vieja como control; no reemplazar en el lugar.
+- Guard: `scripts/manual/exportar_catalogo.py --check` compara la tabla contra
+  `ft_setup_estrategias.ESTRATEGIAS` clave por clave y avisa la deriva. Al
+  23/11/2026: 0 diferencias en las 13 instancias.
+- Lo que SI vive en un solo lugar y se comparte: el score tecnico y la banda de
+  RSI (`src/strategies/scoring.py`, constantes `RSI_MIN`/`RSI_MAX`), asi que no
+  son "parametros de una estrategia": tocarlos mueve a TODAS las que puntuan
+  tecnico, FT y Alpaca, y no queda control.
+
 ### Alta y baja de estrategias FT -- como se decide y que queda escrito (17/9/2026)
 Destilado de las altas de SMC_v3 y de las bajas de COMBO_v1 y SMC_v2. Leer ANTES de
 proponer, desplegar o apagar una estrategia. Detalle: docs/estrategias_ft.md,
@@ -1150,6 +1169,7 @@ Herramienta: `scripts/oneshot/discontinuar_estrategias_ft.py` (generico, `--dry-
 | `scripts/manual/cargar_precios_nominales.py` | Puebla `precios_nominales` (OHLCV NOMINAL) desde yahooquery con `adj_ohlc=False`. LOCAL-only, idempotente (UPSERT), toma el lock de yfinance y corta en la ultima rueda de precios_diarios (ya cerrada, regla 10). `--crear` / `--tickers` / `--desde` / `--status` / `--dry-run`. Ver docs/niveles_precio.md sec. 2 |
 | `src/utils/niveles_precio.py` (+ `scripts/manual/explorar_niveles.py`) | Modulo PURO: niveles de S/R por acumulacion de GIROS confirmados (`estructura.swings_en_barra`, que marca el swing en SU barra -- `features_estructura.is_sh_N` marca la de CONFIRMACION y su precio esta n barras antes). Grilla geometrica, banda +-1%, separacion de 15 ruedas, re-centrado en los toques y de-duplicacion en LOG. Orden por PERSISTENCIA (anios distintos) y no por conteo. El explorador lee `precios_nominales`; `--nulo N` da el piso de azar por permutacion. DESCRIPTOR: ver docs/niveles_precio.md sec. 6 |
 | `src/utils/poc_eventos.py` (+ `scripts/manual/medir_poc_vs_azar.py`) | Eventos de entrada a una banda de precio y su exceso contra el universo (modulo PURO). La banda del evento es la de t-1, nunca la de t. Las bandas de control tienen el mismo ancho EXACTO por la grilla geometrica. La corrida es la prueba pre-registrada del POC contra el azar: SOLO LEE, escribe en `reportes/poc_vs_azar/`. RESULTADO: no pasa (docs/perfil_precio.md sec. 5) |
+| `src/utils/catalogo_tecnico.py` (+ `scripts/manual/exportar_catalogo.py`) | CATALOGO de lo que el proyecto calcula y de como estan programadas las estrategias, para experimentar con parametros y scores. El modulo es DATOS PUROS (stdlib): 77 indicadores con su funcion, umbral, tabla de origen y defecto conocido; la ficha conceptual de las 11 logicas; los 6 scores desarmados condicion por condicion; que insumo y que parametro usa cada logica; el mapa estrategia -> .py que la implementa; y 12 reglas de METODO medidas en este repo. El exportador arma el .xlsx (18 hojas) leyendo los PARAMETROS de `ft_estrategias` (LOCAL) -- lo que de verdad corrio -- y AVISA si difieren de `ft_setup_estrategias.py`. `--check` valida sin escribir (sale 2 si hay avisos). El .xlsx es derivado y gitignoreado; guards en tests/test_catalogo_tecnico.py. **OJO: `ft_estrategias.parametros` es un REGISTRO, no configuracion** -- ver el patron critico |
 | `scripts/forward_testing/ft_bot_smc_v3.py` (+ `ft_scoring_estructura.py`) | Estrategias FT_SMC_v3_N5 / FT_SMC_v3_N3 (`--ventana 5\|3`): la MISMA regla de FT_SMC_v1 (el score se importa de `ft_scoring`, no se reimplementa) leyendo `features_estructura` (swings CONFIRMADOS) + `features_velas`. El loader aliasa las columnas de N a los nombres `*_10` que espera el score, ancla el lookback a la ultima rueda de DATOS (no al reloj) y valida que la ventana este persistida. Ver docs/forward_testing/estrategias/SMC_v3.md |
 | `scripts/oneshot/discontinuar_estrategias_ft.py` | Baja de una estrategia FT (generico): liquida las posiciones abiertas al ultimo cierre con `motivo_salida=ESTRATEGIA_DISCONTINUADA`, `activa=FALSE` y imprime el cierre en numeros para la ficha. `--dry-run` / `--estrategias`. Se uso el 17/9/2026 con FT_COMBO_v1 y FT_SMC_v2. Despues: `ft_compute_equity.py --rebuild`, `ft_cambios.py add` y sacar el bot del .bat |
 | `scripts/forward_testing/ft_compute_equity.py` | Reconstruye la equity MARCADA A MERCADO (`ft_equity_diaria`) desde ft_operaciones + precios_diarios. Idempotente, `--rebuild`/`--check`. Control de cuadre del cash contra ft_estrategias |
