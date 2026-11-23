@@ -342,6 +342,17 @@ Documentacion que existe hoy en docs/:
                             100/130 SI lo detecta). Queda como DESCRIPTOR. Exige
                             precios NOMINALES: ver el patron critico del
                             patchwork. Modulo src/utils/niveles_precio.py.
+- docs/deteccion_soportes_resistencias.md : DOCUMENTO DE ENTRADA, no es un doc
+                            del proyecto. Lo trajo el usuario el 19/11/2026 y
+                            disparo la linea de niveles; se guarda tal cual. Su
+                            encabezado avisa las TRES cosas que ya estan
+                            contestadas y no hay que rehacer: el SQL de su Paso 1
+                            es la ventana centrada que mira al futuro, su Paso 3
+                            y sus Modelos 4 y 7 son la tasa de rebote (medida y
+                            descartada el 6/9), y su placebo tiene el confundidor
+                            que se midio el 19/11. Lo que SI quedo: prominencia
+                            para encontrar todos los picos, separacion temporal
+                            minima y cambio de polaridad.
 - docs/ficha_empresa.md : CUARTA infografia (5/8/2026) -- tarjeta "presentacion
                             de empresa" fondo OSCURO (4:5). La empresa contra SI
                             MISMA: ultimo Q reportado + variacion INTERANUAL (sin
